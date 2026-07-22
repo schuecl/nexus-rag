@@ -170,7 +170,11 @@ automated or for testing with your own file.
 - Mandatory tagging enforced server-side against the caller's claims (FR-18), not just
   hidden in the UI.
 - Submission → `pending_review` → curator queue → approve/reject/correct, scoped by org
-  and capped by clearance (FR-10..FR-16), with an audit log entry per action (FR-31) —
+  and capped by clearance *and* releasability (FR-10..FR-16, FR-14.1 mirroring FR-18's
+  uploader-side check) — a curator missing a document's releasability caveat is denied
+  the same as one lacking the classification level, on both approve and reject, and the
+  check re-runs against corrected tags if the curator adjusts them before approving.
+  With an audit log entry per action (FR-31) —
   ingestion, curation, *and* retrieval events are all logged now: every `rag_search`
   call writes an entry keyed on the caller's identity, whether it succeeded (with the
   applied claims-based filter and result count), was denied (missing `rag-query` role,
@@ -222,8 +226,8 @@ automated or for testing with your own file.
   (no orphans/duplicates), its Postgres status flips to `superseded`, and a
   `document.supersede` audit entry records old/new document IDs and the approving
   curator. The old document stays fully live until that moment. The approving curator's
-  authority is independently re-checked against the *old* document too (org + clearance),
-  since a version can legitimately change classification.
+  authority is independently re-checked against the *old* document too (org, clearance,
+  and releasability), since a version can legitimately change classification.
 - **MCP Authorization-header forwarding** — `orchestration-mcp`'s `rag_search` tool
   (`services/orchestration-mcp/app/server.py`) reads the bearer token from the
   streamable-http request's `Authorization` header via `ctx.request_context.request`,
