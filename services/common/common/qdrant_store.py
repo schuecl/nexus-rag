@@ -87,3 +87,19 @@ def update_document_payload(client: QdrantClient, document_id: str, fields: dict
 
 def set_document_status(client: QdrantClient, document_id: str, status: str) -> None:
     update_document_payload(client, document_id, {"status": status})
+
+
+def delete_document_chunks(client: QdrantClient, document_id: str) -> None:
+    """FR-7: remove every chunk belonging to a document that's been superseded
+    by a newer version, so re-ingestion doesn't leave orphaned or duplicate
+    entries behind. Called at the point a curator approves the *replacing*
+    document (app/routes/curate.py), not at submission time -- see
+    common.models.Document.supersedes_document_id."""
+    client.delete(
+        collection_name=QDRANT_COLLECTION,
+        points_selector=FilterSelector(
+            filter=Filter(
+                must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+            )
+        ),
+    )

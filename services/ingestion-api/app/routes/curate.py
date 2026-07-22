@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.deps import allowed_classifications, require_curator
 from common.db import get_session
 from common.models import AuditLogEntry, Document
-from common.qdrant_store import get_qdrant_client, update_document_payload
+from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -53,6 +53,52 @@ def _check_curator_authority(user, doc: Document, session: Session) -> None:
         )
 
 
+def _validate_supersede(user, new_doc: Document, session: Session) -> Document:
+    """FR-7: everything that can fail about the version swap, checked *before*
+    any mutation (Postgres or Qdrant) happens for either document -- so a
+    rejected approval attempt never leaves the new document's chunks flipped
+    to `approved` in Qdrant while Postgres still says `pending_review`.
+
+    Re-validates the old document independently rather than trusting the
+    submission-time check in app/routes/upload.py: its status could have
+    changed since (someone else superseded or otherwise touched it), and a
+    curator's authority over the *new* doc's (possibly corrected) tags
+    doesn't imply authority over the old doc's -- a version can legitimately
+    change classification, so both have to be checked.
+    """
+    old_doc = session.get(Document, new_doc.supersedes_document_id)
+    if old_doc is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "the document this submission supersedes no longer exists"
+        )
+    if old_doc.status != "approved":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"the document this submission supersedes is now '{old_doc.status}', not "
+            "'approved' -- resolve manually before approving this version",
+        )
+    _check_curator_authority(user, old_doc, session)
+    return old_doc
+
+
+def _execute_supersede(user, old_doc: Document, new_doc: Document, session: Session) -> None:
+    """The actual swap -- only called after _validate_supersede has already
+    passed, so this is expected not to fail."""
+    delete_document_chunks(get_qdrant_client(), str(old_doc.id))
+    old_doc.status = "superseded"
+    old_doc.updated_at = datetime.now(timezone.utc)
+    session.add(old_doc)
+    session.add(
+        AuditLogEntry(
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            action="document.supersede",
+            target_id=str(old_doc.id),
+            detail={"superseded_by_document_id": str(new_doc.id)},
+        )
+    )
+
+
 class Corrections(BaseModel):
     classification: str | None = None
     releasability: list[str] | None = None
@@ -79,6 +125,11 @@ def approve(
         # Re-check authority against the corrected classification, not just the original.
         _check_curator_authority(user, doc, session)
 
+    # FR-7: validate the whole supersede chain *before* touching Qdrant or
+    # Postgres for either document -- everything below this point is expected
+    # to succeed, so a failure here can't leave the new document half-approved.
+    old_doc = _validate_supersede(user, doc, session) if doc.supersedes_document_id else None
+
     doc.status = "approved"
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(timezone.utc)
@@ -92,6 +143,9 @@ def approve(
         if corrections.access_scope is not None:
             qdrant_fields["access_scope"] = doc.access_scope
     update_document_payload(get_qdrant_client(), str(doc.id), qdrant_fields)
+
+    if old_doc is not None:
+        _execute_supersede(user, old_doc, doc, session)
 
     session.add(doc)
     session.add(

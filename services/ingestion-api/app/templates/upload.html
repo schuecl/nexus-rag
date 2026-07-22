@@ -30,6 +30,9 @@
   <label>Document type * <input type="text" name="doc_type" placeholder="Regulation, SOP, manual, data sheet..." required /></label>
   <label>Program / community <input type="text" name="program_community" /></label>
   <label>Effective date <input type="date" name="effective_date" /></label>
+  <label>Supersedes document ID <span class="hint">(optional, FR-7 -- paste an existing approved document's ID to submit this as a new version. Checked at approval time against your org/clearance/releasability, and again against the document's own.)</span>
+    <input type="text" name="supersedes_document_id" placeholder="leave blank for a new document" />
+  </label>
 
   <button type="submit">Submit</button>
 </form>
@@ -49,6 +52,7 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
   fd.append('doc_type', form.doc_type.value);
   if (form.program_community.value) fd.append('program_community', form.program_community.value);
   if (form.effective_date.value) fd.append('effective_date', form.effective_date.value);
+  if (form.supersedes_document_id.value) fd.append('supersedes_document_id', form.supersedes_document_id.value.trim());
 
   const resultEl = document.getElementById('result');
   try {

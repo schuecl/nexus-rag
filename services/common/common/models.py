@@ -58,11 +58,20 @@ class Document(SQLModel, table=True):
     program_community: str | None = None
     effective_date: str | None = None
 
-    status: str = Field(default="pending_review")  # pending_review | approved | rejected
+    status: str = Field(default="pending_review")
+    # pending_review | approved | rejected | superseded (FR-7 -- set when a
+    # later submission naming this document as supersedes_document_id is approved)
     rejection_reason: str | None = None
     reviewed_by_sub: str | None = None
     reviewed_at: datetime | None = None
     chunk_count: int = Field(default=0)
+
+    # FR-7: re-ingestion/versioning. Set at submission time (app/routes/upload.py)
+    # when an uploader marks this as a new version of an existing approved
+    # document; the swap (deleting the old document's Qdrant chunks, flipping
+    # its status to `superseded`) happens atomically with curator approval of
+    # *this* row, not at submission time -- see app/routes/curate.py.
+    supersedes_document_id: uuid.UUID | None = Field(default=None, foreign_key="documents.id")
 
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
