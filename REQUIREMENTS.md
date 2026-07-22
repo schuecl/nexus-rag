@@ -95,6 +95,8 @@ These apply to every component in this project, not just the ones explicitly nam
 - NFR-6: **Encryption at rest.** Vector store and raw document storage should support encryption at rest; MPNexus's existing PyKMIP deployment is a candidate key-management integration point.
 - NFR-7: **Resilience to bad input.** Malformed or adversarial documents (corrupt PDFs, zip bombs, oversized files) must not crash ingestion workers.
 - NFR-8: **Reasonable resource footprint.** Up to 6 of the existing 8×16GB GPUs (96GB VRAM) can be dedicated to this pipeline — embedding, reranking, and any dedicated RAG-serving models — leaving the remaining 2 GPUs for generation workloads already served (see [[mpnexus]] hardware notes). This is a substantially larger allowance than a typical embedding/reranker footprint requires, so hardware is not expected to be the limiting factor.
+- NFR-9: **Local development & testing.** A Docker Compose stack must be a self-contained, one-command stand-up of the **entire** stack needed to exercise the full ingest → curate → query flow on a developer workstation with zero dependency on the production cluster — the ingestion UI, the RAG orchestration/MCP service, Qdrant, embedding and reranker model serving, a Keycloak instance, and throwaway LibreChat + LiteLLM instances so the actual MCP tool-calling and OBO token exchange (Section 7.7) can be exercised locally, not just the retrieval mechanics. Everything should be pre-seeded as much as possible — a test Keycloak realm with example users covering each role/clearance/org combination (e.g., ingest-only, query-only, a curator scoped to one org, an admin), plus sample documents already ingested at a range of Classification/Releasability/Access-scope/Status values — so a fresh clone-and-run immediately exercises real RBAC scenarios (allowed query, denied query, pending vs. approved, curator approve/reject) without manual setup.
+- NFR-10: **Production packaging.** The production deployment target is the existing air-gapped Kubernetes cluster; the pipeline is packaged as a **Helm chart** scoped to only the *new* components this project adds — the ingestion UI, the RAG orchestration/MCP service, Qdrant, and embedding/reranker model serving. The chart assumes LibreChat, LiteLLM, Keycloak, and vLLM/Ollama already exist and are separately managed in the cluster; it integrates with them via configuration (endpoints, MCP server registration, OIDC client settings) rather than deploying or bundling them. This is a deliberate contrast with NFR-9: Compose stands up everything from scratch for a self-contained dev environment; Helm deploys only the delta into infrastructure that's already there.
 
 ## 6. Security, Classification & Access Control
 
@@ -161,6 +163,8 @@ This section proposes options that satisfy the constraints in Section 3. It is a
 | Chat UI | LibreChat | Existing MPNexus component |
 | AI gateway | LiteLLM | Existing MPNexus component |
 | Inference | vLLM / Ollama | Existing MPNexus component |
+| Local dev/test environment | Docker Compose (NFR-9) | Self-contained, one-command stack including throwaway LibreChat/LiteLLM/Keycloak instances — everything, pre-seeded |
+| Production packaging | Helm chart (NFR-10) | Scoped to only the new components; assumes LibreChat/LiteLLM/Keycloak/vLLM-Ollama already exist in the cluster |
 
 ### 7.2 Embedding Models (self-hosted, non-Chinese origin)
 | Model | Origin | License | Notes |
