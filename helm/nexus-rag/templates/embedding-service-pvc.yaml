@@ -1,0 +1,18 @@
+{{- if .Values.embeddingService.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-embedding-service-data
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedding-service
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.embeddingService.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.embeddingService.persistence.size }}
+{{- end }}

@@ -1,0 +1,18 @@
+{{- if .Values.orchestrationMcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-orchestration-mcp
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestration-mcp
+spec:
+  type: {{ .Values.orchestrationMcp.service.type }}
+  ports:
+    - port: {{ .Values.orchestrationMcp.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 4 }}
+{{- end }}

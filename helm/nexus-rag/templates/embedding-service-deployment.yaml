@@ -1,0 +1,64 @@
+{{- if .Values.embeddingService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-embedding-service
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedding-service
+spec:
+  # Single ReadWriteOnce PVC below -- see reranker-service's note on scaling
+  # replicas beyond 1 without ReadWriteMany storage.
+  replicas: {{ .Values.embeddingService.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "embedding-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: embedding-service
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.embeddingService.image) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.embeddingService.service.port }}
+          # Pulls the embedding model into this dedicated instance on first
+          # start (mirrors docker-compose.yml's ollama-model-init, but as a
+          # postStart hook since this is a single-container Deployment, not
+          # a separate init job) -- retries until the server is accepting
+          # requests rather than assuming it's ready the instant the
+          # container starts.
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - until ollama pull {{ .Values.embeddingService.model }}; do sleep 2; done
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.embeddingService.resources | nindent 12 }}
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: {{ include "nexus-rag.fullname" . }}-embedding-service-data
+{{- end }}

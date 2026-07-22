@@ -1,0 +1,60 @@
+{{- if .Values.ingestionApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-ingestion-api
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-api
+spec:
+  replicas: {{ .Values.ingestionApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ingestion-api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingestion-api
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.ingestionApi.image) }}
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalPostgres.existingSecret }}
+                  key: {{ .Values.externalPostgres.secretKey }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.externalKeycloak.issuerUrl | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.externalKeycloak.audience | quote }}
+            - name: QDRANT_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+            - name: OLLAMA_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.embeddingService.model | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ingestionApi.resources | nindent 12 }}
+{{- end }}

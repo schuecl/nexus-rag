@@ -1,0 +1,58 @@
+{{- if .Values.rerankerService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-reranker-service
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reranker-service
+spec:
+  # Persistence below is a single ReadWriteOnce PVC -- replicas beyond 1
+  # will fail to schedule concurrently unless your storage class supports
+  # ReadWriteMany. Fine for this component's default (1); revisit together
+  # if you scale it up.
+  replicas: {{ .Values.rerankerService.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "reranker-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: reranker-service
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: reranker-service
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.rerankerService.image) }}
+          ports:
+            - name: http
+              containerPort: 8003
+          env:
+            - name: RERANKER_MODEL
+              value: {{ .Values.rerankerService.model | quote }}
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /srv/.cache/huggingface
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.rerankerService.resources | nindent 12 }}
+      volumes:
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: {{ include "nexus-rag.fullname" . }}-reranker-service-cache
+{{- end }}

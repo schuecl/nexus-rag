@@ -1,0 +1,165 @@
+# Default values for nexus-rag.
+#
+# Scope (NFR-10): this chart deploys only the *new* components this project
+# adds -- ingestion-api, orchestration-mcp, reranker-service, a dedicated
+# embedding-serving Ollama instance, and Qdrant. It assumes LibreChat,
+# LiteLLM, Keycloak, and the cluster's existing generation-serving vLLM/Ollama
+# (C7) are already deployed and managed separately, and integrates with them
+# via the config below rather than deploying or bundling them.
+#
+# Assumption called out explicitly (REQUIREMENTS.md doesn't name Postgres
+# among NFR-10's scoped components, unlike Qdrant): a Postgres instance is
+# also treated as existing cluster infrastructure this chart connects to,
+# not something it deploys. If that's wrong for your environment, this is
+# the section to revisit first.
+
+global:
+  # Air-gapped registry (NFR-1) every image below is mirrored into. Prefixed
+  # onto each component's image.repository unless that component sets its
+  # own fully-qualified repository.
+  imageRegistry: "registry.internal.example.mil/nexus-rag"
+  imagePullSecrets: []
+  # Standard labels applied to every resource this chart creates.
+  labels: {}
+
+# ---------------------------------------------------------------------------
+# External dependencies (not deployed by this chart)
+# ---------------------------------------------------------------------------
+
+externalPostgres:
+  # Pre-created Secret containing the full SQLAlchemy DATABASE_URL
+  # (postgresql+psycopg://user:pass@host:5432/dbname) under secretKey.
+  # Created out-of-band by your cluster's secrets process, not by this chart.
+  existingSecret: "nexus-rag-db"
+  secretKey: "database-url"
+
+externalKeycloak:
+  issuerUrl: "https://keycloak.example.mil/realms/nexus-rag"
+  audience: "rag-app"
+
+# ---------------------------------------------------------------------------
+# Qdrant (C3 -- already decided; new to the cluster, so this chart deploys it
+# directly rather than depending on an external Helm chart repo, which would
+# need its own air-gapped mirroring step)
+# ---------------------------------------------------------------------------
+
+qdrant:
+  enabled: true
+  image:
+    repository: qdrant/qdrant
+    tag: "v1.12.4"
+  replicas: 1
+  service:
+    httpPort: 6333
+    grpcPort: 6334
+  persistence:
+    size: 50Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+# ---------------------------------------------------------------------------
+# Dedicated embedding-serving Ollama (NFR-8: a separate GPU allocation from
+# the cluster's existing generation-serving vLLM/Ollama, not the same
+# deployment as C7's chat-generation instance)
+# ---------------------------------------------------------------------------
+
+embeddingService:
+  enabled: true
+  image:
+    repository: ollama/ollama
+    tag: "latest"
+  model: "nomic-embed-text"
+  replicas: 1
+  service:
+    port: 11434
+  persistence:
+    size: 20Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+      nvidia.com/gpu: "1"
+
+# ---------------------------------------------------------------------------
+# reranker-service (FR-25)
+# ---------------------------------------------------------------------------
+
+rerankerService:
+  enabled: true
+  image:
+    repository: reranker-service
+    tag: "latest"
+  model: "cross-encoder/ms-marco-MiniLM-L6-v2"
+  replicas: 1
+  service:
+    port: 8003
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+# ---------------------------------------------------------------------------
+# ingestion-api (FR-1..FR-9, FR-10..FR-16)
+# ---------------------------------------------------------------------------
+
+ingestionApi:
+  enabled: true
+  image:
+    repository: ingestion-api
+    tag: "latest"
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 8001
+  ingress:
+    enabled: false
+    className: ""
+    host: "rag-ingest.example.mil"
+    tls: []
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+# ---------------------------------------------------------------------------
+# orchestration-mcp (FR-24..FR-29) -- registered with LibreChat as an MCP
+# server out-of-band (LibreChat's own config, not this chart); this only
+# deploys the service LibreChat's OBO-authenticated calls reach.
+# ---------------------------------------------------------------------------
+
+orchestrationMcp:
+  enabled: true
+  image:
+    repository: orchestration-mcp
+    tag: "latest"
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 8002
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"

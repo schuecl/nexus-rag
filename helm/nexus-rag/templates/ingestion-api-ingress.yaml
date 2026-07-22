@@ -1,0 +1,28 @@
+{{- if and .Values.ingestionApi.enabled .Values.ingestionApi.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-ingestion-api
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-api
+spec:
+  {{- with .Values.ingestionApi.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingestionApi.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingestionApi.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "nexus-rag.fullname" . }}-ingestion-api
+                port:
+                  number: {{ .Values.ingestionApi.service.port }}
+{{- end }}

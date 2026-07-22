@@ -1,0 +1,69 @@
+{{- if .Values.qdrant.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-qdrant
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  # Single-node config -- Qdrant's distributed clustering (multi-node
+  # consensus, shard replication) isn't set up here; REQUIREMENTS.md doesn't
+  # call for it, and it's meaningfully more operational complexity than this
+  # chart takes on. Revisit if the corpus/query load grows enough to need it.
+  serviceName: {{ include "nexus-rag.fullname" . }}-qdrant
+  replicas: {{ .Values.qdrant.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "qdrant") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: qdrant
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: qdrant
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.qdrant.image) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.qdrant.service.httpPort }}
+            - name: grpc
+              containerPort: {{ .Values.qdrant.service.grpcPort }}
+          volumeMounts:
+            - name: storage
+              mountPath: /qdrant/storage
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.qdrant.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+        labels:
+          {{- include "nexus-rag.labels" . | nindent 10 }}
+          app.kubernetes.io/component: qdrant
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.qdrant.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.qdrant.persistence.size }}
+{{- end }}

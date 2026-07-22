@@ -1,0 +1,18 @@
+{{- if .Values.embeddingService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-embedding-service
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedding-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.embeddingService.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "embedding-service") | nindent 4 }}
+{{- end }}
