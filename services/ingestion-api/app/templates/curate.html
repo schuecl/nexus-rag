@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Curation Queue — nexus-rag{% endblock %}
+{% block content %}
+<h1>Curation queue</h1>
+<p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover (FR-12).</p>
+<button onclick="loadQueue()">Refresh</button>
+<div id="queue"></div>
+<div id="result" class="msg"></div>
+
+<script>
+async function loadQueue() {
+  const res = await fetch('/curate/queue', { headers: authHeaders() });
+  const queueEl = document.getElementById('queue');
+  if (!res.ok) {
+    queueEl.textContent = 'Error: ' + res.status + ' ' + (await res.text());
+    return;
+  }
+  const docs = await res.json();
+  queueEl.innerHTML = '';
+  if (docs.length === 0) {
+    queueEl.textContent = 'No pending submissions.';
+    return;
+  }
+  for (const doc of docs) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `
+      <div>
+        <strong>${doc.filename}</strong><br/>
+        org: ${doc.owner_org} · classification: ${doc.classification} · releasability: ${doc.releasability.join(', ')}<br/>
+        access_scope: ${doc.access_scope.join(', ')} · uploaded by ${doc.uploader_username}
+      </div>
+      <div>
+        <button onclick="approve('${doc.id}')">Approve</button>
+        <button onclick="reject('${doc.id}')">Reject</button>
+      </div>`;
+    queueEl.appendChild(row);
+  }
+}
+
+async function approve(id) {
+  const res = await fetch(`/curate/${id}/approve`, { method: 'POST', headers: authHeaders() });
+  report(res, await res.json());
+  loadQueue();
+}
+
+async function reject(id) {
+  const reason = prompt('Rejection reason (required):');
+  if (!reason) return;
+  const res = await fetch(`/curate/${id}/reject`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  report(res, await res.json());
+  loadQueue();
+}
+
+function report(res, body) {
+  const el = document.getElementById('result');
+  el.className = 'msg ' + (res.ok ? 'ok' : 'err');
+  el.textContent = JSON.stringify(body, null, 2);
+}
+
+loadQueue();
+</script>
+{% endblock %}

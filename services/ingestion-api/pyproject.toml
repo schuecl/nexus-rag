@@ -1,0 +1,19 @@
+[project]
+name = "ingestion-api"
+version = "0.1.0"
+description = "Upload, mandatory tagging, and curation queue API/UI (FR-1..FR-16)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "jinja2>=3.1",
+    "nexus-rag-common",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

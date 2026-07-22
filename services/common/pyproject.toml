@@ -1,0 +1,20 @@
+[project]
+name = "nexus-rag-common"
+version = "0.1.0"
+description = "Shared claims parsing, metadata schema, Qdrant filter building, and DB models for nexus-rag services"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "PyJWT>=2.8",
+    "cryptography>=42.0",
+    "sqlmodel>=0.0.21",
+    "psycopg[binary]>=3.1",
+    "qdrant-client>=1.9",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["common*"]

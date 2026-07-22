@@ -1,0 +1,188 @@
+name: nexus-rag
+
+networks:
+  default:
+    name: nexus-rag-net
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  ollama-data:
+  reranker-cache:
+  mongo-data:
+
+services:
+  # ---------------------------------------------------------------- storage
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus_rag}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------- identity
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-nexus_rag}
+      KC_DB_USERNAME: ${POSTGRES_USER:-nexus_rag}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./infra/keycloak/realm-export:/opt/keycloak/data/import
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # --------------------------------------------------------------- serving
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama-model-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      GENERATION_MODEL: ${GENERATION_MODEL:-llama3.2:1b}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        ollama pull "$$EMBEDDING_MODEL" && ollama pull "$$GENERATION_MODEL"
+    restart: "no"
+
+  reranker-service:
+    build:
+      context: .
+      dockerfile: services/reranker-service/Dockerfile
+    volumes:
+      - reranker-cache:/srv/.cache/huggingface
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # --------------------------------------------------------- custom services
+  ingestion-api:
+    build:
+      context: .
+      dockerfile: services/ingestion-api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      OIDC_ISSUER: http://keycloak:8080/realms/nexus-rag
+      OIDC_AUDIENCE: rag-app
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  orchestration-mcp:
+    build:
+      context: .
+      dockerfile: services/orchestration-mcp/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      OIDC_ISSUER: http://keycloak:8080/realms/nexus-rag
+      OIDC_AUDIENCE: rag-app
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  # ---------------------------------------------------- throwaway MPNexus stack
+  mongodb:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    volumes:
+      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-dev-litellm-master-key}
+    ports:
+      - "4000:4000"
+    depends_on:
+      - ollama-model-init
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    volumes:
+      - ./infra/librechat/librechat.yaml:/app/librechat.yaml:ro
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongodb:27017/LibreChat
+      OPENID_ISSUER: http://keycloak:8080/realms/nexus-rag
+      OPENID_CLIENT_ID: librechat
+      OPENID_CLIENT_SECRET: ${LIBRECHAT_KEYCLOAK_CLIENT_SECRET:-dev-librechat-secret}
+      OPENID_CALLBACK_URL: /oauth/openid/callback
+      OPENID_SESSION_SECRET: dev-session-secret-change-me
+      OPENID_USE_PKCE: "true"
+      OPENID_REUSE_TOKENS: "true"
+    ports:
+      - "3080:3080"
+    depends_on:
+      - mongodb
+      - keycloak
+      - litellm
+      - orchestration-mcp

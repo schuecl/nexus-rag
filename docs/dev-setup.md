@@ -1,0 +1,145 @@
+# Local Dev Environment (NFR-9)
+
+One-command stand-up of the nexus-rag stack for exercising the ingest → curate → query
+flow on a workstation, with zero dependency on the production cluster. This is the
+**skeleton** described in the build plan: every service is wired together and the
+auth/tagging plumbing works end to end, but document parsing/chunking/embedding and
+hybrid retrieval/rerank are still `TODO` stubs. See "What's stubbed vs working" below.
+
+## Prerequisites
+
+- Docker with Compose v2 (`docker compose version`)
+- ~10GB free disk (Ollama models + HF reranker model cache)
+- Internet access on first run only, to pull base images and download the embedding/
+  generation/reranker models. None of this is air-gapped yet — NFR-1 applies to the
+  production Helm deployment (NFR-10), not this dev stack.
+
+## Start the stack
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+First boot takes a while: Keycloak imports the realm, `ollama-model-init` pulls
+`nomic-embed-text` and `llama3.2:1b`, and `reranker-service` downloads
+`cross-encoder/ms-marco-MiniLM-L6-v2` from Hugging Face.
+
+| Service | URL | Notes |
+|---|---|---|
+| Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
+| Ingestion UI | http://localhost:8001 | upload form + curation queue (paste-a-token, see below) |
+| orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
+| reranker-service | http://localhost:8003 | `/health`, `/rerank` |
+| Qdrant | http://localhost:6333/dashboard | |
+| LibreChat | http://localhost:3080 | throwaway, log in via Keycloak |
+| LiteLLM | http://localhost:4000 | throwaway gateway in front of Ollama |
+
+## Seeded Keycloak users (realm `nexus-rag`)
+
+All dev-only, password `devpass123` for every account — **never reuse these in a real
+environment.**
+
+| Username | Roles | Clearance | Org | Purpose |
+|---|---|---|---|---|
+| `alice-ingest` | `rag-ingest` | CUI | USAREUR-AF | ingest-only |
+| `bob-query` | `rag-query` | SECRET | USAREUR-AF | query-only |
+| `carol-curator` | `rag-query`, `rag-curate:USAREUR-AF` | SECRET | USAREUR-AF | curator scoped to one org |
+| `dave-admin` | all roles + both curator orgs | TOP SECRET | USAREUR-AF | admin |
+
+## Getting a token for API testing (dev-only password grant)
+
+The ingestion UI's browser pages take a pasted bearer token instead of a full OIDC
+login redirect (that flow isn't implemented in this skeleton — see gaps below). Get one
+with:
+
+```bash
+curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
+  -d grant_type=password \
+  -d client_id=rag-app \
+  -d client_secret=dev-rag-app-secret \
+  -d username=alice-ingest \
+  -d password=devpass123 \
+  | jq -r .access_token
+```
+
+Swap `username`/`password` for any seeded user above.
+
+## Exercising the flow
+
+1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (paste
+   the token from above into the field at the top of the page) or directly:
+
+   ```bash
+   TOKEN=$(...)  # from above
+   curl -s http://localhost:8001/documents \
+     -H "Authorization: Bearer $TOKEN" \
+     -F file=@/path/to/some.pdf \
+     -F classification=CUI \
+     -F 'releasability=["REL TO USA/FVEY"]' \
+     -F 'access_scope=["USAREUR-AF"]' \
+     -F source_originator="Test Org" \
+     -F doc_type="SOP"
+   ```
+
+   Expect `status: pending_review`. Try `classification=SECRET` as `alice-ingest` (only
+   cleared to CUI) and confirm it's rejected with a 403 (FR-18).
+
+2. **Curate** as `carol-curator` at http://localhost:8001/curate (or `GET/POST
+   /curate/...` directly) — the pending doc from step 1 should appear (org match), and
+   approve/reject should work. Confirm `bob-query`'s clearance-only token (no curator
+   role) gets a 403 from `/curate/queue`.
+
+3. **Query** as `bob-query` against the debug endpoint:
+
+   ```bash
+   curl -s -X POST "http://localhost:8002/debug/rag_search?query=test&top_k=5" \
+     -H "Authorization: Bearer $TOKEN"
+   ```
+
+   Expect a response with `applied_filter` showing the claims-derived Qdrant filter,
+   and a `note` explaining there's nothing to match yet (no vectors have been written —
+   see gaps below). This is the proof that claims → filter wiring (Section 6.1) works,
+   independent of the retrieval logic that's still TODO.
+
+## What's stubbed vs working
+
+**Working:**
+- Claims parsing, the Section 6.3 metadata schema, and the Qdrant access-filter builder
+  (`services/common`) — shared by both services, not implemented twice.
+- Mandatory tagging enforced server-side against the caller's claims (FR-18), not just
+  hidden in the UI.
+- Submission → `pending_review` → curator queue → approve/reject/correct, scoped by org
+  and capped by clearance (FR-10..FR-16), with an audit log entry per action (FR-31,
+  partial — only ingestion/curation events, not yet retrieval).
+- Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
+- `reranker-service` — fully functional `/rerank` endpoint.
+- Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
+  aggregation (Section 6.2).
+
+**Stubbed / TODO (see inline `TODO` comments at each site):**
+- Document parsing, chunking, embedding, and writing vectors+payload to Qdrant
+  (FR-3..FR-6) — `services/ingestion-api/app/routes/upload.py`. Submitted files are
+  validated and tagged but not otherwise processed yet.
+- Hybrid dense+BM25 fusion and reranking (FR-24/FR-25) —
+  `services/orchestration-mcp/app/rag_search.py`. Currently does a dense-only Qdrant
+  query with the correct access filter, nothing more.
+- `orchestration-mcp`'s MCP tool takes the bearer token as an explicit argument rather
+  than reading a forwarded/OBO-exchanged header — see the `TODO` in
+  `services/orchestration-mcp/app/server.py`. LibreChat's OBO config in
+  `infra/librechat/librechat.yaml` is written to the current understanding of the
+  0.8.7 schema but hasn't been validated against a running instance, and Keycloak's
+  fine-grained token-exchange admin permission (required on top of the
+  `standard.token.exchange.enabled` client attribute — see the `_comment` in the realm
+  export) still needs a manual admin-console step.
+- No pre-seeded sample documents yet (NFR-9 asks for a range of Classification/
+  Releasability/Access-scope/Status combinations) — blocked on FR-3..FR-6 existing.
+- RAGAS evaluation harness (FR-30/FR-32) not started.
+- Full OIDC Authorization Code login flow for the ingestion UI's browser pages (uses a
+  pasted-token workaround instead, see above).
+
+## Resetting
+
+```bash
+docker compose down -v   # also wipes Postgres/Qdrant/Ollama/reranker-cache volumes
+```

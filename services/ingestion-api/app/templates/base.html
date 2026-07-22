@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{% block title %}nexus-rag{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    nav a { margin-right: 1rem; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; }
+    .row { display: flex; gap: 1rem; justify-content: space-between; align-items: center; border: 1px solid #ccc; padding: 0.5rem; margin-top: 0.5rem; }
+    .msg { margin-top: 1rem; padding: 0.5rem; white-space: pre-wrap; }
+    .msg.ok { background: #e6ffed; }
+    .msg.err { background: #ffe6e6; }
+    .hint { color: #666; font-size: 0.85rem; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/">Upload</a>
+    <a href="/curate">Curation Queue</a>
+  </nav>
+  <label>Bearer token <span class="hint">(dev-only: paste an access token obtained from Keycloak; see docs/dev-setup.md -- a full browser OIDC login flow is not implemented in this skeleton)</span>
+    <input id="token" type="text" placeholder="paste Keycloak access_token here" />
+  </label>
+  <hr />
+  {% block content %}{% endblock %}
+  <script>
+    const tokenInput = document.getElementById('token');
+    tokenInput.value = localStorage.getItem('nexus_rag_token') || '';
+    tokenInput.addEventListener('change', () => localStorage.setItem('nexus_rag_token', tokenInput.value));
+    function authHeaders() {
+      return { 'Authorization': 'Bearer ' + tokenInput.value };
+    }
+  </script>
+</body>
+</html>
