@@ -126,6 +126,12 @@ services:
       - ingestion-api-cache:/srv/.cache/huggingface
     ports:
       - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,6 +165,23 @@ services:
         condition: service_started
       reranker-service:
         condition: service_healthy
+
+  seed-sample-data:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      INGESTION_API_URL: http://ingestion-api:8001
+      RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+    depends_on:
+      ingestion-api:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      ollama-model-init:
+        condition: service_completed_successfully
+    restart: "no"
 
   # ---------------------------------------------------- throwaway MPNexus stack
   mongodb:

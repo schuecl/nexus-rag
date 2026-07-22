@@ -35,9 +35,10 @@ docker compose up --build
 
 First boot takes a while: Keycloak imports the realm, `ollama-model-init` pulls
 `nomic-embed-text` and `llama3.2:1b`, `reranker-service` downloads
-`cross-encoder/ms-marco-MiniLM-L6-v2`, and `ingestion-api`/`orchestration-mcp` each
-download the tiny (~10MB) `Qdrant/bm25` sparse model on first use — all from Hugging
-Face.
+`cross-encoder/ms-marco-MiniLM-L6-v2`, `ingestion-api`/`orchestration-mcp` each download
+the tiny (~10MB) `Qdrant/bm25` sparse model on first use — all from Hugging Face — and
+finally `seed-sample-data` submits and curates 7 sample documents through the real API
+once everything above is healthy.
 
 | Service | URL | Notes |
 |---|---|---|
@@ -80,6 +81,13 @@ curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
 Swap `username`/`password` for any seeded user above.
 
 ## Exercising the flow
+
+By the time `docker compose up` finishes, `seed-sample-data` has already run steps 1-2
+below for you against 7 real documents (see "What's stubbed vs working"). To query them
+immediately, get a `bob-query` token (step 3's instructions) and search for e.g.
+`password rotation` or `VPN access` — or skip ahead to step 3 directly. The steps below
+walk through the same flow manually, useful for understanding what the seed script
+automated or for testing with your own file.
 
 1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (paste
    the token from above into the field at the top of the page) or directly:
@@ -187,6 +195,14 @@ Swap `username`/`password` for any seeded user above.
 - Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2).
+- **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
+  (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
+  the embedding model are all ready, submitting 7 documents through the real ingestion
+  API as the seeded users and driving them to every `Status` value: `approved` (a
+  `PUBLIC` notice, an org-scoped policy, a `Signal-Corps`-scoped `SECRET` document
+  submitted by `dave-admin`), `pending_review` (left unreviewed on purpose),
+  `rejected` (with a reason), and `superseded` (a two-version FR-7 demo). See "Exercising
+  the flow" below for how to query them immediately after `docker compose up`.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
 - Ingestion is synchronous within the request — no `queued`/`processing` states (FR-8),
@@ -198,9 +214,6 @@ Swap `username`/`password` for any seeded user above.
   exact schema hasn't been validated against a running LibreChat 0.8.7 instance (only
   `orchestration-mcp`'s side of the OBO connection has been verified, using the real MCP
   client SDK standing in for LibreChat's MCP client).
-- No pre-seeded sample documents yet (NFR-9 asks for a range of Classification/
-  Releasability/Access-scope/Status combinations) — FR-3..FR-6 exist now, so this is
-  unblocked, just not done.
 - RAGAS evaluation harness (FR-30/FR-32) not started.
 - Full OIDC Authorization Code login flow for the ingestion UI's browser pages (uses a
   pasted-token workaround instead, see above).
