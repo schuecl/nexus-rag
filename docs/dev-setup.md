@@ -3,10 +3,12 @@
 One-command stand-up of the nexus-rag stack for exercising the ingest → curate → query
 flow on a workstation, with zero dependency on the production cluster. Every service is
 wired together, the auth/tagging plumbing works end to end, submitted documents are
-parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6), and
-retrieval genuinely fuses dense+BM25 hybrid search with a reranking pass (FR-24/FR-25).
-The OBO header-forwarding wiring is still a `TODO` stub. See "What's stubbed vs working"
-below.
+parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6), retrieval
+genuinely fuses dense+BM25 hybrid search with a reranking pass (FR-24/FR-25), documents
+can be versioned (FR-7), and `orchestration-mcp`'s MCP tool reads the caller's identity
+from the connection's Authorization header rather than a client-supplied argument, the
+way LibreChat's OBO/addUserJwtToken forwarding actually delivers it. See "What's stubbed
+vs working" below for what's still open.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
 `bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
@@ -170,6 +172,18 @@ Swap `username`/`password` for any seeded user above.
   curator. The old document stays fully live until that moment. The approving curator's
   authority is independently re-checked against the *old* document too (org + clearance),
   since a version can legitimately change classification.
+- **MCP Authorization-header forwarding** — `orchestration-mcp`'s `rag_search` tool
+  (`services/orchestration-mcp/app/server.py`) reads the bearer token from the
+  streamable-http request's `Authorization` header via `ctx.request_context.request`,
+  not a tool argument, so whatever LibreChat puts there (an OBO-exchanged token per
+  `infra/librechat/librechat.yaml`'s `obo.scopes`, or a raw `addUserJwtToken`-forwarded
+  one) reaches it correctly. Verified against the real `mcp` client SDK end to end
+  (session init → tool call → claims parsed → access filter applied), not just read from
+  source — that testing caught a real bug in how the MCP app was mounted (see the FR-7
+  commit's sibling for the write-up) where the streamable-http session manager's task
+  group was never started, so every MCP call would have 500'd. Fixed by adding `/health`
+  and `/debug/rag_search` via FastMCP's own `custom_route` instead of wrapping the app in
+  an outer Starlette `Mount`, which doesn't propagate lifespan to the mounted sub-app.
 - Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2).
@@ -178,15 +192,12 @@ Swap `username`/`password` for any seeded user above.
 - Ingestion is synchronous within the request — no `queued`/`processing` states (FR-8),
   just pending_review-on-success or a 4xx-on-failure. A real deployment would move
   parsing/chunking/embedding to a background worker.
-- `orchestration-mcp`'s MCP tool takes the bearer token as an explicit argument rather
-  than reading a forwarded/OBO-exchanged header — see the `TODO` in
-  `services/orchestration-mcp/app/server.py`. LibreChat's OBO config in
-  `infra/librechat/librechat.yaml` is written to the current understanding of the
-  0.8.7 schema but hasn't been validated against a running instance. Keycloak's version
-  is confirmed to support RFC 8693 token exchange (REQUIREMENTS.md Section 7.7), but
-  the fine-grained token-exchange admin permission (required on top of the
-  `standard.token.exchange.enabled` client attribute — see the `_comment` in the realm
-  export) still needs a manual admin-console step.
+- Keycloak's fine-grained token-exchange admin permission (required on top of the
+  client's `standard.token.exchange.enabled` attribute — see the `_comment` in the realm
+  export) still needs a manual admin-console step, and `infra/librechat/librechat.yaml`'s
+  exact schema hasn't been validated against a running LibreChat 0.8.7 instance (only
+  `orchestration-mcp`'s side of the OBO connection has been verified, using the real MCP
+  client SDK standing in for LibreChat's MCP client).
 - No pre-seeded sample documents yet (NFR-9 asks for a range of Classification/
   Releasability/Access-scope/Status combinations) — FR-3..FR-6 exist now, so this is
   unblocked, just not done.

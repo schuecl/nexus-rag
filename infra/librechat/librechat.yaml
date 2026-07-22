@@ -28,11 +28,13 @@ mcpServers:
     # the whole-session token via addUserJwtToken.
     obo:
       scopes: ["rag-query"]
-    # KNOWN GAP: orchestration-mcp's rag_search tool currently takes the
-    # bearer token as an explicit `authorization_token` argument rather than
-    # reading it from a forwarded header (see services/orchestration-mcp/app/server.py
-    # TODO) -- so end-to-end OBO call-through isn't wired up yet even with this
-    # config in place. Keycloak's version is confirmed to support RFC 8693
-    # token exchange (no longer an open question, see REQUIREMENTS.md Section
-    # 7.7) -- what's left is the header-forwarding implementation itself plus
-    # enabling the fine-grained token-exchange admin permission on the client.
+    # orchestration-mcp's rag_search tool now reads the bearer token from the
+    # forwarded Authorization header on this connection (verified against the
+    # real MCP client SDK, see services/orchestration-mcp/app/server.py), so
+    # whatever LibreChat puts on that header -- an OBO-exchanged token per the
+    # obo.scopes above, or a raw addUserJwtToken-forwarded one -- reaches it
+    # correctly. REMAINING GAP: Keycloak's fine-grained token-exchange admin
+    # permission (required on top of the client's standard.token.exchange.enabled
+    # attribute -- see the realm export's _comment) still needs a manual
+    # admin-console step, and this config's exact schema hasn't been validated
+    # against a running LibreChat 0.8.7 instance.
