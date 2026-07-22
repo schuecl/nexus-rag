@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /srv
+
+COPY services/common /srv/common-pkg
+RUN pip install --no-cache-dir /srv/common-pkg
+
+COPY services/ingestion-api/pyproject.toml /srv/pyproject.toml
+COPY services/ingestion-api/app /srv/app
+RUN pip install --no-cache-dir .
+
+EXPOSE 8001
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

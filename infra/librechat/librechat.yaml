@@ -1,0 +1,36 @@
+# Throwaway dev LibreChat config (NFR-9). Only enough to exercise Keycloak
+# login and the orchestration-mcp connection -- not a production config.
+#
+# NOTE: schema fields below are best-effort against LibreChat 0.8.7's
+# documented mcpServers/obo shape (REQUIREMENTS.md Section 7.7); verify
+# against the actual librechat.yaml JSON schema once this is stood up, since
+# it hasn't been validated against a running LibreChat instance yet.
+version: 1.2.8
+cache: true
+
+endpoints:
+  custom:
+    - name: "LiteLLM"
+      apiKey: "${LITELLM_MASTER_KEY}"
+      baseURL: "http://litellm:4000/v1"
+      models:
+        default: ["${GENERATION_MODEL}"]
+        fetch: false
+      titleConvo: true
+
+mcpServers:
+  nexus-rag-search:
+    type: streamable-http
+    url: "http://orchestration-mcp:8002/mcp"
+    # Section 7.7: OBO token exchange is the recommended identity-propagation
+    # mode -- exchanges the user's LibreChat session token for one scoped to
+    # this MCP server's audience (the rag-app client) rather than forwarding
+    # the whole-session token via addUserJwtToken.
+    obo:
+      scopes: ["rag-query"]
+    # KNOWN GAP: orchestration-mcp's rag_search tool currently takes the
+    # bearer token as an explicit `authorization_token` argument rather than
+    # reading it from a forwarded header (see services/orchestration-mcp/app/server.py
+    # TODO) -- so end-to-end OBO call-through isn't wired up yet even with this
+    # config in place. Fixing that is deferred, per the build plan, until
+    # Keycloak 26.2+ token exchange is confirmed working (Section 8).

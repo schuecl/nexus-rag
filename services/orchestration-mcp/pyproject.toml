@@ -1,0 +1,20 @@
+[project]
+name = "orchestration-mcp"
+version = "0.1.0"
+description = "Claims-filtered retrieval MCP server exposed to LibreChat (FR-24..FR-29)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.6",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "qdrant-client>=1.9",
+    "nexus-rag-common",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

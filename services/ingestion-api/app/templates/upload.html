@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Upload — nexus-rag{% endblock %}
+{% block content %}
+<h1>Submit a document</h1>
+<p>Fields marked * are mandatory per FR-2 -- submission is blocked without them.</p>
+<form id="uploadForm">
+  <label>File * <input type="file" name="file" required /></label>
+
+  <label>Classification *
+    <select name="classification" required>
+      {% for value, rank in classifications %}
+      <option value="{{ value }}">{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Releasability * <span class="hint">(select one or more)</span>
+    <select name="releasability" multiple required>
+      {% for value in releasability %}
+      <option value="{{ value }}">{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Access scope * <span class="hint">(comma-separated orgs/groups/users, or PUBLIC)</span>
+    <input type="text" name="access_scope" placeholder="PUBLIC or USAREUR-AF, Signal-Corps" required />
+  </label>
+
+  <label>Source / Originator * <input type="text" name="source_originator" required /></label>
+  <label>Document type * <input type="text" name="doc_type" placeholder="Regulation, SOP, manual, data sheet..." required /></label>
+  <label>Program / community <input type="text" name="program_community" /></label>
+  <label>Effective date <input type="date" name="effective_date" /></label>
+
+  <button type="submit">Submit</button>
+</form>
+<div id="result" class="msg"></div>
+
+<script>
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData();
+  fd.append('file', form.file.files[0]);
+  fd.append('classification', form.classification.value);
+  fd.append('releasability', JSON.stringify(Array.from(form.releasability.selectedOptions).map(o => o.value)));
+  const scope = form.access_scope.value.split(',').map(s => s.trim()).filter(Boolean);
+  fd.append('access_scope', JSON.stringify(scope));
+  fd.append('source_originator', form.source_originator.value);
+  fd.append('doc_type', form.doc_type.value);
+  if (form.program_community.value) fd.append('program_community', form.program_community.value);
+  if (form.effective_date.value) fd.append('effective_date', form.effective_date.value);
+
+  const resultEl = document.getElementById('result');
+  try {
+    const res = await fetch('/documents', { method: 'POST', headers: authHeaders(), body: fd });
+    const body = await res.json();
+    resultEl.className = 'msg ' + (res.ok ? 'ok' : 'err');
+    resultEl.textContent = JSON.stringify(body, null, 2);
+    if (res.ok) form.reset();
+  } catch (err) {
+    resultEl.className = 'msg err';
+    resultEl.textContent = String(err);
+  }
+});
+</script>
+{% endblock %}

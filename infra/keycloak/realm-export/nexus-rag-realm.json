@@ -1,0 +1,201 @@
+{
+  "realm": "nexus-rag",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 900,
+  "clientScopes": [
+    {
+      "name": "nexus-rag-claims",
+      "protocol": "openid-connect",
+      "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, releasability, groups, org, rag_roles",
+      "protocolMappers": [
+        {
+          "name": "clearance",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "clearance",
+            "claim.name": "clearance",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "releasability",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "releasability",
+            "claim.name": "releasability",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "groups-attr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "groups",
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "org",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "org",
+            "claim.name": "org",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "rag_roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "rag-app",
+            "claim.name": "rag_roles",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "rag-app",
+      "name": "Nexus RAG API (ingestion-api, orchestration-mcp)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "dev-rag-app-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "defaultClientScopes": ["nexus-rag-claims", "profile", "email"],
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      },
+      "_comment": "standard.token.exchange.enabled marks this client as an OBO exchange target (Section 7.7). Keycloak 26.2+ also requires a fine-grained admin permission granting the librechat client permission to exchange for this client's tokens -- that policy isn't expressible in a plain realm-export JSON and must be finished in the admin console; see docs/dev-setup.md."
+    },
+    {
+      "clientId": "librechat",
+      "name": "LibreChat (throwaway dev instance)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "dev-librechat-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://librechat:3080/oauth/openid/callback"],
+      "webOrigins": ["http://librechat:3080"],
+      "defaultClientScopes": ["nexus-rag-claims", "profile", "email"],
+      "attributes": {
+        "access.token.lifespan": "900",
+        "use.refresh.tokens": "true"
+      },
+      "_comment": "Reusable access tokens (Section 7.7 OBO prerequisite) are a LibreChat-side OpenID setting, not a Keycloak client attribute -- set in infra/librechat/librechat.yaml."
+    }
+  ],
+  "roles": {
+    "client": {
+      "rag-app": [
+        { "name": "rag-ingest", "description": "Can submit documents (FR-1..FR-9)" },
+        { "name": "rag-query", "description": "Can query the RAG pipeline (FR-24..FR-29)" },
+        { "name": "rag-admin", "description": "Can maintain Classification/Releasability lists (C9)" },
+        { "name": "rag-curate:USAREUR-AF", "description": "Curator authority for org USAREUR-AF (FR-12/FR-14)" },
+        { "name": "rag-curate:Signal-Corps", "description": "Curator authority for org Signal-Corps (FR-12/FR-14)" }
+      ]
+    }
+  },
+  "users": [
+    {
+      "username": "alice-ingest",
+      "email": "alice-ingest@example.mil",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "attributes": {
+        "clearance": ["CUI"],
+        "releasability": ["REL TO USA/FVEY"],
+        "groups": ["USAREUR-AF"],
+        "org": ["USAREUR-AF"]
+      },
+      "clientRoles": { "rag-app": ["rag-ingest"] }
+    },
+    {
+      "username": "bob-query",
+      "email": "bob-query@example.mil",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "attributes": {
+        "clearance": ["SECRET"],
+        "releasability": ["REL TO USA/FVEY", "REL TO NATO"],
+        "groups": ["USAREUR-AF"],
+        "org": ["USAREUR-AF"]
+      },
+      "clientRoles": { "rag-app": ["rag-query"] }
+    },
+    {
+      "username": "carol-curator",
+      "email": "carol-curator@example.mil",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "attributes": {
+        "clearance": ["SECRET"],
+        "releasability": ["REL TO USA/FVEY", "REL TO NATO"],
+        "groups": ["USAREUR-AF"],
+        "org": ["USAREUR-AF"]
+      },
+      "clientRoles": { "rag-app": ["rag-query", "rag-curate:USAREUR-AF"] }
+    },
+    {
+      "username": "dave-admin",
+      "email": "dave-admin@example.mil",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "attributes": {
+        "clearance": ["TOP SECRET"],
+        "releasability": ["REL TO USA/FVEY", "REL TO NATO", "NOFORN"],
+        "groups": ["USAREUR-AF", "Signal-Corps"],
+        "org": ["USAREUR-AF"]
+      },
+      "clientRoles": {
+        "rag-app": [
+          "rag-ingest",
+          "rag-query",
+          "rag-admin",
+          "rag-curate:USAREUR-AF",
+          "rag-curate:Signal-Corps"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Throwaway dev LiteLLM config (NFR-9) -- routes a single small Ollama model
+# so the LibreChat -> LiteLLM -> Ollama generation path can be exercised
+# end to end locally. Not a production model selection.
+model_list:
+  - model_name: llama3.2:1b
+    litellm_params:
+      model: ollama/llama3.2:1b
+      api_base: http://ollama:11434
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
