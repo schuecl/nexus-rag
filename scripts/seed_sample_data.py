@@ -18,52 +18,24 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 
 import httpx
 
-KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080")
+from _keycloak import KEYCLOAK_URL, REALM, get_token, wait_until_up
+
 INGESTION_API_URL = os.environ.get("INGESTION_API_URL", "http://ingestion-api:8001")
-REALM = "nexus-rag"
-CLIENT_ID = "rag-app"
-CLIENT_SECRET = os.environ.get("RAG_APP_KEYCLOAK_CLIENT_SECRET", "dev-rag-app-secret")
-SEED_PASSWORD = "devpass123"  # matches infra/keycloak/realm-export -- dev-only
 
 READY_TIMEOUT_SECONDS = 120
 
 
 def wait_until_ready() -> None:
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            httpx.get(f"{INGESTION_API_URL}/health", timeout=5).raise_for_status()
-            httpx.get(
-                f"{KEYCLOAK_URL}/realms/{REALM}/.well-known/openid-configuration", timeout=5
-            ).raise_for_status()
-            return
-        except httpx.HTTPError as exc:
-            last_error = exc
-            time.sleep(2)
-    raise RuntimeError(
-        f"ingestion-api/Keycloak not ready after {READY_TIMEOUT_SECONDS}s: {last_error}"
+    wait_until_up(
+        [
+            f"{INGESTION_API_URL}/health",
+            f"{KEYCLOAK_URL}/realms/{REALM}/.well-known/openid-configuration",
+        ],
+        timeout_seconds=READY_TIMEOUT_SECONDS,
     )
-
-
-def get_token(username: str) -> str:
-    resp = httpx.post(
-        f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token",
-        data={
-            "grant_type": "password",
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "username": username,
-            "password": SEED_PASSWORD,
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
 
 
 def submit(
