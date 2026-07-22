@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Notifications — nexus-rag{% endblock %}
+{% block content %}
+<h1>Notifications</h1>
+<p>Decisions on documents you submitted (FR-15). Unread ones are highlighted.</p>
+<button onclick="loadNotifications()">Refresh</button>
+<div id="notifications"></div>
+
+<script>
+async function loadNotifications() {
+  const res = await fetch('/notifications', { headers: authHeaders() });
+  const el = document.getElementById('notifications');
+  if (!res.ok) {
+    el.textContent = 'Error: ' + res.status + ' ' + (await res.text());
+    return;
+  }
+  const notifications = await res.json();
+  el.innerHTML = '';
+  if (notifications.length === 0) {
+    el.textContent = 'No notifications yet.';
+    return;
+  }
+  for (const n of notifications) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.background = n.read ? '' : '#fff8e1';
+    row.innerHTML = `
+      <div>
+        <strong>${n.decision === 'approved' ? '✅ Approved' : '❌ Rejected'}</strong><br/>
+        ${n.message}<br/>
+        <span class="hint">${new Date(n.created_at).toLocaleString()}</span>
+      </div>
+      <div>
+        ${n.read ? '' : `<button onclick="markRead('${n.id}')">Mark read</button>`}
+      </div>`;
+    el.appendChild(row);
+  }
+}
+
+async function markRead(id) {
+  await fetch(`/notifications/${id}/read`, { method: 'POST', headers: authHeaders() });
+  loadNotifications();
+}
+
+loadNotifications();
+</script>
+{% endblock %}
