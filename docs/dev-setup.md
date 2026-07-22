@@ -144,6 +144,18 @@ automated or for testing with your own file.
    document that's still `pending_review`, or one outside `alice-ingest`'s org, and
    confirm both are rejected with a 403/404 rather than silently accepted (FR-7).
 
+5. **Run the evaluation harness** against the seeded sample documents:
+
+   ```bash
+   docker compose --profile eval run --rm eval-retrieval
+   ```
+
+   Expect `mean recall@K` near 1.0 and `forbidden leaks: 0` — the golden set's negative
+   cases (the `pending_review` and `rejected` sample documents) should never appear in
+   results no matter how privileged the querying persona is. A `LEAK` in the per-query
+   output is a real FR-26 regression, not just a quality miss, and the run exits non-zero
+   if one occurs.
+
 ## What's stubbed vs working
 
 **Working:**
@@ -203,6 +215,17 @@ automated or for testing with your own file.
   submitted by `dave-admin`), `pending_review` (left unreviewed on purpose),
   `rejected` (with a reason), and `superseded` (a two-version FR-7 demo). See "Exercising
   the flow" below for how to query them immediately after `docker compose up`.
+- **Retrieval evaluation harness (FR-30/FR-32)** — `scripts/evaluate_retrieval.py` runs a
+  fixed set of golden queries (`scripts/golden_queries.json`, keyed to the seeded sample
+  documents) through the real retrieval pipeline and reports recall@K, precision@K, and
+  first-relevant-rank, plus a separate check that pending/rejected/superseded content
+  never leaks into results regardless of the querying persona's clearance (a regression
+  check on FR-26, not just a quality metric). Not started automatically — run on demand
+  with `docker compose --profile eval run --rm eval-retrieval` (FR-32's "periodically
+  re-evaluate"). This is a lighter, judge-free stand-in for the `ragas` library itself
+  (Section 7.6): RAGAS's more interesting metrics (faithfulness, LLM-judged context
+  precision) need a configured LLM judge and wired-up generation, neither of which exists
+  in this repo yet.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
 - Ingestion is synchronous within the request — no `queued`/`processing` states (FR-8),
@@ -214,7 +237,6 @@ automated or for testing with your own file.
   exact schema hasn't been validated against a running LibreChat 0.8.7 instance (only
   `orchestration-mcp`'s side of the OBO connection has been verified, using the real MCP
   client SDK standing in for LibreChat's MCP client).
-- RAGAS evaluation harness (FR-30/FR-32) not started.
 - Full OIDC Authorization Code login flow for the ingestion UI's browser pages (uses a
   pasted-token workaround instead, see above).
 

@@ -1,0 +1,38 @@
+[
+  {
+    "query": "how often should passwords be rotated",
+    "expect": ["password-policy.md"],
+    "top_k": 5
+  },
+  {
+    "query": "cafeteria closed for renovations",
+    "expect": ["public-notice.md"],
+    "top_k": 5
+  },
+  {
+    "query": "VPN access hardware token requirements",
+    "expect": ["network-access-sop-v2.md"],
+    "forbid": ["network-access-sop-v1.md"],
+    "top_k": 5,
+    "note": "v1 was superseded by v2 (FR-7) -- only the current version should ever be found"
+  },
+  {
+    "query": "network intrusion notification procedure",
+    "expect": ["incident-response-plan.md"],
+    "top_k": 5
+  },
+  {
+    "query": "TDY travel reimbursement procedures",
+    "expect": [],
+    "forbid": ["draft-travel-policy.md"],
+    "top_k": 5,
+    "note": "pending_review and never approved -- must not be retrievable (FR-11/FR-26) regardless of clearance"
+  },
+  {
+    "query": "deprecated VPN client setup guide",
+    "expect": [],
+    "forbid": ["outdated-vpn-guide.md"],
+    "top_k": 5,
+    "note": "rejected -- must not be retrievable (FR-11/FR-26) regardless of clearance"
+  }
+]
