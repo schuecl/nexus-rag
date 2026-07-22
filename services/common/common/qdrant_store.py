@@ -1,7 +1,20 @@
 """FR-6: shared Qdrant collection/write helpers. Both ingestion-api (writes
 chunks) and orchestration-mcp (reads them via qdrant_filters.build_access_filter)
 need to agree on the collection name and the payload shape -- centralized here
-rather than duplicated per service."""
+rather than duplicated per service.
+
+FR-24: each point carries two named vectors -- a dense one (DENSE_VECTOR) for
+semantic search and a BM25 sparse one (SPARSE_VECTOR, see common.sparse_embedding)
+for keyword search -- so orchestration-mcp can fuse both at query time. The
+sparse field's Modifier.IDF makes Qdrant apply real IDF weighting server-side
+against the corpus, on top of the raw term-frequency vectors this project
+generates; without it these would just be term counts, not BM25 scores.
+
+Schema note: this replaces the single unnamed vector used before hybrid search
+was implemented -- an existing dev Qdrant volume created before this change
+needs to be recreated (`docker compose down -v`), since ensure_collection only
+configures a collection when it doesn't already exist.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +28,18 @@ from qdrant_client.models import (
     Filter,
     FilterSelector,
     MatchValue,
+    Modifier,
     PointStruct,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "nexus_rag_chunks")
+
+DENSE_VECTOR = "dense"
+SPARSE_VECTOR = "bm25"
 
 
 @lru_cache(maxsize=1)
@@ -28,12 +47,17 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(url=QDRANT_URL)
 
 
-def ensure_collection(client: QdrantClient, vector_size: int) -> None:
+def ensure_collection(client: QdrantClient, dense_size: int) -> None:
     if not client.collection_exists(QDRANT_COLLECTION):
         client.create_collection(
             collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            vectors_config={DENSE_VECTOR: VectorParams(size=dense_size, distance=Distance.COSINE)},
+            sparse_vectors_config={SPARSE_VECTOR: SparseVectorParams(modifier=Modifier.IDF)},
         )
+
+
+def chunk_vector(dense: list[float], sparse: SparseVector) -> dict:
+    return {DENSE_VECTOR: dense, SPARSE_VECTOR: sparse}
 
 
 def upsert_chunks(client: QdrantClient, points: list[PointStruct]) -> None:

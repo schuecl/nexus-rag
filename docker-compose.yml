@@ -9,6 +9,8 @@ volumes:
   qdrant-data:
   ollama-data:
   reranker-cache:
+  ingestion-api-cache:
+  orchestration-mcp-cache:
   mongo-data:
 
 services:
@@ -117,6 +119,11 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       OIDC_ISSUER: http://keycloak:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+    volumes:
+      - ingestion-api-cache:/srv/.cache/huggingface
     ports:
       - "8001:8001"
     depends_on:
@@ -124,6 +131,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      qdrant:
+        condition: service_started
 
   orchestration-mcp:
     build:
@@ -136,6 +145,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      RERANKER_URL: http://reranker-service:8003
+    volumes:
+      - orchestration-mcp-cache:/srv/.cache/huggingface
     ports:
       - "8002:8002"
     depends_on:
@@ -145,6 +157,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      reranker-service:
+        condition: service_healthy
 
   # ---------------------------------------------------- throwaway MPNexus stack
   mongodb:
