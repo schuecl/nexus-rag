@@ -120,7 +120,8 @@ automated or for testing with your own file.
    approve/reject should work. Confirm `bob-query`'s clearance-only token (no curator
    role) gets a 403 from `/curate/queue`. Approving flips the chunks' `status` in Qdrant
    to `approved` too (not just the Postgres row) — that's what actually makes them
-   visible to queries.
+   visible to queries. Then check http://localhost:8001/notifications as `alice-ingest`
+   (paste her token) and confirm a notification about the decision is there (FR-15).
 
 3. **Query** as `bob-query` against the debug endpoint with a phrase that appears in the
    document you submitted:
@@ -169,8 +170,19 @@ automated or for testing with your own file.
 - Mandatory tagging enforced server-side against the caller's claims (FR-18), not just
   hidden in the UI.
 - Submission → `pending_review` → curator queue → approve/reject/correct, scoped by org
-  and capped by clearance (FR-10..FR-16), with an audit log entry per action (FR-31,
-  partial — only ingestion/curation events, not yet retrieval).
+  and capped by clearance (FR-10..FR-16), with an audit log entry per action (FR-31) —
+  ingestion, curation, *and* retrieval events are all logged now: every `rag_search`
+  call writes an entry keyed on the caller's identity, whether it succeeded (with the
+  applied claims-based filter and result count), was denied (missing `rag-query` role,
+  logged as `query.denied`), or hit an unreachable Qdrant.
+- **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
+  document writes an in-app `Notification` row for the uploader
+  (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
+  included for rejections. No SMTP/email infra in this dev stack, so this is a
+  discrete, markable-as-read record (`GET /notifications`, `POST
+  /notifications/{id}/read`, both scoped to the recipient) rather than an email/push
+  notification — a real notification the uploader doesn't have to already know a
+  document ID to find, not just data that happens to be visible if you go looking.
 - **Document parsing, chunking, embedding, and Qdrant storage (FR-3..FR-6)** —
   `services/ingestion-api/app/{parsing,chunking,embedding}.py`. Handles PDF, DOCX,
   PPTX, XLSX, TXT/MD, HTML; chunks respect section/heading/page/slide boundaries

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from app.routes import admin, curate, upload
+from app.routes import admin, curate, notifications, upload
 from common.db import get_engine, init_db
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import FastAPI, Request
@@ -46,6 +46,7 @@ templates = Jinja2Templates(directory="app/templates")
 app.include_router(upload.router)
 app.include_router(curate.router)
 app.include_router(admin.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health")
@@ -68,3 +69,8 @@ def upload_page(request: Request):
 @app.get("/curate", response_class=HTMLResponse)
 def curate_page(request: Request):
     return templates.TemplateResponse(request, "curate.html", {})
+
+
+@app.get("/notifications", response_class=HTMLResponse)
+def notifications_page(request: Request):
+    return templates.TemplateResponse(request, "notifications.html", {})

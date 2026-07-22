@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from app.deps import allowed_classifications, require_curator
 from common.db import get_session
-from common.models import AuditLogEntry, Document
+from common.models import AuditLogEntry, Document, Notification
 from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -157,6 +157,15 @@ def approve(
             detail={"corrections": corrections.model_dump() if corrections else None},
         )
     )
+    # FR-15: notify the uploader of the decision.
+    session.add(
+        Notification(
+            recipient_sub=doc.uploader_sub,
+            document_id=doc.id,
+            decision="approved",
+            message=f"Your document '{doc.filename}' was approved.",
+        )
+    )
     session.commit()
     session.refresh(doc)
     return doc
@@ -189,6 +198,15 @@ def reject(
             action="document.reject",
             target_id=str(doc.id),
             detail={"reason": body.reason},
+        )
+    )
+    # FR-15: notify the uploader of the decision, with the stated reason.
+    session.add(
+        Notification(
+            recipient_sub=doc.uploader_sub,
+            document_id=doc.id,
+            decision="rejected",
+            message=f"Your document '{doc.filename}' was rejected: {body.reason}",
         )
     )
     session.commit()

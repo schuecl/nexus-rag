@@ -93,3 +93,21 @@ class AuditLogEntry(SQLModel, table=True):
     target_id: str | None = None
     detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class Notification(SQLModel, table=True):
+    """FR-15: the uploader is notified of a curator's decision. No SMTP/email
+    infra in this dev stack -- this is a discrete, markable-as-read record
+    (app/routes/notifications.py) rather than email/push, but distinct from
+    just checking GET /documents/{id} directly, which requires already
+    knowing which document to check."""
+
+    __tablename__ = "notifications"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    recipient_sub: str
+    document_id: uuid.UUID = Field(foreign_key="documents.id")
+    decision: str  # approved | rejected
+    message: str
+    read: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=_utcnow)
