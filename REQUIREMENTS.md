@@ -235,7 +235,7 @@ Takeaways:
 
 Prerequisites for OBO to work, confirmed against LibreChat 0.8.7 and Keycloak:
 - LibreChat's OpenID connection to Keycloak must be configured for **reusable access tokens** (a LibreChat OpenID setting shipped alongside OBO in 0.8.7).
-- Keycloak must support the underlying token exchange grant — **Standard Token Exchange (RFC 8693) has been officially supported since Keycloak 26.2** (previously a preview feature); confirm the Keycloak version in use is 26.2 or later, and enable token exchange on the client Keycloak uses for LibreChat.
+- Keycloak must support the underlying token exchange grant — **Standard Token Exchange (RFC 8693) has been officially supported since Keycloak 26.2** (previously a preview feature). **Confirmed:** the Keycloak version in use is above 26.2, so RFC 8693 support is not a blocker; token exchange still needs to be enabled on the client Keycloak uses for LibreChat (an admin-console step, not a version gap).
 - Whoever administers LibreChat needs the `MCP_SERVERS.CONFIGURE_OBO` role permission to set `obo.scopes` on the RAG MCP server's config.
 
 ## 8. Open Questions
@@ -244,7 +244,6 @@ Prerequisites for OBO to work, confirmed against LibreChat 0.8.7 and Keycloak:
 - Target end-to-end query latency budget (retrieval + rerank + generation) — compute headroom is confirmed (NFR-8) but no target has been set yet.
 - Expected corpus size and ingestion rate (affects Qdrant sharding/collection strategy and multi-tenancy design).
 - With Onyx Enterprise Edition ruled out by budget, and Dify identified as the strongest metadata/filtering primitive to build on: is extending Dify with a custom permission layer preferable to a fully custom ingestion UI, or is a clean-sheet build still preferred for consistency with how PING/MPNexus's other custom pieces were built?
-- Confirm the Keycloak version in use is 26.2+ (needed for officially-supported Token Exchange, RFC 8693) and that reusable access tokens are enabled on LibreChat's OpenID connection — both are prerequisites for the recommended OBO flow (Section 7.7).
 
 ## 9. Architecture Overview
 

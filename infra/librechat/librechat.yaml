@@ -32,5 +32,7 @@ mcpServers:
     # bearer token as an explicit `authorization_token` argument rather than
     # reading it from a forwarded header (see services/orchestration-mcp/app/server.py
     # TODO) -- so end-to-end OBO call-through isn't wired up yet even with this
-    # config in place. Fixing that is deferred, per the build plan, until
-    # Keycloak 26.2+ token exchange is confirmed working (Section 8).
+    # config in place. Keycloak's version is confirmed to support RFC 8693
+    # token exchange (no longer an open question, see REQUIREMENTS.md Section
+    # 7.7) -- what's left is the header-forwarding implementation itself plus
+    # enabling the fine-grained token-exchange admin permission on the client.

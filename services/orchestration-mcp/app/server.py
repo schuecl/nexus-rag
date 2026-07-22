@@ -4,8 +4,9 @@
    NOTE: the official OBO/JWT-forwarding wiring (Section 6.1/7.7) is deferred
    this session, so the tool takes the bearer token as an explicit argument
    rather than pulling it from a forwarded Authorization header -- swap this
-   for automatic header extraction once OBO end-to-end is confirmed working
-   (see REQUIREMENTS.md Section 8 open question on Keycloak 26.2+).
+   for automatic header extraction once that wiring is implemented. Keycloak's
+   version is confirmed to already support RFC 8693 token exchange, so this is
+   purely an implementation TODO here, not blocked on any external unknown.
 2. As a plain REST endpoint (mounted at /) for curl-based smoke testing
    without needing an MCP client, since nothing else in this skeleton can
    drive an MCP tool call yet.
