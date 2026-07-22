@@ -1,9 +1,10 @@
 """Core of the rag_search tool (FR-24..FR-29). Claims parsing and the mandatory
-access filter (Section 6.1/FR-26) are real and enforced; hybrid dense+BM25
-fusion and reranking (FR-24/FR-25) are TODO -- nothing has been embedded into
-Qdrant yet (ingestion-api's FR-3..FR-6 are also deferred this session), so this
-executes the real filter against Qdrant and reports what it found (or that the
-collection doesn't exist yet) rather than fabricating results.
+access filter (Section 6.1/FR-26) are real and enforced, and ingestion-api now
+writes real chunk vectors (FR-3..FR-6), so a query against an approved
+document should return real hits. Hybrid dense+BM25 fusion and reranking
+(FR-24/FR-25) are still TODO -- this executes a dense-only query against
+Qdrant and reports what it found (or that the collection doesn't exist yet,
+e.g. before any document has been submitted) rather than fabricating results.
 """
 
 from __future__ import annotations
@@ -16,15 +17,11 @@ from common.claims import parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
 from common.qdrant_filters import build_access_filter
-from qdrant_client import QdrantClient
+from common.qdrant_store import QDRANT_COLLECTION, get_qdrant_client
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
-QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "nexus_rag_chunks")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
-
-_qdrant = QdrantClient(url=QDRANT_URL)
 
 
 async def _embed_query(query: str) -> list[float]:
@@ -61,7 +58,7 @@ async def run_rag_search(bearer_token: str, query: str, top_k: int = 5) -> dict:
 
     try:
         query_vector = await _embed_query(query)
-        hits = _qdrant.query_points(
+        hits = get_qdrant_client().query_points(
             collection_name=QDRANT_COLLECTION,
             query=query_vector,
             query_filter=access_filter,
@@ -72,14 +69,15 @@ async def run_rag_search(bearer_token: str, query: str, top_k: int = 5) -> dict:
         ]
         if not hits:
             result["note"] = (
-                "no chunks matched -- expected until FR-3..FR-6 (parse/chunk/embed/"
-                "store) are implemented and documents are approved"
+                "no chunks matched -- either nothing's been ingested/approved yet, "
+                "or nothing in the corpus passes this user's access filter"
             )
     except (UnexpectedResponse, httpx.HTTPError) as exc:
         result["results"] = []
         result["note"] = (
-            f"Qdrant collection '{QDRANT_COLLECTION}' not queryable yet ({exc}); "
-            "this is expected until ingestion writes vectors (FR-6)"
+            f"Qdrant collection '{QDRANT_COLLECTION}' not queryable ({exc}); it's "
+            "created lazily on first ingestion (common.qdrant_store.ensure_collection), "
+            "so this is expected if no document has been submitted yet"
         )
 
     return result

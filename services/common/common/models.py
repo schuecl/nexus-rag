@@ -62,6 +62,7 @@ class Document(SQLModel, table=True):
     rejection_reason: str | None = None
     reviewed_by_sub: str | None = None
     reviewed_at: datetime | None = None
+    chunk_count: int = Field(default=0)
 
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

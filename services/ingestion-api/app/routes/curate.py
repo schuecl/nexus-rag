@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from app.deps import allowed_classifications, require_curator
 from common.db import get_session
 from common.models import AuditLogEntry, Document
+from common.qdrant_store import get_qdrant_client, update_document_payload
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -81,6 +82,17 @@ def approve(
     doc.status = "approved"
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(timezone.utc)
+
+    qdrant_fields = {"status": doc.status}
+    if corrections:
+        if corrections.classification:
+            qdrant_fields["classification"] = doc.classification
+        if corrections.releasability is not None:
+            qdrant_fields["releasability"] = doc.releasability
+        if corrections.access_scope is not None:
+            qdrant_fields["access_scope"] = doc.access_scope
+    update_document_payload(get_qdrant_client(), str(doc.id), qdrant_fields)
+
     session.add(doc)
     session.add(
         AuditLogEntry(
@@ -114,6 +126,7 @@ def reject(
     doc.rejection_reason = body.reason
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(timezone.utc)
+    update_document_payload(get_qdrant_client(), str(doc.id), {"status": doc.status})
     session.add(doc)
     session.add(
         AuditLogEntry(
