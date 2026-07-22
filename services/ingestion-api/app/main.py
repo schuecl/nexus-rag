@@ -3,9 +3,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from app.routes import admin, curate, notifications, upload
-from common.db import get_engine, init_db
+from common.db import get_engine, get_session, init_db
 from common.models import ClassificationLevel, ReleasabilityValue
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -55,13 +55,24 @@ def health():
 
 
 @app.get("/", response_class=HTMLResponse)
-def upload_page(request: Request):
+def upload_page(request: Request, session: Session = Depends(get_session)):
+    # C9: the dropdowns reflect the *live*, admin-configurable lists (retired
+    # values excluded) -- not the DEFAULT_* constants, which only seed those
+    # tables on first boot (see _seed_defaults above).
+    classifications = session.exec(
+        select(ClassificationLevel)
+        .where(ClassificationLevel.active == True)  # noqa: E712
+        .order_by(ClassificationLevel.rank)
+    ).all()
+    releasability = session.exec(
+        select(ReleasabilityValue).where(ReleasabilityValue.active == True)  # noqa: E712
+    ).all()
     return templates.TemplateResponse(
         request,
         "upload.html",
         {
-            "classifications": DEFAULT_CLASSIFICATIONS,
-            "releasability": DEFAULT_RELEASABILITY,
+            "classifications": [(c.value, c.rank) for c in classifications],
+            "releasability": [r.value for r in releasability],
         },
     )
 
