@@ -69,11 +69,17 @@ Or supply a `values-production.yaml` override file with all of the above
 - Set up NetworkPolicies, PodDisruptionBudgets, or HorizontalPodAutoscalers
   — not included in this pass; add them if your cluster's baseline requires
   them.
-- Harden container `securityContext` (non-root user, read-only root
-  filesystem) — deliberately left at Kubernetes defaults here because the
-  current Dockerfiles (`services/*/Dockerfile`) don't define a non-root
-  `USER`, so `runAsNonRoot: true` would fail to start the containers as
-  currently built. Harden the Dockerfiles first, then this chart.
+- Harden `qdrant`'s or `embeddingService`'s `securityContext` — both run
+  upstream images (`qdrant/qdrant`, `ollama/ollama`) whose own user/filesystem
+  conventions this chart doesn't override. `ingestion-api`,
+  `orchestration-mcp`, and `reranker-service` (the three custom-built images)
+  *do* run hardened: `services/*/Dockerfile` bakes in a fixed non-root UID/GID
+  (10001), and their Deployments set `runAsNonRoot: true`,
+  `readOnlyRootFilesystem: true`, and drop all capabilities
+  (`nexus-rag.podSecurityContext`/`nexus-rag.containerSecurityContext` in
+  `_helpers.tpl`), with `emptyDir` volumes at `/tmp` (upload spooling,
+  ML-library scratch files) and, for `ingestion-api`/`orchestration-mcp`, at
+  their `HF_HOME` model cache (no PVC there — see the persistence note below).
 
 ## Persistence notes
 

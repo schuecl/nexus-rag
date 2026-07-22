@@ -21,12 +21,24 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- include "nexus-rag.podSecurityContext" . | nindent 8 }}
       containers:
         - name: orchestration-mcp
           image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.orchestrationMcp.image) }}
+          securityContext:
+            {{- include "nexus-rag.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8002
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # common.sparse_embedding's BM25 model cache (HF_HOME in the
+            # Dockerfile) -- see ingestion-api-deployment.yaml's identical
+            # note on why this is an emptyDir rather than a PVC.
+            - name: hf-cache
+              mountPath: /srv/.cache/huggingface
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -59,4 +71,9 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.orchestrationMcp.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: hf-cache
+          emptyDir: {}
 {{- end }}

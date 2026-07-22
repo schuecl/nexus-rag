@@ -21,12 +21,31 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- include "nexus-rag.podSecurityContext" . | nindent 8 }}
       containers:
         - name: ingestion-api
           image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.ingestionApi.image) }}
+          securityContext:
+            {{- include "nexus-rag.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8001
+          volumeMounts:
+            # FastAPI/python-multipart spool uploaded files (FR-1) to /tmp
+            # once they exceed an in-memory threshold; needed alongside
+            # readOnlyRootFilesystem above.
+            - name: tmp
+              mountPath: /tmp
+            # common.sparse_embedding's BM25 model cache (HF_HOME in the
+            # Dockerfile). No PVC here (unlike reranker-service/
+            # embedding-service) -- an emptyDir just formalizes the same
+            # ephemeral, redownload-on-restart behavior this already had
+            # before readOnlyRootFilesystem made the container's own
+            # writable layer unavailable. Give it a real PVC if that
+            # redownload cost becomes a problem.
+            - name: hf-cache
+              mountPath: /srv/.cache/huggingface
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -57,4 +76,9 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.ingestionApi.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: hf-cache
+          emptyDir: {}
 {{- end }}
