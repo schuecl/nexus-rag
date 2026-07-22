@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 import httpx
 
@@ -26,6 +27,7 @@ from _keycloak import KEYCLOAK_URL, REALM, get_token, wait_until_up
 INGESTION_API_URL = os.environ.get("INGESTION_API_URL", "http://ingestion-api:8001")
 
 READY_TIMEOUT_SECONDS = 120
+PROCESSING_TIMEOUT_SECONDS = 60
 
 
 def wait_until_ready() -> None:
@@ -67,7 +69,33 @@ def submit(
         timeout=60,
     )
     resp.raise_for_status()
-    return resp.json()
+    doc = resp.json()
+    # FR-8: submission is accepted (202) before parse/chunk/embed has
+    # actually run; curation (approve/reject, called right after this in
+    # main()) requires the document to already be `pending_review`, so wait
+    # for the background pipeline to reach a terminal state here rather than
+    # racing it.
+    return wait_for_processed(token, doc["id"])
+
+
+def wait_for_processed(token: str, doc_id: str) -> dict:
+    deadline = time.monotonic() + PROCESSING_TIMEOUT_SECONDS
+    doc = None
+    while time.monotonic() < deadline:
+        resp = httpx.get(
+            f"{INGESTION_API_URL}/documents/{doc_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        doc = resp.json()
+        if doc["status"] not in ("queued", "processing"):
+            return doc
+        time.sleep(1)
+    raise RuntimeError(
+        f"document {doc_id} did not finish processing within "
+        f"{PROCESSING_TIMEOUT_SECONDS}s (last status: {doc['status'] if doc else 'unknown'})"
+    )
 
 
 def approve(token: str, doc_id: str) -> dict:

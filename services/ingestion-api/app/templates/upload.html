@@ -60,11 +60,31 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     const body = await res.json();
     resultEl.className = 'msg ' + (res.ok ? 'ok' : 'err');
     resultEl.textContent = JSON.stringify(body, null, 2);
-    if (res.ok) form.reset();
+    if (res.ok) {
+      form.reset();
+      pollStatus(body.id);
+    }
   } catch (err) {
     resultEl.className = 'msg err';
     resultEl.textContent = String(err);
   }
 });
+
+// FR-8: submission returns 202 with status "queued" before parse/chunk/embed
+// (FR-3..FR-6) has actually run; poll until it reaches a terminal state
+// (pending_review or failed) instead of just showing the initial response.
+const TERMINAL_STATUSES = ['pending_review', 'failed', 'approved', 'rejected', 'superseded'];
+
+async function pollStatus(docId, attempt = 0) {
+  const resultEl = document.getElementById('result');
+  const res = await fetch(`/documents/${docId}`, { headers: authHeaders() });
+  if (!res.ok) return;
+  const doc = await res.json();
+  resultEl.textContent = JSON.stringify(doc, null, 2);
+  resultEl.className = 'msg ' + (doc.status === 'failed' ? 'err' : 'ok');
+  if (!TERMINAL_STATUSES.includes(doc.status) && attempt < 30) {
+    setTimeout(() => pollStatus(docId, attempt + 1), 1000);
+  }
+}
 </script>
 {% endblock %}

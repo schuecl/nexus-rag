@@ -58,10 +58,13 @@ class Document(SQLModel, table=True):
     program_community: str | None = None
     effective_date: str | None = None
 
-    status: str = Field(default="pending_review")
-    # pending_review | approved | rejected | superseded (FR-7 -- set when a
-    # later submission naming this document as supersedes_document_id is approved)
+    status: str = Field(default="queued")
+    # FR-8 progress states, in order: queued -> processing -> embedded ->
+    # pending_review -> approved | rejected | superseded (FR-7 -- set when a
+    # later submission naming this document as supersedes_document_id is
+    # approved) | failed (parsing/embedding/storage error -- see processing_error)
     rejection_reason: str | None = None
+    processing_error: str | None = None
     reviewed_by_sub: str | None = None
     reviewed_at: datetime | None = None
     chunk_count: int = Field(default=0)

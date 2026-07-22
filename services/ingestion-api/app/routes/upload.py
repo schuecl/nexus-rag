@@ -1,10 +1,9 @@
-"""FR-1..FR-9: document submission and mandatory tagging, followed by the
-parse -> chunk -> embed -> store pipeline (FR-3..FR-6). Processing is
-synchronous within the request -- fine for the small documents this dev stack
-is meant to exercise, but a real deployment would move this to a background
-worker so FR-8's queued/processing states mean something; right now a
-submission either fully succeeds (pending_review, chunks embedded and stored)
-or fails outright (FR-9), there's no in-between state.
+"""FR-1..FR-9: document submission and mandatory tagging. Request handling
+(auth, tagging validation, FR-7 supersede-target checks) is synchronous and
+fast; the actual parse -> chunk -> embed -> store pipeline (FR-3..FR-6) runs
+in the background (FR-8) so a slow/large document can't tie up a request
+worker, and callers get real queued/processing/embedded/failed progress via
+GET /documents/{id} instead of just a pass/fail response.
 """
 
 from __future__ import annotations
@@ -16,13 +15,22 @@ from app.chunking import chunk_sections
 from app.deps import allowed_classifications, get_current_user, require_ingest
 from app.embedding import EmbeddingError, embed_texts
 from app.parsing import ParsingError, parse_document
-from common.db import get_session
+from common.db import get_engine, get_session
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
 from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
 from common.sparse_embedding import embed_sparse
 from common.versioning import SupersedeValidationError, validate_supersede_target
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from qdrant_client.models import PointStruct
 from sqlmodel import Session, select
 
@@ -31,8 +39,102 @@ router = APIRouter(prefix="/documents", tags=["ingestion"])
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # NFR-7 configurable size guard
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+async def _process_document(document_id: uuid.UUID, filename: str, contents: bytes) -> None:
+    """FR-3..FR-6, run after the request that created the `queued` row has
+    already returned. Uses its own DB session -- the request-scoped one is
+    gone by the time a background task runs. Any failure lands the document
+    in `failed` with a message in processing_error rather than propagating
+    (NFR-7: malformed input must not crash the worker); there's no HTTP
+    response left here to attach an error to.
+    """
+    with Session(get_engine()) as session:
+        doc = session.get(Document, document_id)
+        if doc is None:
+            return  # shouldn't happen; nothing sensible to do if it did
+
+        doc.status = "processing"
+        session.add(doc)
+        session.commit()
+
+        try:
+            sections = parse_document(filename, contents)
+            chunks = chunk_sections(sections)
+            if not chunks:
+                raise ParsingError("document contained no extractable text")
+
+            dense_vectors = await embed_texts([c.text for c in chunks])
+            sparse_vectors = embed_sparse([c.text for c in chunks])
+
+            points = [
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=chunk_vector(dense, sparse),
+                    payload={
+                        "document_id": str(doc.id),
+                        "chunk_index": chunk.chunk_index,
+                        "text": chunk.text,
+                        "heading": chunk.heading,
+                        "page_or_slide": chunk.page_or_slide,
+                        "filename": doc.filename,
+                        "doc_type": doc.doc_type,
+                        "source_originator": doc.source_originator,
+                        "classification": doc.classification,
+                        "releasability": doc.releasability,
+                        "access_scope": doc.access_scope,
+                        # Written as pending_review directly (not doc.status,
+                        # which is still `processing` at this point) -- this
+                        # is what keeps the chunk excluded from retrieval
+                        # (FR-11/FR-26) until a curator approves it.
+                        "status": "pending_review",
+                    },
+                )
+                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
+            ]
+            qdrant = get_qdrant_client()
+            ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
+            upsert_chunks(qdrant, points)
+
+            doc.status = "embedded"
+            doc.chunk_count = len(chunks)
+            session.add(doc)
+            session.commit()
+
+            doc.status = "pending_review"
+            session.add(doc)
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.embedded",
+                    target_id=str(doc.id),
+                    detail={"filename": doc.filename, "chunk_count": doc.chunk_count},
+                )
+            )
+            session.commit()
+        except (ParsingError, EmbeddingError) as exc:
+            doc.status = "failed"
+            doc.processing_error = str(exc)
+            session.add(doc)
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.failed",
+                    target_id=str(doc.id),
+                    detail={"error": str(exc)},
+                )
+            )
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 -- NFR-7: never crash the worker
+            doc.status = "failed"
+            doc.processing_error = f"unexpected error: {exc}"
+            session.add(doc)
+            session.commit()
+
+
+@router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def submit_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     classification: str = Form(...),
     releasability: str = Form(..., description="JSON array of strings"),
@@ -99,30 +201,6 @@ async def submit_document(
         except SupersedeValidationError as exc:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
 
-    # FR-3/FR-4: parse into structural sections, then chunk within them.
-    try:
-        sections = parse_document(file.filename or "unnamed", contents)
-    except ParsingError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-
-    chunks = chunk_sections(sections)
-    if not chunks:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "document contained no extractable text"
-        )
-
-    # FR-5: embed every chunk -- dense for semantic search, sparse BM25 for
-    # keyword search (FR-24). Both are needed at query time to fuse.
-    try:
-        dense_vectors = await embed_texts([c.text for c in chunks])
-    except EmbeddingError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    sparse_vectors = embed_sparse([c.text for c in chunks])
-
-    # Document.id is populated by its default_factory at construction time, so
-    # it's available for the Qdrant payload before this row is ever committed.
-    # Nothing is persisted to Postgres until the Qdrant write below succeeds --
-    # a best-effort ordering, not a real cross-store transaction.
     doc = Document(
         filename=file.filename or "unnamed",
         uploader_sub=user.sub,
@@ -135,39 +213,9 @@ async def submit_document(
         doc_type=metadata.doc_type,
         program_community=metadata.program_community,
         effective_date=metadata.effective_date,
-        status="pending_review",
-        chunk_count=len(chunks),
+        status="queued",
         supersedes_document_id=superseded_doc.id if superseded_doc else None,
     )
-
-    # FR-6: store each chunk's vector and full metadata payload, including the
-    # pending_review status that keeps it excluded from retrieval (FR-11/FR-26)
-    # until a curator approves it.
-    points = [
-        PointStruct(
-            id=str(uuid.uuid4()),
-            vector=chunk_vector(dense, sparse),
-            payload={
-                "document_id": str(doc.id),
-                "chunk_index": chunk.chunk_index,
-                "text": chunk.text,
-                "heading": chunk.heading,
-                "page_or_slide": chunk.page_or_slide,
-                "filename": doc.filename,
-                "doc_type": doc.doc_type,
-                "source_originator": doc.source_originator,
-                "classification": doc.classification,
-                "releasability": doc.releasability,
-                "access_scope": doc.access_scope,
-                "status": doc.status,
-            },
-        )
-        for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
-    ]
-    qdrant = get_qdrant_client()
-    ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
-    upsert_chunks(qdrant, points)
-
     session.add(doc)
     session.add(
         AuditLogEntry(
@@ -178,7 +226,6 @@ async def submit_document(
             detail={
                 "filename": doc.filename,
                 "classification": doc.classification,
-                "chunk_count": doc.chunk_count,
                 "supersedes_document_id": str(doc.supersedes_document_id)
                 if doc.supersedes_document_id
                 else None,
@@ -187,6 +234,8 @@ async def submit_document(
     )
     session.commit()
     session.refresh(doc)
+
+    background_tasks.add_task(_process_document, doc.id, doc.filename, contents)
     return doc
 
 
@@ -197,3 +246,19 @@ def list_my_documents(
 ):
     docs = session.exec(select(Document).where(Document.uploader_sub == user.sub)).all()
     return docs
+
+
+@router.get("/{doc_id}")
+def get_document(
+    doc_id: uuid.UUID,
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """FR-8: lets a caller poll a submission's status after the immediate
+    202 response. Scoped to the uploader themselves -- this isn't a general
+    document-lookup endpoint; curators have their own scoped queue view
+    (app/routes/curate.py)."""
+    doc = session.get(Document, doc_id)
+    if doc is None or doc.uploader_sub != user.sub:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    return doc
