@@ -125,6 +125,15 @@ Swap `username`/`password` for any seeded user above.
    isn't tagged `PUBLIC`) and confirm `results` comes back empty — that's FR-26
    enforcement holding on *both* the dense and sparse legs, not a bug.
 
+4. **Supersede** the document from step 1: submit a second file as `alice-ingest` with
+   `supersedes_document_id` set to the first document's `id` (same form field at
+   http://localhost:8001, or `-F supersedes_document_id=<id>` on the curl call from step
+   1). Approve it as `carol-curator`. Confirm the original document's status is now
+   `superseded` (`GET /documents/mine` as `alice-ingest`), that querying no longer
+   returns its chunks, and that only the new version's chunks do. Try superseding a
+   document that's still `pending_review`, or one outside `alice-ingest`'s org, and
+   confirm both are rejected with a 403/404 rather than silently accepted (FR-7).
+
 ## What's stubbed vs working
 
 **Working:**
@@ -151,14 +160,21 @@ Swap `username`/`password` for any seeded user above.
   fused candidates are then reranked by `reranker-service` (`app/reranking.py`), with a
   graceful fallback to the fused order (noted in the response, not hidden) if that
   service is unreachable.
+- **Re-ingestion/versioning (FR-7)** — an uploader can mark a submission as superseding
+  an existing approved document (`supersedes_document_id`, validated server-side against
+  the submitter's org/clearance/releasability, not just that the target exists —
+  `common/versioning.py`). The actual swap happens atomically with the *new* version's
+  curator approval, not at submission time: the old document's Qdrant chunks are deleted
+  (no orphans/duplicates), its Postgres status flips to `superseded`, and a
+  `document.supersede` audit entry records old/new document IDs and the approving
+  curator. The old document stays fully live until that moment. The approving curator's
+  authority is independently re-checked against the *old* document too (org + clearance),
+  since a version can legitimately change classification.
 - Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2).
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
-- Re-ingestion/versioning (FR-7) — replacing an outdated document's vectors without
-  orphaning old ones isn't implemented; re-submitting the "same" document today just
-  creates an unrelated second `Document` row and chunk set.
 - Ingestion is synchronous within the request — no `queued`/`processing` states (FR-8),
   just pending_review-on-success or a 4xx-on-failure. A real deployment would move
   parsing/chunking/embedding to a background worker.

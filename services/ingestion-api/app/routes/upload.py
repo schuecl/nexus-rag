@@ -21,6 +21,7 @@ from common.metadata import DocumentMetadataIn, MetadataValidationError, validat
 from common.models import AuditLogEntry, Document
 from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
 from common.sparse_embedding import embed_sparse
+from common.versioning import SupersedeValidationError, validate_supersede_target
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from qdrant_client.models import PointStruct
 from sqlmodel import Session, select
@@ -40,6 +41,7 @@ async def submit_document(
     doc_type: str = Form(...),
     program_community: str | None = Form(None),
     effective_date: str | None = Form(None),
+    supersedes_document_id: str | None = Form(None),
     user=Depends(require_ingest),
     session: Session = Depends(get_session),
 ):
@@ -58,6 +60,7 @@ async def submit_document(
             doc_type=doc_type,
             program_community=program_community,
             effective_date=effective_date,
+            supersedes_document_id=supersedes_document_id,
         )
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid metadata: {exc}") from exc
@@ -71,6 +74,30 @@ async def submit_document(
         )
     except MetadataValidationError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
+
+    # FR-7: if this submission claims to be a new version of an existing
+    # document, re-validate the target server-side -- not just that it
+    # exists, but that this uploader is actually authorized to act on it.
+    superseded_doc: Document | None = None
+    if metadata.supersedes_document_id:
+        try:
+            target_id = uuid.UUID(metadata.supersedes_document_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "supersedes_document_id is not a valid UUID"
+            ) from exc
+        superseded_doc = session.get(Document, target_id)
+        if superseded_doc is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "supersedes_document_id not found")
+        try:
+            validate_supersede_target(
+                superseded_doc,
+                new_owner_org=user.org or "unknown",
+                allowed_classifications=allowed,
+                user_releasability=user.releasability,
+            )
+        except SupersedeValidationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
 
     # FR-3/FR-4: parse into structural sections, then chunk within them.
     try:
@@ -110,6 +137,7 @@ async def submit_document(
         effective_date=metadata.effective_date,
         status="pending_review",
         chunk_count=len(chunks),
+        supersedes_document_id=superseded_doc.id if superseded_doc else None,
     )
 
     # FR-6: store each chunk's vector and full metadata payload, including the
@@ -151,6 +179,9 @@ async def submit_document(
                 "filename": doc.filename,
                 "classification": doc.classification,
                 "chunk_count": doc.chunk_count,
+                "supersedes_document_id": str(doc.supersedes_document_id)
+                if doc.supersedes_document_id
+                else None,
             },
         )
     )

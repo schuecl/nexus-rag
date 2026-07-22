@@ -20,6 +20,11 @@ class DocumentMetadataIn(BaseModel):
     doc_type: str
     program_community: str | None = None
     effective_date: str | None = None
+    # FR-7: optional -- marks this submission as a new version of an existing
+    # approved document. The target's existence, status, org, and classification
+    # are all re-checked server-side against the submitter's claims in
+    # app/routes/upload.py, which has DB access this pydantic-only model doesn't.
+    supersedes_document_id: str | None = None
 
     @field_validator("access_scope")
     @classmethod
