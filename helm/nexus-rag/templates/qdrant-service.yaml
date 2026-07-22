@@ -1,0 +1,22 @@
+{{- if .Values.qdrant.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-qdrant
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ .Values.qdrant.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.qdrant.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "qdrant") | nindent 4 }}
+{{- end }}

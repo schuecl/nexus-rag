@@ -1,0 +1,38 @@
+nexus-rag installed.
+
+Deployed in this release:
+{{- if .Values.qdrant.enabled }}
+  - Qdrant:              {{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}
+{{- end }}
+{{- if .Values.embeddingService.enabled }}
+  - embedding-service:   {{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }} (model: {{ .Values.embeddingService.model }})
+{{- end }}
+{{- if .Values.rerankerService.enabled }}
+  - reranker-service:    {{ include "nexus-rag.fullname" . }}-reranker-service:{{ .Values.rerankerService.service.port }} (model: {{ .Values.rerankerService.model }})
+{{- end }}
+{{- if .Values.ingestionApi.enabled }}
+  - ingestion-api:       {{ include "nexus-rag.fullname" . }}-ingestion-api:{{ .Values.ingestionApi.service.port }}
+{{- end }}
+{{- if .Values.orchestrationMcp.enabled }}
+  - orchestration-mcp:   {{ include "nexus-rag.fullname" . }}-orchestration-mcp:{{ .Values.orchestrationMcp.service.port }}
+{{- end }}
+
+Not deployed by this chart (NFR-10) -- confirm these already exist and are reachable:
+  - LibreChat, LiteLLM, Keycloak, generation-serving vLLM/Ollama (C7)
+  - Postgres (externalPostgres.existingSecret: {{ .Values.externalPostgres.existingSecret }}, key: {{ .Values.externalPostgres.secretKey }})
+
+Next steps:
+  1. Register {{ include "nexus-rag.fullname" . }}-orchestration-mcp as an MCP server in
+     LibreChat's librechat.yaml (see infra/librechat/librechat.yaml in the repo for the
+     dev-stack equivalent) -- this chart does not modify LibreChat's config for you.
+  2. Confirm the Keycloak client ({{ .Values.externalKeycloak.audience }}) has
+     standard.token.exchange.enabled and the fine-grained token-exchange admin
+     permission granted to LibreChat's client (manual admin-console step, not
+     something this chart or the application code can do).
+{{- if .Values.ingestionApi.ingress.enabled }}
+  3. Ingestion UI: https://{{ .Values.ingestionApi.ingress.host }}
+{{- else }}
+  3. Ingress is disabled for ingestion-api; reach it via
+     {{ include "nexus-rag.fullname" . }}-ingestion-api:{{ .Values.ingestionApi.service.port }}
+     from inside the cluster, or enable ingestionApi.ingress in values.yaml.
+{{- end }}

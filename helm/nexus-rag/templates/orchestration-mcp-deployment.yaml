@@ -1,0 +1,62 @@
+{{- if .Values.orchestrationMcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-orchestration-mcp
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestration-mcp
+spec:
+  replicas: {{ .Values.orchestrationMcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestration-mcp
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: orchestration-mcp
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.orchestrationMcp.image) }}
+          ports:
+            - name: http
+              containerPort: 8002
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalPostgres.existingSecret }}
+                  key: {{ .Values.externalPostgres.secretKey }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.externalKeycloak.issuerUrl | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.externalKeycloak.audience | quote }}
+            - name: QDRANT_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+            - name: OLLAMA_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.embeddingService.model | quote }}
+            - name: RERANKER_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-reranker-service:{{ .Values.rerankerService.service.port }}"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.orchestrationMcp.resources | nindent 12 }}
+{{- end }}
