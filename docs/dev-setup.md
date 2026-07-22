@@ -104,11 +104,16 @@ automated or for testing with your own file.
      -F doc_type="SOP"
    ```
 
-   Expect `status: pending_review` and a non-zero `chunk_count` — the file was parsed,
-   chunked, embedded, and its (not-yet-visible) chunks written to Qdrant with
-   `status: pending_review`. Try `classification=SECRET` as `alice-ingest` (only cleared
-   to CUI) and confirm it's rejected with a 403 (FR-18). Try an unsupported extension or
-   a corrupt/password-protected PDF and confirm a 422 rather than a 500 (FR-9).
+   Expect a `202` with `status: queued` — submission is accepted immediately and the
+   actual parse/chunk/embed/store pipeline (FR-3..FR-6) runs in the background (FR-8),
+   not before responding. Poll `GET /documents/<id>` (same bearer token) until `status`
+   reaches `pending_review` (or `failed`, with a message in `processing_error` — try an
+   unsupported extension or a corrupt/password-protected PDF to see this path; it's a
+   202-then-`failed` now, not a synchronous 422 like before FR-8). The ingestion UI does
+   this polling for you automatically after a browser upload. Try `classification=SECRET`
+   as `alice-ingest` (only cleared to CUI) and confirm the *submission itself* is
+   rejected with a 403 (FR-18) — that check is still synchronous, only parsing/embedding
+   moved to the background.
 
 2. **Curate** as `carol-curator` at http://localhost:8001/curate (or `GET/POST
    /curate/...` directly) — the pending doc from step 1 should appear (org match), and
@@ -169,11 +174,26 @@ automated or for testing with your own file.
 - **Document parsing, chunking, embedding, and Qdrant storage (FR-3..FR-6)** —
   `services/ingestion-api/app/{parsing,chunking,embedding}.py`. Handles PDF, DOCX,
   PPTX, XLSX, TXT/MD, HTML; chunks respect section/heading/page/slide boundaries
-  (~512 words, ~15% overlap — word-based, not a model-specific tokenizer); corrupt,
-  password-protected, empty, or unsupported files fail with a 4xx (FR-9), not a 500.
+  (~512 words, ~15% overlap — word-based, not a model-specific tokenizer).
   A curator's approve/reject (and any tag corrections made while approving) propagate
   to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`)
   — that's what actually changes query-time visibility.
+- **Async ingestion pipeline with real progress states (FR-8)** — `POST /documents`
+  validates the request synchronously (auth, mandatory tagging, FR-7 supersede-target
+  checks) and returns `202 Accepted` with `status: queued` immediately; the actual
+  parse/chunk/embed/store pipeline runs in the background
+  (`app/routes/upload.py:_process_document`), moving the row through
+  `queued → processing → embedded → pending_review`, or to `failed` with a message in
+  `processing_error` if parsing or embedding errors out (NFR-7: caught, not left to
+  crash the worker) — corrupt, password-protected, empty, or unsupported files land
+  here instead of a synchronous 4xx like before this change. `GET /documents/{id}`
+  (scoped to the uploader) polls current status; the ingestion UI polls it
+  automatically after upload. Uses FastAPI's `BackgroundTasks`, not a durable queue —
+  simple and adequate for this dev stack, but not crash-resilient: a process restart
+  mid-processing leaves a document stuck in `processing` forever. A production
+  deployment would want a real queue (Celery/RQ + a broker, or an outbox pattern) for
+  that guarantee; noted here rather than built, to avoid adding a new stateful service
+  to the dev stack for a dev-scale problem it doesn't actually have.
 - **Hybrid dense+BM25 retrieval and reranking (FR-24/FR-25)** —
   `services/orchestration-mcp/app/rag_search.py` queries a dense semantic leg and a BM25
   sparse leg (`common/sparse_embedding.py`, Qdrant's own `fastembed`/`Qdrant/bm25` model)
@@ -228,9 +248,6 @@ automated or for testing with your own file.
   in this repo yet.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
-- Ingestion is synchronous within the request — no `queued`/`processing` states (FR-8),
-  just pending_review-on-success or a 4xx-on-failure. A real deployment would move
-  parsing/chunking/embedding to a background worker.
 - Keycloak's fine-grained token-exchange admin permission (required on top of the
   client's `standard.token.exchange.enabled` attribute — see the `_comment` in the realm
   export) still needs a manual admin-console step, and `infra/librechat/librechat.yaml`'s
