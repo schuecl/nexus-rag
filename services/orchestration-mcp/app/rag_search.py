@@ -1,10 +1,14 @@
 """Core of the rag_search tool (FR-24..FR-29). Claims parsing and the mandatory
-access filter (Section 6.1/FR-26) are real and enforced, and ingestion-api now
-writes real chunk vectors (FR-3..FR-6), so a query against an approved
-document should return real hits. Hybrid dense+BM25 fusion and reranking
-(FR-24/FR-25) are still TODO -- this executes a dense-only query against
-Qdrant and reports what it found (or that the collection doesn't exist yet,
-e.g. before any document has been submitted) rather than fabricating results.
+access filter (Section 6.1/FR-26) are real and enforced, ingestion-api writes
+real chunk vectors (FR-3..FR-6), and retrieval is now genuinely hybrid: a
+dense (semantic) leg and a BM25 sparse (keyword) leg are queried in parallel
+via Qdrant's native Prefetch/FusionQuery API and combined with Reciprocal
+Rank Fusion (FR-24), then the fused top-N candidates are reranked by the
+standalone reranker-service before the final top-K is returned (FR-25).
+
+The access_filter is applied to *both* prefetch legs, not just one -- FR-26
+has to hold regardless of which retrieval path a chunk was found through, so
+neither leg can be used to bypass it.
 """
 
 from __future__ import annotations
@@ -13,15 +17,25 @@ import os
 
 import httpx
 import jwt
+from app.reranking import rerank
 from common.claims import parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
 from common.qdrant_filters import build_access_filter
-from common.qdrant_store import QDRANT_COLLECTION, get_qdrant_client
+from common.qdrant_store import DENSE_VECTOR, QDRANT_COLLECTION, SPARSE_VECTOR, get_qdrant_client
+from common.sparse_embedding import embed_sparse
 from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.models import Fusion, FusionQuery, Prefetch
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+
+# How many fused candidates to hand to the reranker before truncating to the
+# caller's requested top_k -- reranking over a wider pool than the final
+# answer size is the point of FR-25 (a bigger lever than picking top_k straight
+# out of retrieval).
+HYBRID_CANDIDATE_MULTIPLIER = 4
+MIN_HYBRID_CANDIDATES = 20
 
 
 async def _embed_query(query: str) -> list[float]:
@@ -52,32 +66,57 @@ async def run_rag_search(bearer_token: str, query: str, top_k: int = 5) -> dict:
         "query": query,
         "user": claims.preferred_username,
         "applied_filter": access_filter.model_dump(exclude_none=True),
-        "hybrid_retrieval": "TODO: dense+BM25 fusion not yet implemented (FR-24)",
-        "reranking": "TODO: cross-encoder rerank not yet wired in (FR-25)",
     }
 
+    hybrid_limit = max(top_k * HYBRID_CANDIDATE_MULTIPLIER, MIN_HYBRID_CANDIDATES)
+
     try:
-        query_vector = await _embed_query(query)
+        dense_vector = await _embed_query(query)
+        sparse_vector = embed_sparse([query])[0]
         hits = get_qdrant_client().query_points(
             collection_name=QDRANT_COLLECTION,
-            query=query_vector,
-            query_filter=access_filter,
-            limit=top_k,
+            prefetch=[
+                Prefetch(
+                    query=dense_vector,
+                    using=DENSE_VECTOR,
+                    filter=access_filter,
+                    limit=hybrid_limit,
+                ),
+                Prefetch(
+                    query=sparse_vector,
+                    using=SPARSE_VECTOR,
+                    filter=access_filter,
+                    limit=hybrid_limit,
+                ),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=hybrid_limit,
         ).points
-        result["results"] = [
-            {"id": str(h.id), "score": h.score, "payload": h.payload} for h in hits
-        ]
-        if not hits:
-            result["note"] = (
-                "no chunks matched -- either nothing's been ingested/approved yet, "
-                "or nothing in the corpus passes this user's access filter"
-            )
     except (UnexpectedResponse, httpx.HTTPError) as exc:
+        result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
+        result["reranking"] = "skipped, no candidates"
         result["results"] = []
         result["note"] = (
             f"Qdrant collection '{QDRANT_COLLECTION}' not queryable ({exc}); it's "
             "created lazily on first ingestion (common.qdrant_store.ensure_collection), "
             "so this is expected if no document has been submitted yet"
         )
+        return result
+
+    result["hybrid_retrieval"] = f"dense+bm25 RRF fusion over {len(hits)} candidates (FR-24)"
+
+    if not hits:
+        result["reranking"] = "skipped, no candidates"
+        result["results"] = []
+        result["note"] = (
+            "no chunks matched -- either nothing's been ingested/approved yet, "
+            "or nothing in the corpus passes this user's access filter"
+        )
+        return result
+
+    candidates = [{"id": str(h.id), "score": h.score, "payload": h.payload} for h in hits]
+    reranked, rerank_note = await rerank(query, candidates, top_k)
+    result["reranking"] = rerank_note
+    result["results"] = reranked
 
     return result

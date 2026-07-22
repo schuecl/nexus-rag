@@ -2,18 +2,27 @@
 
 One-command stand-up of the nexus-rag stack for exercising the ingest → curate → query
 flow on a workstation, with zero dependency on the production cluster. Every service is
-wired together, the auth/tagging plumbing works end to end, and submitted documents are
-now actually parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6).
-Hybrid dense+BM25 fusion/reranking and the OBO header-forwarding wiring are still `TODO`
-stubs. See "What's stubbed vs working" below.
+wired together, the auth/tagging plumbing works end to end, submitted documents are
+parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6), and
+retrieval genuinely fuses dense+BM25 hybrid search with a reranking pass (FR-24/FR-25).
+The OBO header-forwarding wiring is still a `TODO` stub. See "What's stubbed vs working"
+below.
+
+**Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
+`bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
+search was added, run `docker compose down -v` first -- `ensure_collection` only
+configures a collection when it doesn't already exist, so a stale volume won't pick up
+the new schema on its own.
 
 ## Prerequisites
 
 - Docker with Compose v2 (`docker compose version`)
-- ~10GB free disk (Ollama models + HF reranker model cache)
+- ~10GB free disk (Ollama models + HF reranker/BM25 model caches)
 - Internet access on first run only, to pull base images and download the embedding/
-  generation/reranker models. None of this is air-gapped yet — NFR-1 applies to the
-  production Helm deployment (NFR-10), not this dev stack.
+  generation/reranker/BM25 models (the last two from Hugging Face — `ingestion-api` and
+  `orchestration-mcp` both pull `Qdrant/bm25` via `fastembed` on first use). None of this
+  is air-gapped yet — NFR-1 applies to the production Helm deployment (NFR-10), not this
+  dev stack.
 
 ## Start the stack
 
@@ -23,8 +32,10 @@ docker compose up --build
 ```
 
 First boot takes a while: Keycloak imports the realm, `ollama-model-init` pulls
-`nomic-embed-text` and `llama3.2:1b`, and `reranker-service` downloads
-`cross-encoder/ms-marco-MiniLM-L6-v2` from Hugging Face.
+`nomic-embed-text` and `llama3.2:1b`, `reranker-service` downloads
+`cross-encoder/ms-marco-MiniLM-L6-v2`, and `ingestion-api`/`orchestration-mcp` each
+download the tiny (~10MB) `Qdrant/bm25` sparse model on first use — all from Hugging
+Face.
 
 | Service | URL | Notes |
 |---|---|---|
@@ -106,11 +117,13 @@ Swap `username`/`password` for any seeded user above.
 
    Expect `results` to contain the matching chunk(s), each with the source document's
    `applied_filter`-passing payload (classification, releasability, access_scope,
-   filename, heading/page_or_slide). Query as a user outside the document's
-   `access_scope` (e.g. someone not in `USAREUR-AF` and the doc isn't tagged `PUBLIC`)
-   and confirm `results` comes back empty — that's FR-26 enforcement, not a bug.
-   `hybrid_retrieval`/`reranking` in the response stay as `TODO` notes; this is a
-   dense-only match today.
+   filename, heading/page_or_slide). `hybrid_retrieval` and `reranking` in the response
+   describe what actually ran — a dense+BM25 RRF fusion over the candidate pool, then a
+   cross-encoder rerank via `reranker-service` (falls back to the fused order with a note
+   if `reranker-service` is unreachable, rather than failing the query). Query as a user
+   outside the document's `access_scope` (e.g. someone not in `USAREUR-AF` and the doc
+   isn't tagged `PUBLIC`) and confirm `results` comes back empty — that's FR-26
+   enforcement holding on *both* the dense and sparse legs, not a bug.
 
 ## What's stubbed vs working
 
@@ -130,19 +143,19 @@ Swap `username`/`password` for any seeded user above.
   A curator's approve/reject (and any tag corrections made while approving) propagate
   to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`)
   — that's what actually changes query-time visibility.
-- **`rag_search` returns real results** once a document is approved — dense-only, but
-  genuinely matching against embedded content and enforcing the claims-based filter,
-  not just building it against an empty collection.
+- **Hybrid dense+BM25 retrieval and reranking (FR-24/FR-25)** —
+  `services/orchestration-mcp/app/rag_search.py` queries a dense semantic leg and a BM25
+  sparse leg (`common/sparse_embedding.py`, Qdrant's own `fastembed`/`Qdrant/bm25` model)
+  in parallel via Qdrant's native `Prefetch`/`FusionQuery` (Reciprocal Rank Fusion), with
+  the access filter applied to *both* legs so neither can be used to bypass FR-26. The
+  fused candidates are then reranked by `reranker-service` (`app/reranking.py`), with a
+  graceful fallback to the fused order (noted in the response, not hidden) if that
+  service is unreachable.
 - Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
-- `reranker-service` — fully functional `/rerank` endpoint (not yet called from
-  `rag_search`, see below).
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2).
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
-- Hybrid dense+BM25 fusion and reranking (FR-24/FR-25) —
-  `services/orchestration-mcp/app/rag_search.py`. Still a dense-only Qdrant query;
-  `reranker-service` exists but isn't called from the retrieval path yet.
 - Re-ingestion/versioning (FR-7) — replacing an outdated document's vectors without
   orphaning old ones isn't implemented; re-submitting the "same" document today just
   creates an unrelated second `Document` row and chunk set.

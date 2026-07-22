@@ -19,7 +19,8 @@ from app.parsing import ParsingError, parse_document
 from common.db import get_session
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
-from common.qdrant_store import ensure_collection, get_qdrant_client, upsert_chunks
+from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
+from common.sparse_embedding import embed_sparse
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from qdrant_client.models import PointStruct
 from sqlmodel import Session, select
@@ -83,11 +84,13 @@ async def submit_document(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "document contained no extractable text"
         )
 
-    # FR-5: embed every chunk.
+    # FR-5: embed every chunk -- dense for semantic search, sparse BM25 for
+    # keyword search (FR-24). Both are needed at query time to fuse.
     try:
-        vectors = await embed_texts([c.text for c in chunks])
+        dense_vectors = await embed_texts([c.text for c in chunks])
     except EmbeddingError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    sparse_vectors = embed_sparse([c.text for c in chunks])
 
     # Document.id is populated by its default_factory at construction time, so
     # it's available for the Qdrant payload before this row is ever committed.
@@ -115,7 +118,7 @@ async def submit_document(
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=vector,
+            vector=chunk_vector(dense, sparse),
             payload={
                 "document_id": str(doc.id),
                 "chunk_index": chunk.chunk_index,
@@ -131,10 +134,10 @@ async def submit_document(
                 "status": doc.status,
             },
         )
-        for chunk, vector in zip(chunks, vectors)
+        for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
     ]
     qdrant = get_qdrant_client()
-    ensure_collection(qdrant, vector_size=len(vectors[0]))
+    ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
     upsert_chunks(qdrant, points)
 
     session.add(doc)
