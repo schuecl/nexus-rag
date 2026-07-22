@@ -1,5 +1,6 @@
 """FR-10..FR-16: curation queue, scoped to the orgs a curator holds authority
-for (FR-12), with approval capped by both org (FR-14.2) and clearance (FR-14.1).
+for (FR-12), with approval capped by org (FR-14.2) and by clearance/releasability
+(FR-14.1, mirroring FR-18's uploader-side check).
 """
 
 from __future__ import annotations
@@ -50,6 +51,16 @@ def _check_curator_authority(user, doc: Document, session: Session) -> None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "cannot approve a document above your own cleared level",
+        )
+    # FR-14.1: "by clearance/releasability, same as FR-18" -- a curator who
+    # doesn't hold every releasability caveat on the document can't publish
+    # it, mirroring validate_against_claims' uploader-side check exactly.
+    disallowed = set(doc.releasability) - set(user.releasability)
+    if disallowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"cannot approve a document with releasability value(s) {sorted(disallowed)} "
+            "you do not hold",
         )
 
 
