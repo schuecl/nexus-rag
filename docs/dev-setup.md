@@ -236,7 +236,13 @@ automated or for testing with your own file.
   group was never started, so every MCP call would have 500'd. Fixed by adding `/health`
   and `/debug/rag_search` via FastMCP's own `custom_route` instead of wrapping the app in
   an outer Starlette `Mount`, which doesn't propagate lifespan to the mounted sub-app.
-- Admin-configurable Classification/Releasability lists (C9) via `/admin/*`.
+- **Admin-configurable Classification/Releasability lists (C9)** via `/admin/*`
+  (`rag-admin` only) — add, retire (soft-delete via an `active` flag, not a hard
+  delete, so existing documents/audit history keep referencing the value), or
+  reorder without a code change or redeploy. The upload UI's dropdowns
+  (`GET /`) live-query these same tables (active values only, classification
+  ordered by rank), not a hardcoded list, so an admin change is reflected on
+  the next page load.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2).
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
