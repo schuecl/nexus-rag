@@ -63,3 +63,32 @@ Pass a dict with "global" (the top-level .Values.global) and "image" (a componen
 {{- printf "%s:%s" $repo .image.tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Pod-level securityContext for the three custom-built services (ingestion-api,
+orchestration-mcp, reranker-service). UID/GID 10001 is the fixed non-root
+user baked into services/*/Dockerfile -- not runtime-injected, so it has to
+match exactly. Not used by qdrant or embeddingService, which run upstream
+images (qdrant/qdrant, ollama/ollama) whose own user conventions this chart
+doesn't override.
+*/}}
+{{- define "nexus-rag.podSecurityContext" -}}
+runAsNonRoot: true
+runAsUser: 10001
+runAsGroup: 10001
+fsGroup: 10001
+{{- end -}}
+
+{{/*
+Container-level securityContext paired with the pod-level one above.
+readOnlyRootFilesystem is safe here because the only runtime writes these
+images make are to HF_HOME (a mounted PVC/volume, not the root filesystem)
+and /tmp (an emptyDir volume the caller must mount alongside this -- see
+each Deployment template).
+*/}}
+{{- define "nexus-rag.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: ["ALL"]
+{{- end -}}

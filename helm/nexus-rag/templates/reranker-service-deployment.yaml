@@ -25,9 +25,13 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- include "nexus-rag.podSecurityContext" . | nindent 8 }}
       containers:
         - name: reranker-service
           image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.rerankerService.image) }}
+          securityContext:
+            {{- include "nexus-rag.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8003
@@ -37,6 +41,10 @@ spec:
           volumeMounts:
             - name: hf-cache
               mountPath: /srv/.cache/huggingface
+            # sentence-transformers/torch scratch files (e.g. joblib,
+            # matplotlib config); needed alongside readOnlyRootFilesystem.
+            - name: tmp
+              mountPath: /tmp
           livenessProbe:
             httpGet:
               path: /health
@@ -55,4 +63,6 @@ spec:
         - name: hf-cache
           persistentVolumeClaim:
             claimName: {{ include "nexus-rag.fullname" . }}-reranker-service-cache
+        - name: tmp
+          emptyDir: {}
 {{- end }}
