@@ -265,7 +265,7 @@ automated or for testing with your own file.
   the next page load.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2) -- exercised against a real `docker compose up` (not just
-  inspected as JSON), which surfaced five real, independently-fixed failures. The first
+  inspected as JSON), which surfaced six real, independently-fixed failures. The first
   four blocked the `keycloak` container from starting/staying healthy at all: the
   realm-export JSON can't carry `_comment`-style fields (Keycloak's importer uses strict
   JSON deserialization and rejects any unrecognized property, failing the whole import);
@@ -288,11 +288,22 @@ automated or for testing with your own file.
   list contained. Fixed by pulling the authoritative provider list directly from a live
   Keycloak instance's built-in `master` realm (`GET
   /admin/realms/master/authentication/required-actions`) rather than hand-guessing the
-  schema, and adding it as the realm-export's top-level `requiredActions` array. The first
-  four fixes are confirmed end to end (realm import completes, `keycloak` reaches a
-  genuinely healthy container); this fifth one is not yet confirmed against a real
-  password-grant login -- update this note once it has been, since "healthy container"
-  turned out not to imply "usable realm."
+  schema, and adding it as the realm-export's top-level `requiredActions` array -- necessary,
+  but on its own not sufficient: the exact same error persisted afterward. Extensive
+  differential debugging against a real login (comparing the seeded, import-created
+  `alice-ingest` against a user created fresh through the admin console, which worked)
+  ruled out credentials (reset via the same admin API path the working user went through --
+  still failed), the per-user `requiredActions` list (already empty), and every custom
+  attribute (cleared entirely -- still failed) before landing on the actual sixth cause:
+  none of the seeded users had `firstName`/`lastName` set, and Keycloak's `VERIFY_PROFILE`
+  required action (now enabled via the registry fix above) dynamically enforces the realm's
+  User Profile schema at login time -- which marks `firstName`/`lastName` required by
+  default -- regardless of what's in the user's *stored* `requiredActions` list, which is
+  why it was invisible in every API/admin-console check of that field. Fixed by adding
+  `firstName`/`lastName` to all four seeded users. All six fixes are now confirmed end to
+  end against a real `docker compose up`, including an actual successful password-grant
+  login with the expected claims (`rag_roles`, `clearance`, `releasability`, `groups`,
+  `org`) in the returned token.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
