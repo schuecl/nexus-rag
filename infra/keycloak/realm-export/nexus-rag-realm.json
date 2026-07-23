@@ -92,6 +92,16 @@
             "userinfo.token.claim": "true",
             "multivalued": "true"
           }
+        },
+        {
+          "name": "audience-rag-app",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "rag-app",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
