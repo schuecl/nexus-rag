@@ -127,6 +127,16 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
+      # Browser OIDC login (ARCHITECTURE.md Section 4.4). RAG_APP_KEYCLOAK_CLIENT_SECRET
+      # is the same var already used by seed-sample-data/eval-retrieval below -- rag-app
+      # is a confidential client, so the auth-code/refresh token exchanges in
+      # app/routes/auth.py and app/deps.py are server-to-server. COOKIE_SECURE=false
+      # because this dev stack serves the UI over plain http://localhost, where a
+      # Secure-flagged cookie would never come back.
+      OIDC_CLIENT_ID: rag-app
+      RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+      OIDC_REDIRECT_URI: http://localhost:8001/auth/callback
+      COOKIE_SECURE: "false"
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from app.routes import admin, curate, notifications, upload
+from app.routes import admin, auth, curate, notifications, upload
 from common.db import get_engine, get_session, init_db
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import Depends, FastAPI, Request
@@ -43,6 +43,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
 templates = Jinja2Templates(directory="app/templates")
 
+app.include_router(auth.router)
 app.include_router(upload.router)
 app.include_router(curate.router)
 app.include_router(admin.router)
