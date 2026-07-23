@@ -99,8 +99,7 @@
       "defaultClientScopes": ["nexus-rag-claims", "profile", "email"],
       "attributes": {
         "standard.token.exchange.enabled": "true"
-      },
-      "_comment": "standard.token.exchange.enabled marks this client as an OBO exchange target (Section 7.7). Keycloak 26.2+ also requires a fine-grained admin permission granting the librechat client permission to exchange for this client's tokens -- that policy isn't expressible in a plain realm-export JSON and must be finished in the admin console; see docs/dev-setup.md."
+      }
     },
     {
       "clientId": "librechat",
@@ -117,8 +116,7 @@
       "attributes": {
         "access.token.lifespan": "900",
         "use.refresh.tokens": "true"
-      },
-      "_comment": "Reusable access tokens (Section 7.7 OBO prerequisite) are a LibreChat-side OpenID setting, not a Keycloak client attribute -- set via OPENID_REUSE_TOKENS=true in docker-compose.yml's librechat service environment, not librechat.yaml (that file is LibreChat's endpoints/mcpServers config, not its auth env vars)."
+      }
     }
   ],
   "roles": {

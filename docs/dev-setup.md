@@ -285,12 +285,24 @@ automated or for testing with your own file.
   in this repo yet.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
-- Keycloak's fine-grained token-exchange admin permission (required on top of the
-  client's `standard.token.exchange.enabled` attribute — see the `_comment` in the realm
-  export) still needs a manual admin-console step, and `infra/librechat/librechat.yaml`'s
-  exact schema hasn't been validated against a running LibreChat 0.8.7 instance (only
-  `orchestration-mcp`'s side of the OBO connection has been verified, using the real MCP
-  client SDK standing in for LibreChat's MCP client).
+- **Keycloak OBO/token-exchange, still needs manual admin-console steps.** The `rag-app`
+  client's `standard.token.exchange.enabled: "true"` attribute (in the realm export) marks
+  it as an OBO exchange target (Section 7.7), but Keycloak 26.2+ also requires a
+  fine-grained admin permission granting the `librechat` client permission to actually
+  exchange for `rag-app`'s tokens — that policy isn't expressible in a plain realm-export
+  JSON at all (note: don't add a `_comment` field or similar to work around that akin to
+  what a `.json`/`.yaml` comment would do — Keycloak's realm importer uses strict JSON
+  deserialization and will refuse to import the whole realm over a single unrecognized
+  property, which is exactly what broke `--import-realm` before this was caught during a
+  real `docker compose up` run: `ERROR: Unrecognized field "_comment"`). Finish this in the
+  admin console after import. Similarly, reusable access tokens (the other Section 7.7 OBO
+  prerequisite) are a LibreChat-side OpenID setting, not a Keycloak client attribute — set
+  via `OPENID_REUSE_TOKENS=true` in `docker-compose.yml`'s `librechat` service environment,
+  not `librechat.yaml` (that file is LibreChat's `endpoints`/`mcpServers` config, not its
+  auth environment variables).
+- `infra/librechat/librechat.yaml`'s exact schema hasn't been validated against a running
+  LibreChat 0.8.7 instance (only `orchestration-mcp`'s side of the OBO connection has been
+  verified, using the real MCP client SDK standing in for LibreChat's MCP client).
 - Full OIDC Authorization Code login flow for the ingestion UI's browser pages (uses a
   pasted-token workaround instead, see above).
 
