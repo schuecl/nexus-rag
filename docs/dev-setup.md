@@ -273,9 +273,9 @@ automated or for testing with your own file.
   since a bare `--import-realm` doesn't create Keycloak's usual built-in ones the way the
   admin console's "Create realm" flow does; and every `clientScopes[].description` has to
   stay under Keycloak's `CLIENT_SCOPE.DESCRIPTION` column limit (`varchar(255)`) or the
-  Liquibase migration itself fails outright with a batch-update SQL error. As of the last
-  fix, realm import has not yet been confirmed to complete and reach a healthy container
-  end to end -- update this note once it has.
+  Liquibase migration itself fails outright with a batch-update SQL error. With all four
+  fixed, realm import completes and `keycloak` reaches a genuinely healthy container in a
+  real `docker compose up`, confirmed end to end.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
