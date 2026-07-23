@@ -19,6 +19,39 @@
   ],
   "clientScopes": [
     {
+      "name": "basic",
+      "protocol": "openid-connect",
+      "description": "Standard OIDC basic scope -- explicit for the same reason as profile/email: a bare --import-realm doesn't create it. Carries the sub claim via oidc-sub-mapper; without it every token silently has no subject at all.",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "auth_time",
+            "jsonType.label": "long"
+          }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "name": "nexus-rag-claims",
       "protocol": "openid-connect",
       "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, releasability, groups, org, rag_roles",
@@ -172,7 +205,7 @@
       "serviceAccountsEnabled": true,
       "redirectUris": ["*"],
       "webOrigins": ["*"],
-      "defaultClientScopes": ["nexus-rag-claims", "profile", "email"],
+      "defaultClientScopes": ["basic", "nexus-rag-claims", "profile", "email"],
       "attributes": {
         "standard.token.exchange.enabled": "true"
       }
@@ -188,7 +221,7 @@
       "directAccessGrantsEnabled": true,
       "redirectUris": ["http://librechat:3080/oauth/openid/callback"],
       "webOrigins": ["http://librechat:3080"],
-      "defaultClientScopes": ["nexus-rag-claims", "profile", "email"],
+      "defaultClientScopes": ["basic", "nexus-rag-claims", "profile", "email"],
       "attributes": {
         "access.token.lifespan": "900",
         "use.refresh.tokens": "true"

@@ -267,7 +267,7 @@ automated or for testing with your own file.
   the next page load.
 - **Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2)** -- exercised against a real `docker compose up` (not just
-  inspected as JSON), which surfaced seven real, independently-fixed failures. All are
+  inspected as JSON), which surfaced eight real, independently-fixed failures. All are
   fixed, and the full flow -- realm import, a healthy `keycloak` container, password-grant
   login, and a token actually accepted by `ingestion-api`/`orchestration-mcp` -- is
   confirmed end to end against a real running stack, not assumed:
@@ -309,6 +309,21 @@ automated or for testing with your own file.
      #1-6's verification) never exercises audience validation at all, only real
      signature-verified tokens do. Added the mapper to the shared `nexus-rag-claims`
      client scope, verified live against the running realm before committing it.
+  8. **Missing `sub` (subject) claim -- absent, not just unverifiable.** Fixing #7
+     immediately surfaced this one: `ingestion-api`'s own claims parsing then crashed
+     with `KeyError: 'sub'` -- not a validation error, the decoded token payload
+     genuinely had no `sub` field at all. Unlike most standard claims, `sub` isn't part
+     of a JWT's intrinsic structure Keycloak always includes; it's added by a mapper
+     (`oidc-sub-mapper`) inside a *different* built-in scope, `basic`, distinct from
+     `profile`/`email` and never referenced anywhere in the original realm export at
+     all -- same "bare `--import-realm` skips built-in defaults" pattern as #3, just a
+     scope we hadn't found yet. Confirmed via web search this is a
+     [known](https://github.com/keycloak/keycloak/issues/31082)
+     [class](https://github.com/keycloak/keycloak/issues/41098) of Keycloak issue, not
+     unique to us. Pulled `basic`'s exact mapper definitions from a live instance's
+     `master` realm (same technique as #5), verified live against the running realm
+     (creating the scope and assigning it via the Admin API, confirming a fresh token
+     carried `sub`) before committing it to `nexus-rag-claims`'s sibling scope list.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
