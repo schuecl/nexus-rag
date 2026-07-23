@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -13,6 +14,16 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 SESSION_COOKIE = "nexus_rag_session"
+# NFR-14: double-submit CSRF cookie, set alongside SESSION_COOKIE at login
+# (routes/auth.py's callback()) -- deliberately NOT HttpOnly, since the page's
+# own JS has to read it and echo it back as a header (base.html's
+# authHeaders()). A cross-site attacker can still make the browser *send*
+# nexus_rag_session on a forged request (that's the CSRF scenario this
+# defends), but can't read this cookie's value to forge the matching header,
+# and can't attach custom headers to a cross-site request in the first place
+# without triggering a CORS preflight this app doesn't allow.
+CSRF_COOKIE = "nexus_rag_csrf"
+CSRF_HEADER = "X-CSRF-Token"
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "rag-app")
 OIDC_CLIENT_SECRET = os.environ.get("RAG_APP_KEYCLOAK_CLIENT_SECRET", "dev-rag-app-secret")
 # Token endpoint calls (auth-code exchange in routes/auth.py, refresh below)
@@ -138,6 +149,20 @@ def get_current_user_optional(
         return get_current_user(request, db)
     except HTTPException:
         return None
+
+
+def verify_csrf(request: Request) -> None:
+    """NFR-14: required on every state-changing route. A caller presenting a
+    raw Authorization header (API/MCP client, e.g. curl or orchestration-mcp)
+    is never CSRF-exposed -- a cross-site page can't make the victim's
+    browser attach an arbitrary header -- so this only enforces anything when
+    a session cookie is present, i.e. a browser-driven request."""
+    if not request.cookies.get(SESSION_COOKIE):
+        return
+    cookie_token = request.cookies.get(CSRF_COOKIE)
+    header_token = request.headers.get(CSRF_HEADER)
+    if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "missing or invalid CSRF token")
 
 
 def require_ingest(user: UserClaims = Depends(get_current_user)) -> UserClaims:

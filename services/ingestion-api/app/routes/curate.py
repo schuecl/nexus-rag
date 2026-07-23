@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from app.deps import allowed_classifications, require_curator
+from app.deps import allowed_classifications, require_curator, verify_csrf
 from common.db import get_session
 from common.models import AuditLogEntry, Document, Notification
 from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
@@ -121,6 +121,7 @@ def approve(
     corrections: Corrections | None = None,
     user=Depends(require_curator),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     doc = _load_pending(session, doc_id)
     _check_curator_authority(user, doc, session)
@@ -191,6 +192,7 @@ def reject(
     body: Rejection,
     user=Depends(require_curator),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     doc = _load_pending(session, doc_id)
     _check_curator_authority(user, doc, session)

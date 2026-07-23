@@ -13,7 +13,7 @@ import os
 import uuid
 
 from app.chunking import chunk_sections
-from app.deps import allowed_classifications, get_current_user, require_ingest
+from app.deps import allowed_classifications, get_current_user, require_ingest, verify_csrf
 from app.embedding import EmbeddingError, embed_texts
 from app.parsing import ParsingError, parse_document
 from common.db import get_engine, get_session
@@ -151,6 +151,7 @@ async def submit_document(
     supersedes_document_id: str | None = Form(None),
     user=Depends(require_ingest),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     contents = await file.read()
     if len(contents) > MAX_UPLOAD_BYTES:

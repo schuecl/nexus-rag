@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.deps import get_current_user
+from app.deps import get_current_user, verify_csrf
 from common.db import get_session
 from common.models import Notification
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,6 +33,7 @@ def mark_read(
     notification_id: uuid.UUID,
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     notification = session.get(Notification, notification_id)
     if notification is None or notification.recipient_sub != user.sub:

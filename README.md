@@ -67,7 +67,10 @@ vs working" section for the honest, current list.
 - **Browser login for the ingestion UI:** a real OIDC Authorization Code + PKCE flow
   against Keycloak (`/auth/login` → `/auth/callback`) — tokens live server-side in a
   Postgres-backed session, refreshed transparently, never in browser-reachable storage.
-  Replaces the earlier paste-a-token dev workaround. See `ARCHITECTURE.md` Section 4.4.
+  Replaces the earlier paste-a-token dev workaround. CSRF-protected (NFR-14): a
+  double-submit cookie, checked on every state-changing route, that only applies to
+  cookie-authenticated browser requests — bearer-token API/MCP callers are unaffected.
+  See `ARCHITECTURE.md` Section 4.4.
 
 **What's explicitly not done, and why:**
 
