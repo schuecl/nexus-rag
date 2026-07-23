@@ -201,8 +201,11 @@ automated or for testing with your own file.
   (`app/routes/upload.py:_process_document`), moving the row through
   `queued → processing → embedded → pending_review`, or to `failed` with a message in
   `processing_error` if parsing or embedding errors out (NFR-7: caught, not left to
-  crash the worker) — corrupt, password-protected, empty, or unsupported files land
-  here instead of a synchronous 4xx like before this change. `GET /documents/{id}`
+  crash the worker) — corrupt, password-protected, empty, unsupported, or zip-bomb-shaped
+  (`app/parsing.py`'s `_check_zip_bomb`: a `.docx`/`.pptx`/`.xlsx` whose ZIP entries would
+  decompress past 200MB or at a >200:1 ratio is rejected before python-docx/python-pptx/
+  openpyxl ever touch it, since `MAX_UPLOAD_BYTES` only bounds the *compressed* upload)
+  files land here instead of a synchronous 4xx like before this change. `GET /documents/{id}`
   (scoped to the uploader) polls current status; the ingestion UI polls it
   automatically after upload. Uses FastAPI's `BackgroundTasks`, not a durable queue —
   simple and adequate for this dev stack, but not crash-resilient: a process restart
