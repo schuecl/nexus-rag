@@ -62,6 +62,8 @@ spec:
               value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
+            - name: MAX_UPLOAD_BYTES
+              value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
           livenessProbe:
             httpGet:
               path: /health

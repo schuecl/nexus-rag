@@ -9,6 +9,7 @@ GET /documents/{id} instead of just a pass/fail response.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 
 from app.chunking import chunk_sections
@@ -36,7 +37,10 @@ from sqlmodel import Session, select
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # NFR-7 configurable size guard
+# FR-9/NFR-7: "a configurable size limit" -- was a hardcoded constant despite
+# the comment's own claim; now actually reads from the environment, default
+# unchanged (50MB).
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
 
 
 async def _process_document(document_id: uuid.UUID, filename: str, contents: bytes) -> None:
