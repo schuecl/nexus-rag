@@ -40,6 +40,15 @@ doesn't render cleanly as a bug to fix, not a surprise.
   `DATABASE_URL` (`postgresql+psycopg://user:pass@host:5432/dbname`)
 - Keycloak realm/client already configured per REQUIREMENTS.md Section 6.2
   (see `infra/keycloak/realm-export/` for the dev-stack equivalent to adapt)
+- A pre-created Secret matching `externalKeycloak.clientSecret.existingSecret` /
+  `.secretKey`, containing the `rag-app` client's confidential-client secret —
+  needed for the ingestion UI's browser OIDC login (ARCHITECTURE.md Section
+  4.4: the auth-code exchange and token refresh are server-to-server calls
+  against Keycloak's token endpoint)
+- Either `ingestionApi.ingress.enabled: true` with `ingestionApi.ingress.host`
+  set, or an explicit `ingestionApi.oidcRedirectUri` — the chart fails the
+  render otherwise, rather than silently deploying a broken OIDC login
+  callback URL (`_helpers.tpl`'s `nexus-rag.oidcRedirectUri`)
 
 ## Install
 
@@ -48,7 +57,9 @@ helm install nexus-rag ./helm/nexus-rag \
   --namespace nexus-rag --create-namespace \
   --set global.imageRegistry=registry.internal.example.mil/nexus-rag \
   --set externalKeycloak.issuerUrl=https://keycloak.example.mil/realms/nexus-rag \
-  --set externalPostgres.existingSecret=nexus-rag-db
+  --set externalPostgres.existingSecret=nexus-rag-db \
+  --set ingestionApi.ingress.enabled=true \
+  --set ingestionApi.ingress.host=rag-ingest.example.mil
 ```
 
 Or supply a `values-production.yaml` override file with all of the above

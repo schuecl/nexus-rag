@@ -45,6 +45,17 @@ externalKeycloak:
   # canonical hostname, so a single value here is all that's ever needed.
   issuerUrl: "https://keycloak.example.mil/realms/nexus-rag"
   audience: "rag-app"
+  # Browser OIDC Authorization Code + PKCE login for the ingestion UI
+  # (ARCHITECTURE.md Section 4.4). clientId matches the confidential client
+  # already configured per REQUIREMENTS.md Section 6.2 (dev stack: rag-app,
+  # infra/keycloak/realm-export/nexus-rag-realm.json).
+  clientId: "rag-app"
+  # rag-app is a confidential client -- its secret comes from a pre-created
+  # Secret (same pattern as externalPostgres.existingSecret above), never a
+  # plain value here. The Secret must contain a key matching secretKey below.
+  clientSecret:
+    existingSecret: "nexus-rag-keycloak-client-secret"
+    secretKey: "client-secret"
 
 # ---------------------------------------------------------------------------
 # Qdrant (C3 -- already decided; new to the cluster, so this chart deploys it
@@ -158,6 +169,19 @@ ingestionApi:
     className: ""
     host: "rag-ingest.example.mil"
     tls: []
+  # Browser OIDC login callback URL (ARCHITECTURE.md Section 4.4), passed
+  # through as OIDC_REDIRECT_URI. Empty (default) derives it from
+  # ingress.host above -- https if ingress.tls is set, http otherwise (see
+  # _helpers.tpl's nexus-rag.oidcRedirectUri). Set this explicitly only if
+  # ingress is disabled, or the externally-visible URL differs from the
+  # ingress host (e.g. behind another proxy/load balancer this chart doesn't
+  # manage).
+  oidcRedirectUri: ""
+  # Always true for any real (https) deployment -- a Secure-flagged cookie
+  # never comes back over plain http. Compose's dev stack is the only place
+  # this should ever be false (docker-compose.yml sets COOKIE_SECURE=false
+  # there, since it serves the UI over http://localhost).
+  cookieSecure: true
   resources:
     requests:
       cpu: "250m"

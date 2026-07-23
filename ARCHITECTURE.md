@@ -242,9 +242,12 @@ Implementation notes:
   two parallel auth UX paths.
 - Logout uses `id_token_hint` (the `id_token` captured at `/callback`) rather than just
   `client_id`, since newer Keycloak versions reject the latter for RP-initiated logout.
-- Not yet done: Helm/production wiring (`OIDC_CLIENT_ID`/`OIDC_REDIRECT_URI`/
-  `COOKIE_SECURE` are Compose-only so far) — see `docs/dev-setup.md`'s "Stubbed / TODO"
-  list.
+- Helm chart wiring: `externalKeycloak.clientId`/`.clientSecret` (Secret-backed, same
+  pattern as `externalPostgres`) and `ingestionApi.oidcRedirectUri` (derived from
+  `ingress.host`/`ingress.tls` if not set explicitly, via `_helpers.tpl`'s
+  `nexus-rag.oidcRedirectUri` — fails the render rather than deploying a broken callback
+  URL if neither is available) / `.cookieSecure`. Like the rest of the chart, unverified by
+  `helm lint`/`helm template` — see `docs/dev-setup.md`'s "Stubbed / TODO" list.
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 
