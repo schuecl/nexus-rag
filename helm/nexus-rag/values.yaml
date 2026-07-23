@@ -57,6 +57,23 @@ externalKeycloak:
     existingSecret: "nexus-rag-keycloak-client-secret"
     secretKey: "client-secret"
 
+externalObjectStore:
+  # NFR-12: durable storage for original uploaded files, independent of
+  # Qdrant/Postgres (common/object_store.py). Only the S3-compatible backend
+  # is meaningful here -- the filesystem backend (common/object_store.py's
+  # FilesystemObjectStore) is dev-Compose-only, since it assumes a single
+  # shared filesystem across every reader/writer, which doesn't hold once
+  # ingestion-api and ingestion-worker are separate pods. Any S3-compatible
+  # endpoint works: an existing enterprise S3, Ceph RGW, MinIO, etc.
+  endpoint: "https://s3.example.mil"
+  bucket: "nexus-rag-documents"
+  region: "us-gov-west-1"
+  # Pre-created Secret (out-of-band, same pattern as externalPostgres above)
+  # containing both keys named below.
+  existingSecret: "nexus-rag-object-store"
+  accessKeySecretKey: "access-key"
+  secretKeySecretKey: "secret-key"
+
 # ---------------------------------------------------------------------------
 # Qdrant (C3 -- already decided; new to the cluster, so this chart deploys it
 # directly rather than depending on an external Helm chart repo, which would

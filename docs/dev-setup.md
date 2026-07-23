@@ -407,6 +407,23 @@ automated or for testing with your own file.
   one feature), and deserves a full `docker compose down -v && docker compose up` pass with
   close attention to whether `ingestion-api`/`orchestration-mcp`/`keycloak` actually come up
   healthy before relying on it.
+- **Object storage for original uploaded files (NFR-12)** — `common/object_store.py`'s
+  `ObjectStore` interface, with a filesystem-backed dev implementation
+  (`FilesystemObjectStore`, `OBJECT_STORE_PATH=/srv/object-store`, a new `object-store-data`
+  Compose volume) and an S3-compatible one (`S3ObjectStore`, any endpoint — existing
+  enterprise S3, Ceph RGW, MinIO — via `boto3`'s generic client, for production). Wired into
+  `app/routes/upload.py`: the raw uploaded bytes are written to the store (key
+  `documents/{document_id}/original`, `common/object_store.document_object_key`) and the key
+  recorded on the `Document` row *before* the 202 response returns — durable independent of
+  Qdrant's chunk vectors and, previously, of anything at all (the original was only ever
+  in-memory/`/tmp` during a single BackgroundTask's lifetime). The background processing
+  task now reads the original back from the store rather than taking it as a direct argument
+  — proves the round trip works, and matches the shape the NATS-based `ingestion-worker`
+  (NFR-11, in progress) will use once processing moves to a genuinely separate process.
+  Smoke-tested (put/get/delete round trip, path-traversal rejection, and a real
+  `TestClient` POST confirming the object actually lands at the expected key before any
+  background processing runs) but the S3 backend itself is untested — no S3-compatible
+  endpoint available in this sandbox.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded

@@ -12,6 +12,11 @@ volumes:
   ingestion-api-cache:
   orchestration-mcp-cache:
   mongo-data:
+  # NFR-12: original uploaded files, independent of Qdrant/Postgres. Shared
+  # across ingestion-api and (once NFR-11 lands) ingestion-worker -- fine for
+  # this single-node dev stack; production uses S3ObjectStore instead, which
+  # doesn't have this same-filesystem constraint (see helm's externalObjectStore).
+  object-store-data:
 
 services:
   # ---------------------------------------------------------------- storage
@@ -187,8 +192,14 @@ services:
       # app/routes/search.py's query-testing page proxies here, forwarding the
       # logged-in user's own access token (ARCHITECTURE.md Section 4.3).
       ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
+      # NFR-12: durable original-file storage -- filesystem here (dev-only,
+      # see common/object_store.py's FilesystemObjectStore); production uses
+      # OBJECT_STORE_BACKEND=s3 (helm's externalObjectStore).
+      OBJECT_STORE_BACKEND: filesystem
+      OBJECT_STORE_PATH: /srv/object-store
     volumes:
       - ingestion-api-cache:/srv/.cache/huggingface
+      - object-store-data:/srv/object-store
     ports:
       - "8001:8001"
     healthcheck:

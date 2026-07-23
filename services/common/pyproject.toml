@@ -11,6 +11,10 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "qdrant-client>=1.10",
     "fastembed>=0.6",
+    # NFR-12: S3ObjectStore backend (common/object_store.py) -- generic
+    # S3-compatible client (existing enterprise S3, Ceph RGW, MinIO, ...),
+    # not AWS-specific despite the package name.
+    "boto3>=1.34",
 ]
 
 [build-system]

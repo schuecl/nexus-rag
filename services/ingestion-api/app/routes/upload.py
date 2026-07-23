@@ -19,6 +19,7 @@ from app.parsing import ParsingError, parse_document
 from common.db import get_engine, get_session
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
+from common.object_store import document_object_key, get_object_store
 from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
 from common.sparse_embedding import embed_sparse
 from common.versioning import SupersedeValidationError, validate_supersede_target
@@ -43,13 +44,19 @@ router = APIRouter(prefix="/documents", tags=["ingestion"])
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
 
 
-async def _process_document(document_id: uuid.UUID, filename: str, contents: bytes) -> None:
+async def _process_document(document_id: uuid.UUID) -> None:
     """FR-3..FR-6, run after the request that created the `queued` row has
     already returned. Uses its own DB session -- the request-scoped one is
     gone by the time a background task runs. Any failure lands the document
     in `failed` with a message in processing_error rather than propagating
     (NFR-7: malformed input must not crash the worker); there's no HTTP
     response left here to attach an error to.
+
+    NFR-12: reads the original from the object store rather than taking the
+    upload's raw bytes as an argument -- proves the object-store round trip
+    actually works, and matches the shape the future NATS-based
+    ingestion-worker (NFR-11) will use once processing moves out of this
+    process's BackgroundTasks entirely.
     """
     with Session(get_engine()) as session:
         doc = session.get(Document, document_id)
@@ -61,7 +68,8 @@ async def _process_document(document_id: uuid.UUID, filename: str, contents: byt
         session.commit()
 
         try:
-            sections = parse_document(filename, contents)
+            contents = get_object_store().get(doc.original_object_key)
+            sections = parse_document(doc.filename, contents)
             chunks = chunk_sections(sections)
             if not chunks:
                 raise ParsingError("document contained no extractable text")
@@ -222,6 +230,12 @@ async def submit_document(
         status="queued",
         supersedes_document_id=superseded_doc.id if superseded_doc else None,
     )
+    # NFR-12: durably store the original before returning 202 -- doc.id is
+    # already populated (Document.id's default_factory runs at construction,
+    # not at commit), so the key is available immediately.
+    doc.original_object_key = document_object_key(doc.id)
+    get_object_store().put(doc.original_object_key, contents)
+
     session.add(doc)
     session.add(
         AuditLogEntry(
@@ -241,7 +255,7 @@ async def submit_document(
     session.commit()
     session.refresh(doc)
 
-    background_tasks.add_task(_process_document, doc.id, doc.filename, contents)
+    background_tasks.add_task(_process_document, doc.id)
     return doc
 
 
