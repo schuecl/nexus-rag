@@ -265,7 +265,8 @@ automated or for testing with your own file.
   the next page load.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
   aggregation (Section 6.2) -- exercised against a real `docker compose up` (not just
-  inspected as JSON), which surfaced four real, independently-fixed failures: the
+  inspected as JSON), which surfaced five real, independently-fixed failures. The first
+  four blocked the `keycloak` container from starting/staying healthy at all: the
   realm-export JSON can't carry `_comment`-style fields (Keycloak's importer uses strict
   JSON deserialization and rejects any unrecognized property, failing the whole import);
   `KC_HEALTH_ENABLED=true` serves `/health*` on a separate management port (9000) rather
@@ -273,9 +274,25 @@ automated or for testing with your own file.
   since a bare `--import-realm` doesn't create Keycloak's usual built-in ones the way the
   admin console's "Create realm" flow does; and every `clientScopes[].description` has to
   stay under Keycloak's `CLIENT_SCOPE.DESCRIPTION` column limit (`varchar(255)`) or the
-  Liquibase migration itself fails outright with a batch-update SQL error. With all four
-  fixed, realm import completes and `keycloak` reaches a genuinely healthy container in a
-  real `docker compose up`, confirmed end to end.
+  Liquibase migration itself fails outright with a batch-update SQL error. A genuinely
+  healthy container doesn't mean a *usable* realm, though: the fifth failure only showed
+  up at actual login -- every direct-grant token request failed with
+  `invalid_grant: "Account is not fully set up"` (Keycloak event log:
+  `error="resolve_required_actions"`), even for a user with an empty personal
+  `requiredActions` list and `emailVerified: true`. Root cause was the same "bare
+  `--import-realm` skips built-in defaults" pattern as the `profile`/`email` scopes, one
+  level up: the realm itself had no `requiredActions` provider registry at all (Keycloak's
+  admin-console-created realms auto-populate ~11 entries -- CONFIGURE_TOTP,
+  UPDATE_PASSWORD, VERIFY_EMAIL, etc. -- that a bare import never adds), so Keycloak
+  couldn't resolve required actions during login regardless of what any individual user's
+  list contained. Fixed by pulling the authoritative provider list directly from a live
+  Keycloak instance's built-in `master` realm (`GET
+  /admin/realms/master/authentication/required-actions`) rather than hand-guessing the
+  schema, and adding it as the realm-export's top-level `requiredActions` array. The first
+  four fixes are confirmed end to end (realm import completes, `keycloak` reaches a
+  genuinely healthy container); this fifth one is not yet confirmed against a real
+  password-grant login -- update this note once it has been, since "healthy container"
+  turned out not to imply "usable realm."
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
