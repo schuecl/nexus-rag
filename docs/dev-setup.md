@@ -358,6 +358,19 @@ automated or for testing with your own file.
   `get_current_user`'s two paths never forking enforcement logic. Sandbox-`TestClient`-
   verified (mismatched/missing header rejected, matching header passes, bearer-token
   callers unaffected, logout clears both cookies) but not yet run against a real browser.
+- **Qdrant access control (NFR-15)** — Qdrant now requires an API key in every
+  environment, including this dev stack (`QDRANT__SERVICE__API_KEY` /
+  `QDRANT__SERVICE__READ_ONLY_API_KEY` in `docker-compose.yml`, `.env.example`'s
+  `QDRANT_API_KEY`/`QDRANT_READ_ONLY_API_KEY`). `ingestion-api` gets the full read/write
+  key (it creates the collection and writes/deletes points); `orchestration-mcp` gets the
+  read-only key (it only ever calls `query_points`) — least-privilege split, not just "one
+  shared secret." Qdrant's host port binding also moved to `127.0.0.1:6333:6333` (was
+  `6333:6333`) — defense in depth alongside the key requirement, doesn't affect
+  container-to-container traffic on `nexus-rag-net`. `common/qdrant_store.py`'s
+  `get_qdrant_client()` passes whatever `QDRANT_API_KEY` is in its own environment; if
+  unset, the client just doesn't send the header (so this degrades gracefully against an
+  unconfigured/older Qdrant rather than hard-failing, though every deployment this repo
+  ships — Compose and Helm — now sets it).
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded

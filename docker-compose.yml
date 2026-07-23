@@ -31,8 +31,21 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
+    environment:
+      # NFR-15: require authenticated access even in dev -- anonymous
+      # read/write to the vector store is never acceptable, network
+      # isolation alone doesn't satisfy NFR-2's auditability (an
+      # unauthenticated store can't attribute access to an identity).
+      # Health check probes (/readyz, /livez, and this service's own TCP
+      # healthcheck below) are exempt from Qdrant's own API-key enforcement.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
+      QDRANT__SERVICE__READ_ONLY_API_KEY: ${QDRANT_READ_ONLY_API_KEY:-dev-qdrant-readonly-key}
     ports:
-      - "6333:6333"
+      # Bound to localhost only -- nothing on the host network beyond this
+      # machine should reach it directly; other containers still reach it
+      # via the internal nexus-rag-net DNS name (qdrant:6333) regardless of
+      # this host port binding.
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
@@ -138,6 +151,9 @@ services:
       OIDC_REDIRECT_URI: http://localhost:8001/auth/callback
       COOKIE_SECURE: "false"
       QDRANT_URL: http://qdrant:6333
+      # NFR-15: full read/write key -- this service creates the collection
+      # and writes/deletes points (common/qdrant_store.py).
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
@@ -175,6 +191,9 @@ services:
       OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
       QDRANT_URL: http://qdrant:6333
+      # NFR-15: read-only key -- this service only ever calls query_points
+      # (app/rag_search.py), never writes to Qdrant.
+      QDRANT_API_KEY: ${QDRANT_READ_ONLY_API_KEY:-dev-qdrant-readonly-key}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       RERANKER_URL: http://reranker-service:8003

@@ -69,6 +69,16 @@ qdrant:
     repository: qdrant/qdrant
     tag: "v1.12.4"
   replicas: 1
+  # NFR-15: Qdrant must require authenticated access -- pre-created Secret
+  # (out-of-band, same existingSecret pattern as externalPostgres/
+  # externalKeycloak) with two keys: a full read/write key (ingestion-api,
+  # which creates the collection and writes/deletes points) and a read-only
+  # key (orchestration-mcp, which only ever queries). One Secret, two keys,
+  # rather than two Secrets, since they're issued and rotated together.
+  apiKey:
+    existingSecret: "nexus-rag-qdrant-keys"
+    secretKey: "api-key"
+    readOnlySecretKey: "read-only-api-key"
   service:
     httpPort: 6333
     grpcPort: 6334

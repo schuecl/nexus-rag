@@ -29,6 +29,21 @@ spec:
       containers:
         - name: qdrant
           image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.qdrant.image) }}
+          env:
+            # NFR-15: required in every environment -- see values.yaml's
+            # qdrant.apiKey comment. Qdrant's own health endpoints
+            # (/readyz, /livez, used by the probes below) are exempt from
+            # its API-key enforcement.
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.qdrant.apiKey.existingSecret }}
+                  key: {{ .Values.qdrant.apiKey.secretKey }}
+            - name: QDRANT__SERVICE__READ_ONLY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.qdrant.apiKey.existingSecret }}
+                  key: {{ .Values.qdrant.apiKey.readOnlySecretKey }}
           ports:
             - name: http
               containerPort: {{ .Values.qdrant.service.httpPort }}

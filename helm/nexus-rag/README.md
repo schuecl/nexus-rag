@@ -49,6 +49,13 @@ doesn't render cleanly as a bug to fix, not a surprise.
   set, or an explicit `ingestionApi.oidcRedirectUri` — the chart fails the
   render otherwise, rather than silently deploying a broken OIDC login
   callback URL (`_helpers.tpl`'s `nexus-rag.oidcRedirectUri`)
+- A pre-created Secret matching `qdrant.apiKey.existingSecret`, containing two
+  keys: `qdrant.apiKey.secretKey` (a full read/write API key) and
+  `qdrant.apiKey.readOnlySecretKey` (a read-only one) — Qdrant requires
+  authenticated access in every environment (NFR-15); `ingestion-api` gets the
+  full key, `orchestration-mcp` gets the read-only one. Generate both however
+  your cluster's secret-management practice calls for (e.g. `openssl rand
+  -hex 32` for each) before creating the Secret.
 
 ## Install
 
