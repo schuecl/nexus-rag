@@ -45,6 +45,7 @@ once everything above is healthy.
 | Service | URL | Notes |
 |---|---|---|
 | Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
+| Keycloak health/metrics | http://localhost:9000/health/ready | `KC_HEALTH_ENABLED=true` moves `/health*` onto Keycloak's separate management interface (default port 9000) rather than 8080 -- what the `keycloak` service's Compose healthcheck actually probes |
 | Ingestion UI | http://localhost:8001 | upload form + curation queue (paste-a-token, see below) |
 | orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
@@ -263,7 +264,15 @@ automated or for testing with your own file.
   ordered by rank), not a hardcoded list, so an admin change is reflected on
   the next page load.
 - Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
-  aggregation (Section 6.2).
+  aggregation (Section 6.2) -- confirmed importing cleanly and reaching a genuinely
+  healthy `keycloak` container against a real `docker compose up`, not just inspected as
+  JSON: the realm-export JSON can't carry `_comment`-style fields (Keycloak's importer
+  uses strict JSON deserialization and rejects any unrecognized property, failing the
+  whole import), `KC_HEALTH_ENABLED=true` serves `/health*` on a separate management port
+  (9000) rather than 8080, and both clients' `profile`/`email` default scopes have to be
+  defined explicitly since a bare `--import-realm` doesn't create Keycloak's usual
+  built-in ones the way the admin console's "Create realm" flow does. All three were real
+  failures caught this way, not hypothetical.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion

@@ -57,11 +57,19 @@ services:
       - ./infra/keycloak/realm-export:/opt/keycloak/data/import
     ports:
       - "8080:8080"
+      - "9000:9000"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3"]
+      # KC_HEALTH_ENABLED moves /health* onto Keycloak's separate management
+      # interface (default port 9000) rather than the main HTTP port (8080)
+      # -- confirmed against a real run's "Management interface listening on
+      # http://0.0.0.0:9000" log line, not assumed. Probing 8080 here left
+      # Keycloak permanently "unhealthy" despite serving real traffic fine,
+      # which blocked every service with depends_on: keycloak: condition:
+      # service_healthy from ever starting.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3"]
       interval: 10s
       timeout: 5s
       retries: 15
