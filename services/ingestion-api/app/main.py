@@ -54,11 +54,13 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def upload_page(request: Request, session: Session = Depends(get_session)):
-    # C9: the dropdowns reflect the *live*, admin-configurable lists (retired
-    # values excluded) -- not the DEFAULT_* constants, which only seed those
-    # tables on first boot (see _seed_defaults above).
+def _live_controlled_vocab(session: Session) -> dict:
+    # C9: the *live*, admin-configurable lists (retired values excluded) --
+    # not the DEFAULT_* constants, which only seed those tables on first boot
+    # (see _seed_defaults above). Shared by the upload page and the curation
+    # queue page, since FR-13's "correct" action assigns the same
+    # Classification/Releasability values FR-17 requires come from a
+    # controlled vocabulary, not free text -- same as at upload time.
     classifications = session.exec(
         select(ClassificationLevel)
         .where(ClassificationLevel.active == True)  # noqa: E712
@@ -67,19 +69,20 @@ def upload_page(request: Request, session: Session = Depends(get_session)):
     releasability = session.exec(
         select(ReleasabilityValue).where(ReleasabilityValue.active == True)  # noqa: E712
     ).all()
-    return templates.TemplateResponse(
-        request,
-        "upload.html",
-        {
-            "classifications": [(c.value, c.rank) for c in classifications],
-            "releasability": [r.value for r in releasability],
-        },
-    )
+    return {
+        "classifications": [(c.value, c.rank) for c in classifications],
+        "releasability": [r.value for r in releasability],
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+def upload_page(request: Request, session: Session = Depends(get_session)):
+    return templates.TemplateResponse(request, "upload.html", _live_controlled_vocab(session))
 
 
 @app.get("/curate", response_class=HTMLResponse)
-def curate_page(request: Request):
-    return templates.TemplateResponse(request, "curate.html", {})
+def curate_page(request: Request, session: Session = Depends(get_session)):
+    return templates.TemplateResponse(request, "curate.html", _live_controlled_vocab(session))
 
 
 @app.get("/notifications", response_class=HTMLResponse)

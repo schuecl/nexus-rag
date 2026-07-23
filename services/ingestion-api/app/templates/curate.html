@@ -2,12 +2,34 @@
 {% block title %}Curation Queue — nexus-rag{% endblock %}
 {% block content %}
 <h1>Curation queue</h1>
-<p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover (FR-12).</p>
+<p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover (FR-12).
+Correct Classification/Releasability/Access scope below before approving if the uploader's
+tags need fixing (FR-13) -- corrections are re-checked against your own curator authority
+(FR-14) the same as the original tags.</p>
 <button onclick="loadQueue()">Refresh</button>
 <div id="queue"></div>
 <div id="result" class="msg"></div>
 
 <script>
+const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
+const RELEASABILITY = {{ releasability | tojson }};
+// Keyed by doc id from the last /curate/queue load -- approve() reads a
+// document's *original* tags from here to diff against, since GET
+// /documents/{id} is scoped to the uploader (app/routes/upload.py) and
+// 404s for a curator looking up someone else's submission.
+let queuedDocs = {};
+
+function options(values, selected) {
+  // Guard against a document tagged with a value that's since been retired
+  // from the admin-configurable list (C9) -- without this, the <select>
+  // would silently default to its first option instead of the document's
+  // actual value, and an inattentive "Approve" click would then silently
+  // *change* the document's classification/releasability, not leave it as
+  // submitted.
+  const all = values.includes(selected) ? values : [selected, ...values];
+  return all.map(v => `<option value="${v}"${v === selected ? ' selected' : ''}>${v}</option>`).join('');
+}
+
 async function loadQueue() {
   const res = await fetch('/curate/queue', { headers: authHeaders() });
   const queueEl = document.getElementById('queue');
@@ -16,6 +38,7 @@ async function loadQueue() {
     return;
   }
   const docs = await res.json();
+  queuedDocs = Object.fromEntries(docs.map(d => [d.id, d]));
   queueEl.innerHTML = '';
   if (docs.length === 0) {
     queueEl.textContent = 'No pending submissions.';
@@ -27,9 +50,19 @@ async function loadQueue() {
     row.innerHTML = `
       <div>
         <strong>${doc.filename}</strong><br/>
-        org: ${doc.owner_org} · classification: ${doc.classification} · releasability: ${doc.releasability}<br/>
-        access_scope: ${doc.access_scope.join(', ')} · uploaded by ${doc.uploader_username}
+        org: ${doc.owner_org} · uploaded by ${doc.uploader_username}
         ${doc.supersedes_document_id ? `<br/><strong>supersedes</strong>: ${doc.supersedes_document_id} (approving this will retire and delete that document's chunks)` : ''}
+        <div>
+          <label>Classification
+            <select id="classification-${doc.id}">${options(CLASSIFICATIONS, doc.classification)}</select>
+          </label>
+          <label>Releasability
+            <select id="releasability-${doc.id}">${options(RELEASABILITY, doc.releasability)}</select>
+          </label>
+          <label>Access scope <span class="hint">(comma-separated)</span>
+            <input type="text" id="access_scope-${doc.id}" value="${doc.access_scope.join(', ')}" />
+          </label>
+        </div>
       </div>
       <div>
         <button onclick="approve('${doc.id}')">Approve</button>
@@ -39,8 +72,28 @@ async function loadQueue() {
   }
 }
 
+function readCorrections(id, doc) {
+  // FR-13: only sent as an actual correction when it differs from what the
+  // uploader originally submitted -- keeps the audit log (FR-16) meaningful
+  // (null when the curator approved as-is, not a no-op "correction" every time).
+  const classification = document.getElementById(`classification-${id}`).value;
+  const releasability = document.getElementById(`releasability-${id}`).value;
+  const accessScope = document.getElementById(`access_scope-${id}`).value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const corrections = {};
+  if (classification !== doc.classification) corrections.classification = classification;
+  if (releasability !== doc.releasability) corrections.releasability = releasability;
+  if (JSON.stringify(accessScope) !== JSON.stringify(doc.access_scope)) corrections.access_scope = accessScope;
+  return Object.keys(corrections).length ? corrections : null;
+}
+
 async function approve(id) {
-  const res = await fetch(`/curate/${id}/approve`, { method: 'POST', headers: authHeaders() });
+  const corrections = readCorrections(id, queuedDocs[id]);
+  const res = await fetch(`/curate/${id}/approve`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: corrections ? JSON.stringify(corrections) : undefined,
+  });
   report(res, await res.json());
   loadQueue();
 }

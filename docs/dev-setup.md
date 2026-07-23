@@ -176,7 +176,11 @@ automated or for testing with your own file.
   uploader-side check) — a curator missing a document's releasability caveat is denied
   the same as one lacking the classification level, on both approve and reject, and the
   check re-runs against corrected tags if the curator adjusts them before approving.
-  With an audit log entry per action (FR-31) —
+  The **correct** action (FR-13) is in `/curate`'s UI itself now, not just the API: each
+  queued document gets inline Classification/Releasability dropdowns (live from the same
+  admin-configurable lists as the upload form, C9/FR-17) and an editable access-scope
+  field, pre-filled with the uploader's original tags; approving only sends a correction
+  if something was actually changed. With an audit log entry per action (FR-31) —
   ingestion, curation, *and* retrieval events are all logged now: every `rag_search`
   call writes an entry keyed on the caller's identity, whether it succeeded (with the
   applied claims-based filter and result count), was denied (missing `rag-query` role,
