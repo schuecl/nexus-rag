@@ -1,9 +1,16 @@
 """FR-1..FR-9: document submission and mandatory tagging. Request handling
-(auth, tagging validation, FR-7 supersede-target checks) is synchronous and
-fast; the actual parse -> chunk -> embed -> store pipeline (FR-3..FR-6) runs
-in the background (FR-8) so a slow/large document can't tie up a request
+(auth, tagging validation, FR-7 supersede-target checks, object-store write)
+is synchronous and fast; the actual parse -> chunk -> embed -> store
+pipeline (FR-3..FR-6) is handed off to the durable ingestion-worker service
+via NATS JetStream (NFR-11) so a slow/large document can't tie up a request
 worker, and callers get real queued/processing/embedded/failed progress via
 GET /documents/{id} instead of just a pass/fail response.
+
+NFR-11: this used to run the pipeline in-process via FastAPI's
+BackgroundTasks, which loses an in-flight document if this process
+restarts mid-processing. Publishing to a durable, acked queue instead --
+and letting a separate ingestion-worker service actually do the work -- is
+what fixes that; see services/ingestion-worker/app/processing.py.
 """
 
 from __future__ import annotations
@@ -12,28 +19,14 @@ import json
 import os
 import uuid
 
-from app.chunking import chunk_sections
 from app.deps import allowed_classifications, get_current_user, require_ingest, verify_csrf
-from app.embedding import EmbeddingError, embed_texts
-from app.parsing import ParsingError, parse_document
-from common.db import get_engine, get_session
+from common.db import get_session
+from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
 from common.object_store import document_object_key, get_object_store
-from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
-from common.sparse_embedding import embed_sparse
 from common.versioning import SupersedeValidationError, validate_supersede_target
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    UploadFile,
-    status,
-)
-from qdrant_client.models import PointStruct
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlmodel import Session, select
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
@@ -44,109 +37,9 @@ router = APIRouter(prefix="/documents", tags=["ingestion"])
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
 
 
-async def _process_document(document_id: uuid.UUID) -> None:
-    """FR-3..FR-6, run after the request that created the `queued` row has
-    already returned. Uses its own DB session -- the request-scoped one is
-    gone by the time a background task runs. Any failure lands the document
-    in `failed` with a message in processing_error rather than propagating
-    (NFR-7: malformed input must not crash the worker); there's no HTTP
-    response left here to attach an error to.
-
-    NFR-12: reads the original from the object store rather than taking the
-    upload's raw bytes as an argument -- proves the object-store round trip
-    actually works, and matches the shape the future NATS-based
-    ingestion-worker (NFR-11) will use once processing moves out of this
-    process's BackgroundTasks entirely.
-    """
-    with Session(get_engine()) as session:
-        doc = session.get(Document, document_id)
-        if doc is None:
-            return  # shouldn't happen; nothing sensible to do if it did
-
-        doc.status = "processing"
-        session.add(doc)
-        session.commit()
-
-        try:
-            contents = get_object_store().get(doc.original_object_key)
-            sections = parse_document(doc.filename, contents)
-            chunks = chunk_sections(sections)
-            if not chunks:
-                raise ParsingError("document contained no extractable text")
-
-            dense_vectors = await embed_texts([c.text for c in chunks])
-            sparse_vectors = embed_sparse([c.text for c in chunks])
-
-            points = [
-                PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=chunk_vector(dense, sparse),
-                    payload={
-                        "document_id": str(doc.id),
-                        "chunk_index": chunk.chunk_index,
-                        "text": chunk.text,
-                        "heading": chunk.heading,
-                        "page_or_slide": chunk.page_or_slide,
-                        "filename": doc.filename,
-                        "doc_type": doc.doc_type,
-                        "source_originator": doc.source_originator,
-                        "classification": doc.classification,
-                        "releasability": doc.releasability,
-                        "access_scope": doc.access_scope,
-                        # Written as pending_review directly (not doc.status,
-                        # which is still `processing` at this point) -- this
-                        # is what keeps the chunk excluded from retrieval
-                        # (FR-11/FR-26) until a curator approves it.
-                        "status": "pending_review",
-                    },
-                )
-                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
-            ]
-            qdrant = get_qdrant_client()
-            ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
-            upsert_chunks(qdrant, points)
-
-            doc.status = "embedded"
-            doc.chunk_count = len(chunks)
-            session.add(doc)
-            session.commit()
-
-            doc.status = "pending_review"
-            session.add(doc)
-            session.add(
-                AuditLogEntry(
-                    actor_sub=doc.uploader_sub,
-                    actor_username=doc.uploader_username,
-                    action="document.embedded",
-                    target_id=str(doc.id),
-                    detail={"filename": doc.filename, "chunk_count": doc.chunk_count},
-                )
-            )
-            session.commit()
-        except (ParsingError, EmbeddingError) as exc:
-            doc.status = "failed"
-            doc.processing_error = str(exc)
-            session.add(doc)
-            session.add(
-                AuditLogEntry(
-                    actor_sub=doc.uploader_sub,
-                    actor_username=doc.uploader_username,
-                    action="document.failed",
-                    target_id=str(doc.id),
-                    detail={"error": str(exc)},
-                )
-            )
-            session.commit()
-        except Exception as exc:  # noqa: BLE001 -- NFR-7: never crash the worker
-            doc.status = "failed"
-            doc.processing_error = f"unexpected error: {exc}"
-            session.add(doc)
-            session.commit()
-
-
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def submit_document(
-    background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     classification: str = Form(...),
     # FR-20/Section 6.3: a single value, unlike access_scope below.
@@ -255,7 +148,12 @@ async def submit_document(
     session.commit()
     session.refresh(doc)
 
-    background_tasks.add_task(_process_document, doc.id)
+    # NFR-11: hand off to the durable queue -- ingestion-worker (a separate
+    # process/pod) does the actual parse/chunk/embed/store pipeline and
+    # drives doc.status through processing -> embedded -> pending_review (or
+    # failed). request.app.state.jetstream is set up once at startup
+    # (app/main.py's lifespan), not reconnected per request.
+    await publish_ingestion_job(request.app.state.jetstream, str(doc.id))
     return doc
 
 

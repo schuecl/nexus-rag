@@ -53,6 +53,7 @@ once everything above is healthy.
 | Ingestion UI | http://localhost:8001 | upload form, curation queue, and a search page (click "Log in", real Keycloak login) |
 | orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
+| ingestion-worker | http://localhost:8004 | `/health` only -- its real work is the NATS consumer loop, not an HTTP API (NFR-11) |
 | Qdrant | http://localhost:6333/dashboard | |
 | LibreChat | http://localhost:3080 | throwaway, log in via Keycloak |
 | LiteLLM | http://localhost:4000 | throwaway gateway in front of Ollama |
@@ -206,37 +207,43 @@ automated or for testing with your own file.
   notification — a real notification the uploader doesn't have to already know a
   document ID to find, not just data that happens to be visible if you go looking.
 - **Document parsing, chunking, embedding, and Qdrant storage (FR-3..FR-6)** —
-  `services/ingestion-api/app/{parsing,chunking,embedding}.py`. Handles PDF, DOCX,
-  PPTX, XLSX, TXT/MD, HTML; chunks respect section/heading/page/slide boundaries
-  (~512 words, ~15% overlap — word-based, not a model-specific tokenizer; both are
-  env-configurable per FR-4 via `CHUNK_TARGET_WORDS`/`CHUNK_OVERLAP_RATIO` --
-  `.env.example`/`docker-compose.yml` here, `ingestionApi.chunkTargetWords`/
+  `services/ingestion-worker/app/{parsing,chunking,embedding}.py`, run by the
+  `ingestion-worker` service, not `ingestion-api` (see NFR-11 below for why).
+  Handles PDF, DOCX, PPTX, XLSX, TXT/MD, HTML; chunks respect section/heading/page/slide
+  boundaries (~512 words, ~15% overlap — word-based, not a model-specific tokenizer;
+  both are env-configurable per FR-4 via `CHUNK_TARGET_WORDS`/`CHUNK_OVERLAP_RATIO` --
+  `.env.example`/`docker-compose.yml` here, `ingestionWorker.chunkTargetWords`/
   `chunkOverlapRatio` in the Helm chart).
   A curator's approve/reject (and any tag corrections made while approving) propagate
-  to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`)
-  — that's what actually changes query-time visibility.
-- **Async ingestion pipeline with real progress states (FR-8)** — `POST /documents`
-  validates the request synchronously (auth, mandatory tagging, FR-7 supersede-target
-  checks) and returns `202 Accepted` with `status: queued` immediately; the actual
-  parse/chunk/embed/store pipeline runs in the background
-  (`app/routes/upload.py:_process_document`), moving the row through
-  `queued → processing → embedded → pending_review`, or to `failed` with a message in
-  `processing_error` if parsing or embedding errors out (NFR-7: caught, not left to
-  crash the worker) — corrupt, password-protected, empty, unsupported, or zip-bomb-shaped
-  (`app/parsing.py`'s `_check_zip_bomb`: a `.docx`/`.pptx`/`.xlsx` whose ZIP entries would
-  decompress past 200MB or at a >200:1 ratio is rejected before python-docx/python-pptx/
-  openpyxl ever touch it, since `MAX_UPLOAD_BYTES` only bounds the *compressed* upload)
-  files land here instead of a synchronous 4xx like before this change. `MAX_UPLOAD_BYTES`
-  itself is env-configurable (FR-9's "configurable size limit"), default 50MB -- see
-  `.env.example`/`docker-compose.yml` here, `ingestionApi.maxUploadBytes` in the Helm
-  chart. `GET /documents/{id}`
-  (scoped to the uploader) polls current status; the ingestion UI polls it
-  automatically after upload. Uses FastAPI's `BackgroundTasks`, not a durable queue —
-  simple and adequate for this dev stack, but not crash-resilient: a process restart
-  mid-processing leaves a document stuck in `processing` forever. A production
-  deployment would want a real queue (Celery/RQ + a broker, or an outbox pattern) for
-  that guarantee; noted here rather than built, to avoid adding a new stateful service
-  to the dev stack for a dev-scale problem it doesn't actually have.
+  to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`,
+  called from `ingestion-api/app/routes/curate.py`) — that's what actually changes
+  query-time visibility.
+- **Async ingestion pipeline with real progress states (FR-8), on a durable queue
+  (NFR-11)** — `POST /documents` (`ingestion-api`) validates the request synchronously
+  (auth, mandatory tagging, FR-7 supersede-target checks), durably stores the original
+  file (`common/object_store.py`), and returns `202 Accepted` with `status: queued`
+  immediately. It then publishes the document ID to NATS JetStream
+  (`common/job_queue.py`) rather than running the pipeline itself; `ingestion-worker`
+  is the durable consumer that actually does it
+  (`services/ingestion-worker/app/processing.py:process_document`), moving the row
+  through `queued → processing → embedded → pending_review`, or to `failed` with a
+  message in `processing_error` if parsing or embedding errors out (NFR-7: caught, not
+  left to crash the worker) — corrupt, password-protected, empty, unsupported, or
+  zip-bomb-shaped (`app/parsing.py`'s `_check_zip_bomb`: a `.docx`/`.pptx`/`.xlsx` whose
+  ZIP entries would decompress past 200MB or at a >200:1 ratio is rejected before
+  python-docx/python-pptx/openpyxl ever touch it, since `MAX_UPLOAD_BYTES` only bounds
+  the *compressed* upload) files land here instead of a synchronous 4xx like before this
+  change. `MAX_UPLOAD_BYTES` itself is env-configurable (FR-9's "configurable size
+  limit"), default 50MB -- see `.env.example`/`docker-compose.yml` here,
+  `ingestionApi.maxUploadBytes` in the Helm chart. `GET /documents/{id}` (scoped to the
+  uploader) polls current status; the ingestion UI polls it automatically after upload.
+  A crash or restart of `ingestion-worker` mid-processing does not strand the document:
+  `process_document` only acks the JetStream message on a terminal outcome (success or
+  a permanent parse/embed failure); an unexpected/transient error (Qdrant or the DB
+  unreachable, etc.) is left un-acked, so JetStream redelivers it to another attempt
+  after `ACK_WAIT_SECONDS`. This is what replaced the earlier `BackgroundTasks`-based
+  pipeline, which had no equivalent recovery and left a document stuck in `processing`
+  forever if the process restarted mid-document.
 - **Hybrid dense+BM25 retrieval and reranking (FR-24/FR-25)** —
   `services/orchestration-mcp/app/rag_search.py` queries a dense semantic leg and a BM25
   sparse leg (`common/sparse_embedding.py`, Qdrant's own `fastembed`/`Qdrant/bm25` model)
@@ -419,25 +426,43 @@ automated or for testing with your own file.
   in-memory/`/tmp` during a single BackgroundTask's lifetime). The background processing
   task now reads the original back from the store rather than taking it as a direct argument
   — proves the round trip works, and matches the shape the NATS-based `ingestion-worker`
-  (NFR-11, in progress) will use once processing moves to a genuinely separate process.
-  Smoke-tested (put/get/delete round trip, path-traversal rejection, and a real
+  (NFR-11, see below) actually uses now that processing runs in a genuinely separate
+  process. Smoke-tested (put/get/delete round trip, path-traversal rejection, and a real
   `TestClient` POST confirming the object actually lands at the expected key before any
-  background processing runs) but the S3 backend itself is untested — no S3-compatible
-  endpoint available in this sandbox.
-- **NATS JetStream infrastructure (NFR-11, infra only so far)** — a `nats` service
-  (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`, monitoring
-  endpoint on 8222 for the healthcheck, client port on 4222) plus `common/job_queue.py`: an
-  `ensure_stream()` helper (idempotent, matching `common/qdrant_store.py`'s
-  `ensure_collection()` pattern) and `publish_ingestion_job()`, publishing just a
-  `document_id` to the `INGESTION_JOBS` stream — the original file lives in the object
-  store (NFR-12 above), not the message payload, so this stays small regardless of upload
-  size. **Not yet used anywhere** — nothing publishes or consumes from this stream yet;
-  `ingestion-api` still processes documents via the same in-process `BackgroundTasks`
-  mechanism as before. That's the next piece (`ingestion-worker`, NFR-11's actual
-  durability fix). Smoke-tested `ensure_stream()`/`publish_ingestion_job()`'s control flow
-  against a mocked JetStream context (creates the stream when missing, no-ops when it
-  already exists, publishes the right bytes to the right subject) — no live NATS server in
-  this sandbox to test the real connection/auth/persistence behavior against.
+  processing runs) but the S3 backend itself is untested — no S3-compatible endpoint
+  available in this sandbox.
+- **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
+  service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
+  monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus
+  `common/job_queue.py`: an `ensure_stream()` helper (idempotent, matching
+  `common/qdrant_store.py`'s `ensure_collection()` pattern) and `publish_ingestion_job()`,
+  publishing just a `document_id` to the `INGESTION_JOBS` stream — the original file lives
+  in the object store (NFR-12 above), not the message payload, so this stays small
+  regardless of upload size. `ingestion-api`'s `POST /documents` publishes to this stream
+  (via `app.state.jetstream`, one long-lived connection set up in its lifespan, not
+  reconnected per request) instead of running the pipeline itself; a new `ingestion-worker`
+  service (`services/ingestion-worker`, its own Dockerfile/pyproject.toml/Compose service,
+  port 8004) is the durable consumer — a `pull_subscribe` loop
+  (`app/processing.py:consume_forever`) that fetches one job at a time, runs
+  parse/chunk/embed/store (moved here from `ingestion-api/app/{parsing,chunking,embedding}.py`
+  verbatim), and acks the message only on a terminal outcome (success or a permanent
+  parse/embed failure lands the document in `failed`); an unexpected/transient error (Qdrant
+  or the DB unreachable, a bug, etc.) is left un-acked, so JetStream redelivers it after
+  `ACK_WAIT_SECONDS` (300s) instead of the document being silently stuck in `processing`
+  forever the way a `BackgroundTasks` crash would leave it. Qdrant's full read/write key now
+  goes to both `ingestion-api` (still updates/deletes points directly on approve/reject/
+  supersede, `app/routes/curate.py`) and `ingestion-worker` (creates the collection, writes
+  new points) — `orchestration-mcp` keeps the read-only key, unchanged. Smoke-tested
+  `process_document`'s three outcome branches (success → `pending_review`; permanent
+  `ParsingError`/`EmbeddingError` → `failed`, acked; unexpected exception → left un-acked,
+  `doc.status` stays `processing` for redelivery to pick up) against an in-memory SQLite DB
+  with Qdrant/object-store/embedding calls mocked, and confirmed both services' packages
+  install and import cleanly. **Not tested against a real `docker compose up`** — this is
+  the largest structural change in this hardening batch (a new service, a changed request
+  path, a changed Qdrant credential split) and deserves a full live run — submit a document,
+  confirm it actually reaches `pending_review` via `ingestion-worker`'s logs and
+  `GET /documents/{id}` polling, not just the mocked unit-level checks above — before being
+  trusted the way the smaller, more contained changes here can be.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded

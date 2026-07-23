@@ -89,10 +89,12 @@ qdrant:
   replicas: 1
   # NFR-15: Qdrant must require authenticated access -- pre-created Secret
   # (out-of-band, same existingSecret pattern as externalPostgres/
-  # externalKeycloak) with two keys: a full read/write key (ingestion-api,
-  # which creates the collection and writes/deletes points) and a read-only
-  # key (orchestration-mcp, which only ever queries). One Secret, two keys,
-  # rather than two Secrets, since they're issued and rotated together.
+  # externalKeycloak) with two keys: a full read/write key (ingestion-worker,
+  # which creates the collection and writes new points; ingestion-api also
+  # holds it to update/delete points on approve/reject/supersede) and a
+  # read-only key (orchestration-mcp, which only ever queries). One Secret,
+  # two keys, rather than two Secrets, since they're issued and rotated
+  # together.
   apiKey:
     existingSecret: "nexus-rag-qdrant-keys"
     secretKey: "api-key"
@@ -229,10 +231,6 @@ ingestionApi:
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
-  # FR-4: chunking target size (words) and overlap ratio -- Section 2's
-  # starting point.
-  chunkTargetWords: 512
-  chunkOverlapRatio: 0.15
   service:
     type: ClusterIP
     port: 8001
@@ -286,3 +284,31 @@ orchestrationMcp:
     limits:
       cpu: "1"
       memory: "1Gi"
+
+# ---------------------------------------------------------------------------
+# ingestion-worker (FR-3..FR-6, NFR-11) -- the durable JetStream consumer
+# that does the actual parse/chunk/embed/store pipeline, moved out of
+# ingestion-api's request path.
+# ---------------------------------------------------------------------------
+
+ingestionWorker:
+  enabled: true
+  image:
+    repository: ingestion-worker
+    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
+    # for the convention, no versioned-image CI pipeline yet" caveat.
+    tag: "0.1.0"
+  replicas: 2
+  # FR-4: chunking target size (words) and overlap ratio -- Section 2's
+  # starting point.
+  chunkTargetWords: 512
+  chunkOverlapRatio: 0.15
+  service:
+    port: 8004
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"

@@ -1,21 +1,21 @@
-{{- if .Values.ingestionApi.enabled }}
+{{- if .Values.ingestionWorker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "nexus-rag.fullname" . }}-ingestion-api
+  name: {{ include "nexus-rag.fullname" . }}-ingestion-worker
   labels:
     {{- include "nexus-rag.labels" . | nindent 4 }}
-    app.kubernetes.io/component: ingestion-api
+    app.kubernetes.io/component: ingestion-worker
 spec:
-  replicas: {{ .Values.ingestionApi.replicas }}
+  replicas: {{ .Values.ingestionWorker.replicas }}
   selector:
     matchLabels:
-      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 6 }}
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 6 }}
   template:
     metadata:
       labels:
         {{- include "nexus-rag.labels" . | nindent 8 }}
-        app.kubernetes.io/component: ingestion-api
+        app.kubernetes.io/component: ingestion-worker
     spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -24,56 +24,47 @@ spec:
       securityContext:
         {{- include "nexus-rag.podSecurityContext" . | nindent 8 }}
       containers:
-        - name: ingestion-api
-          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.ingestionApi.image) }}
+        - name: ingestion-worker
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.ingestionWorker.image) }}
           securityContext:
             {{- include "nexus-rag.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
-              containerPort: 8001
+              containerPort: 8004
           volumeMounts:
-            # FastAPI/python-multipart spool uploaded files (FR-1) to /tmp
-            # once they exceed an in-memory threshold; needed alongside
-            # readOnlyRootFilesystem above.
             - name: tmp
               mountPath: /tmp
+            # common.sparse_embedding's BM25 model cache (HF_HOME in the
+            # Dockerfile) -- see ingestion-api-deployment.yaml's identical
+            # note on why this is an emptyDir rather than a PVC.
+            - name: hf-cache
+              mountPath: /srv/.cache/huggingface
           env:
+            # NFR-3: non-superuser app role, distinct from POSTGRES_USER.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.externalPostgres.existingSecret }}
                   key: {{ .Values.externalPostgres.secretKey }}
-            - name: OIDC_ISSUERS
-              value: {{ .Values.externalKeycloak.issuerUrl | quote }}
-            - name: OIDC_AUDIENCE
-              value: {{ .Values.externalKeycloak.audience | quote }}
-            # Browser OIDC login (ARCHITECTURE.md Section 4.4).
-            - name: OIDC_CLIENT_ID
-              value: {{ .Values.externalKeycloak.clientId | quote }}
-            - name: RAG_APP_KEYCLOAK_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.externalKeycloak.clientSecret.existingSecret }}
-                  key: {{ .Values.externalKeycloak.clientSecret.secretKey }}
-            - name: OIDC_REDIRECT_URI
-              value: {{ include "nexus-rag.oidcRedirectUri" . | quote }}
-            - name: COOKIE_SECURE
-              value: {{ .Values.ingestionApi.cookieSecure | quote }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
-            # NFR-15: full read/write key -- this service creates the
-            # collection and writes/deletes points (common/qdrant_store.py).
+            # NFR-15: full read/write key -- this is the service that now
+            # creates the collection and writes new points (moved out of
+            # ingestion-api).
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.qdrant.apiKey.existingSecret }}
                   key: {{ .Values.qdrant.apiKey.secretKey }}
-            - name: MAX_UPLOAD_BYTES
-              value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
-            # app/routes/search.py's query-testing page proxies here (ARCHITECTURE.md
-            # Section 4.3's /debug/rag_search, same as docker-compose.yml's dev wiring).
-            - name: ORCHESTRATION_MCP_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-orchestration-mcp:{{ .Values.orchestrationMcp.service.port }}"
+            - name: OLLAMA_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.embeddingService.model | quote }}
+            # FR-4: chunking target size (words) and overlap ratio.
+            - name: CHUNK_TARGET_WORDS
+              value: {{ .Values.ingestionWorker.chunkTargetWords | quote }}
+            - name: CHUNK_OVERLAP_RATIO
+              value: {{ .Values.ingestionWorker.chunkOverlapRatio | quote }}
             # NFR-12: durable original-file storage (common/object_store.py).
             - name: OBJECT_STORE_BACKEND
               value: "s3"
@@ -93,7 +84,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.externalObjectStore.existingSecret }}
                   key: {{ .Values.externalObjectStore.secretKeySecretKey }}
-            # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
+            # NFR-11: durable ingestion queue -- ingestion-api publishes,
+            # this service is the durable JetStream consumer.
             - name: NATS_URL
               value: "nats://{{ include "nexus-rag.fullname" . }}-nats:{{ .Values.nats.service.clientPort }}"
             - name: NATS_AUTH_TOKEN
@@ -114,8 +106,10 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
-            {{- toYaml .Values.ingestionApi.resources | nindent 12 }}
+            {{- toYaml .Values.ingestionWorker.resources | nindent 12 }}
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: hf-cache
           emptyDir: {}
 {{- end }}
