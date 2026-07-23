@@ -13,12 +13,48 @@ add a large model-download footprint this dev pass doesn't need.
 from __future__ import annotations
 
 import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 
 class ParsingError(Exception):
     pass
+
+
+# NFR-7: .docx/.pptx/.xlsx are ZIP archives under the hood, and none of
+# python-docx/python-pptx/openpyxl guard against a zip bomb -- a small,
+# maliciously-crafted archive can decompress to gigabytes and exhaust worker
+# memory long before MAX_UPLOAD_BYTES (services/ingestion-api/app/routes/
+# upload.py) ever sees anything, since that only bounds the *compressed*
+# upload size. Checked against the raw zip before handing it to any of those
+# libraries.
+MAX_ZIP_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200MB decompressed, well over any real OOXML doc
+MAX_ZIP_COMPRESSION_RATIO = 200  # legitimate OOXML XML parts rarely exceed the low double digits
+
+
+def _check_zip_bomb(content: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            total_uncompressed = 0
+            for info in zf.infolist():
+                total_uncompressed += info.file_size
+                if info.compress_size and info.file_size / info.compress_size > (
+                    MAX_ZIP_COMPRESSION_RATIO
+                ):
+                    raise ParsingError(
+                        f"archive entry '{info.filename}' has a compression ratio consistent "
+                        "with a zip bomb"
+                    )
+                if total_uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    raise ParsingError(
+                        "archive would decompress to over "
+                        f"{MAX_ZIP_UNCOMPRESSED_BYTES // (1024 * 1024)}MB, consistent with a "
+                        "zip bomb"
+                    )
+    except zipfile.BadZipFile as exc:
+        raise ParsingError(f"corrupt archive: {exc}") from exc
+
 
 
 @dataclass
@@ -47,10 +83,13 @@ def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
         if ext == ".pdf":
             return _parse_pdf(content)
         if ext == ".docx":
+            _check_zip_bomb(content)
             return _parse_docx(content)
         if ext == ".pptx":
+            _check_zip_bomb(content)
             return _parse_pptx(content)
         if ext == ".xlsx":
+            _check_zip_bomb(content)
             return _parse_xlsx(content)
     except ParsingError:
         raise
