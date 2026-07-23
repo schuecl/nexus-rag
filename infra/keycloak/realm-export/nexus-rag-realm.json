@@ -85,7 +85,7 @@
     {
       "name": "profile",
       "protocol": "openid-connect",
-      "description": "Standard OIDC profile scope -- a bare --import-realm doesn't create Keycloak's usual built-in default scopes the way the admin console's 'Create realm' flow does, so this has to be defined explicitly or 'preferred_username' never reaches a token (both clients' defaultClientScopes reference it by name).",
+      "description": "Standard OIDC profile scope -- explicit because a bare --import-realm doesn't auto-create Keycloak's built-in default scopes; needed for 'preferred_username' to reach a token (referenced by both clients' defaultClientScopes).",
       "protocolMappers": [
         {
           "name": "username",
