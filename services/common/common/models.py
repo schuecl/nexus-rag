@@ -124,6 +124,11 @@ class UserSession(SQLModel, table=True):
     id: str = Field(primary_key=True)
     access_token: str
     refresh_token: str | None = None
+    # Kept only for Keycloak RP-initiated logout's `id_token_hint` param
+    # (app/routes/auth.py's logout()) -- never used for claims/auth checks,
+    # which stay on access_token via the same parse_claims() as the
+    # header-auth path.
+    id_token: str | None = None
     expires_at: datetime
     created_at: datetime = Field(default_factory=_utcnow)
 

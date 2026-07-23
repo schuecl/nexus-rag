@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from app.deps import get_current_user_optional
 from app.routes import admin, auth, curate, notifications, upload
+from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import Depends, FastAPI, Request
@@ -77,15 +79,31 @@ def _live_controlled_vocab(session: Session) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-def upload_page(request: Request, session: Session = Depends(get_session)):
-    return templates.TemplateResponse(request, "upload.html", _live_controlled_vocab(session))
+def upload_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
+):
+    ctx = _live_controlled_vocab(session)
+    ctx["current_user"] = current_user
+    return templates.TemplateResponse(request, "upload.html", ctx)
 
 
 @app.get("/curate", response_class=HTMLResponse)
-def curate_page(request: Request, session: Session = Depends(get_session)):
-    return templates.TemplateResponse(request, "curate.html", _live_controlled_vocab(session))
+def curate_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
+):
+    ctx = _live_controlled_vocab(session)
+    ctx["current_user"] = current_user
+    return templates.TemplateResponse(request, "curate.html", ctx)
 
 
 @app.get("/notifications", response_class=HTMLResponse)
-def notifications_page(request: Request):
-    return templates.TemplateResponse(request, "notifications.html", {})
+def notifications_page(
+    request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
+):
+    return templates.TemplateResponse(
+        request, "notifications.html", {"current_user": current_user}
+    )

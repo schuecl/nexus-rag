@@ -21,8 +21,12 @@
     <a href="/">Upload</a>
     <a href="/curate">Curation Queue</a>
     <a href="/notifications">Notifications</a>
-    <a href="/auth/login">Log in</a>
+    {% if current_user %}
+    <span class="hint">Logged in as <strong>{{ current_user.preferred_username }}</strong></span>
     <a href="/auth/logout">Log out</a>
+    {% else %}
+    <a href="/auth/login">Log in</a>
+    {% endif %}
   </nav>
   <hr />
   {% block content %}{% endblock %}

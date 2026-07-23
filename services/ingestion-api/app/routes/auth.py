@@ -113,6 +113,7 @@ def callback(
             id=session_id,
             access_token=tokens["access_token"],
             refresh_token=tokens.get("refresh_token"),
+            id_token=tokens.get("id_token"),
             expires_at=_utcnow() + timedelta(seconds=tokens.get("expires_in", 900)),
         )
     )
@@ -133,17 +134,30 @@ def callback(
 
 @router.get("/logout")
 def logout(request: Request, db: Session = Depends(get_session)) -> RedirectResponse:
-    """Local logout only (clears this app's session) -- not a full Keycloak
-    SSO end-session redirect, whose exact params vary by Keycloak version. A
-    reasonable follow-up if a shared LibreChat/ingestion-UI SSO session ever
-    matters, not needed for this app to have working login/logout on its own.
+    """Clears this app's session *and* redirects through Keycloak's
+    RP-initiated logout (end_session_endpoint) so the browser's Keycloak SSO
+    session ends too -- otherwise logging back in wouldn't re-prompt for
+    credentials. Uses `id_token_hint` (not just `client_id`, which newer
+    Keycloak versions reject) -- requires the id_token captured at /callback,
+    so a session predating that change, or one that's already gone, just
+    falls back to a local-only redirect to "/".
     """
     session_id = request.cookies.get(SESSION_COOKIE)
+    id_token = None
     if session_id:
         row = db.get(UserSession, session_id)
         if row is not None:
+            id_token = row.id_token
             db.delete(row)
             db.commit()
-    resp = RedirectResponse("/")
+
+    if id_token:
+        post_logout_redirect_uri = OIDC_REDIRECT_URI.rsplit("/auth/callback", 1)[0] or "/"
+        params = {"id_token_hint": id_token, "post_logout_redirect_uri": post_logout_redirect_uri}
+        target = f"{OIDC_BROWSER_ISSUER}/protocol/openid-connect/logout?{urlencode(params)}"
+    else:
+        target = "/"
+
+    resp = RedirectResponse(target)
     resp.delete_cookie(SESSION_COOKIE)
     return resp

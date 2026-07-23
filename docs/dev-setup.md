@@ -330,14 +330,20 @@ automated or for testing with your own file.
      (creating the scope and assigning it via the Admin API, confirming a fresh token
      carried `sub`) before committing it to `nexus-rag-claims`'s sibling scope list.
 - **Browser OIDC Authorization Code + PKCE login for the ingestion UI (ARCHITECTURE.md
-  Section 4.4)** — replaces the old paste-a-token workaround. "Log in" redirects to
-  Keycloak; the callback (`app/routes/auth.py`) exchanges the code for tokens
-  server-to-server and stores them in a new `user_sessions` Postgres row, keyed by an
-  opaque session ID in an `HttpOnly` cookie (never the token itself in browser-reachable
-  storage). `app/deps.get_current_user` resolves that cookie to the same `UserClaims` as
-  the header-based bearer-token path used by curl/API/MCP callers — transparently
-  refreshing an expired access token via the stored refresh token — so no enforcement
-  logic forks between the two. See "Stubbed / TODO" below for what's still Compose-only.
+  Section 4.4)** — replaces the old paste-a-token workaround. The login redirect itself is
+  confirmed working against a real `docker compose up`, not just the sandbox's
+  `TestClient`-level verification. "Log in" redirects to Keycloak; the callback
+  (`app/routes/auth.py`) exchanges the code for tokens server-to-server and stores them in
+  a new `user_sessions` Postgres row, keyed by an opaque session ID in an `HttpOnly` cookie
+  (never the token itself in browser-reachable storage). `app/deps.get_current_user`
+  resolves that cookie to the same `UserClaims` as the header-based bearer-token path used
+  by curl/API/MCP callers — transparently refreshing an expired access token via the
+  stored refresh token — so no enforcement logic forks between the two. "Log out" performs
+  a real Keycloak RP-initiated logout (`id_token_hint` + `post_logout_redirect_uri`), not
+  just a local session clear, so logging back in re-prompts for credentials — this part and
+  the nav bar's logged-in-username display (`get_current_user_optional`, used by the three
+  page routes) are sandbox-`TestClient`-verified only so far, not yet run against a real
+  Keycloak. See "Stubbed / TODO" below for what's still Compose-only.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
@@ -381,8 +387,6 @@ automated or for testing with your own file.
   `COOKIE_SECURE` are dev Compose env vars only so far; the Helm chart doesn't yet pass
   them to `ingestion-api`, and there's no ingress-derived redirect URI or Secret-backed
   client secret wired up there.
-- Full Keycloak SSO logout (`/auth/logout` only clears this app's own session today, not a
-  shared browser SSO session with LibreChat).
 
 ## Resetting
 
