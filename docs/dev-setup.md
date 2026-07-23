@@ -265,47 +265,50 @@ automated or for testing with your own file.
   (`GET /`) live-query these same tables (active values only, classification
   ordered by rank), not a hardcoded list, so an admin change is reflected on
   the next page load.
-- Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
-  aggregation (Section 6.2) -- exercised against a real `docker compose up` (not just
-  inspected as JSON), which surfaced six real, independently-fixed failures. The first
-  four blocked the `keycloak` container from starting/staying healthy at all: the
-  realm-export JSON can't carry `_comment`-style fields (Keycloak's importer uses strict
-  JSON deserialization and rejects any unrecognized property, failing the whole import);
-  `KC_HEALTH_ENABLED=true` serves `/health*` on a separate management port (9000) rather
-  than 8080; both clients' `profile`/`email` default scopes have to be defined explicitly
-  since a bare `--import-realm` doesn't create Keycloak's usual built-in ones the way the
-  admin console's "Create realm" flow does; and every `clientScopes[].description` has to
-  stay under Keycloak's `CLIENT_SCOPE.DESCRIPTION` column limit (`varchar(255)`) or the
-  Liquibase migration itself fails outright with a batch-update SQL error. A genuinely
-  healthy container doesn't mean a *usable* realm, though: the fifth failure only showed
-  up at actual login -- every direct-grant token request failed with
-  `invalid_grant: "Account is not fully set up"` (Keycloak event log:
-  `error="resolve_required_actions"`), even for a user with an empty personal
-  `requiredActions` list and `emailVerified: true`. Root cause was the same "bare
-  `--import-realm` skips built-in defaults" pattern as the `profile`/`email` scopes, one
-  level up: the realm itself had no `requiredActions` provider registry at all (Keycloak's
-  admin-console-created realms auto-populate ~11 entries -- CONFIGURE_TOTP,
-  UPDATE_PASSWORD, VERIFY_EMAIL, etc. -- that a bare import never adds), so Keycloak
-  couldn't resolve required actions during login regardless of what any individual user's
-  list contained. Fixed by pulling the authoritative provider list directly from a live
-  Keycloak instance's built-in `master` realm (`GET
-  /admin/realms/master/authentication/required-actions`) rather than hand-guessing the
-  schema, and adding it as the realm-export's top-level `requiredActions` array -- necessary,
-  but on its own not sufficient: the exact same error persisted afterward. Extensive
-  differential debugging against a real login (comparing the seeded, import-created
-  `alice-ingest` against a user created fresh through the admin console, which worked)
-  ruled out credentials (reset via the same admin API path the working user went through --
-  still failed), the per-user `requiredActions` list (already empty), and every custom
-  attribute (cleared entirely -- still failed) before landing on the actual sixth cause:
-  none of the seeded users had `firstName`/`lastName` set, and Keycloak's `VERIFY_PROFILE`
-  required action (now enabled via the registry fix above) dynamically enforces the realm's
-  User Profile schema at login time -- which marks `firstName`/`lastName` required by
-  default -- regardless of what's in the user's *stored* `requiredActions` list, which is
-  why it was invisible in every API/admin-console check of that field. Fixed by adding
-  `firstName`/`lastName` to all four seeded users. All six fixes are now confirmed end to
-  end against a real `docker compose up`, including an actual successful password-grant
-  login with the expected claims (`rag_roles`, `clearance`, `releasability`, `groups`,
-  `org`) in the returned token.
+- **Keycloak realm, seeded users/roles/claims, and the client role → `rag_roles` claim
+  aggregation (Section 6.2)** -- exercised against a real `docker compose up` (not just
+  inspected as JSON), which surfaced seven real, independently-fixed failures. All are
+  fixed, and the full flow -- realm import, a healthy `keycloak` container, password-grant
+  login, and a token actually accepted by `ingestion-api`/`orchestration-mcp` -- is
+  confirmed end to end against a real running stack, not assumed:
+  1. **`_comment`-style fields break realm import outright.** Keycloak's importer uses
+     strict JSON deserialization and rejects any unrecognized property.
+  2. **Healthcheck probing the wrong port.** `KC_HEALTH_ENABLED=true` serves `/health*`
+     on a separate management port (9000), not 8080 -- Keycloak itself was serving real
+     traffic fine the whole time; only the healthcheck was pointed wrong, permanently
+     blocking every service with `depends_on: keycloak: condition: service_healthy`.
+  3. **Missing `profile`/`email` default client scopes.** A bare `--import-realm` doesn't
+     create Keycloak's usual built-in ones the way the admin console's "Create realm"
+     flow does, so `preferred_username`/`email` never reached a token.
+  4. **`varchar(255)` limit on `clientScopes[].description`.** Exceeding it fails the
+     Liquibase migration outright with a batch-update SQL error, taking the whole import
+     down with it.
+  5. **Missing `requiredActions` provider registry.** A bare import creates none of the
+     ~11 built-in entries (`CONFIGURE_TOTP`, `UPDATE_PASSWORD`, `VERIFY_EMAIL`, etc.), so
+     Keycloak can't resolve required actions during login at all
+     (`invalid_grant: "Account is not fully set up"`, event log
+     `error="resolve_required_actions"`) -- pulled the authoritative provider list
+     directly from a live instance's `master` realm rather than hand-guessing the schema.
+     Necessary, but on its own not sufficient -- see #6.
+  6. **Missing `firstName`/`lastName` on seeded users.** Keycloak's `VERIFY_PROFILE`
+     required action (enabled via #5's fix) dynamically enforces the realm's User
+     Profile schema at login time -- which marks these fields required by default --
+     regardless of what's in the user's *stored* `requiredActions` list, which is why it
+     stayed invisible through every API/admin-console check of that field. Found by
+     differential debugging a real login against a working, admin-console-created test
+     user: ruled out credentials (reset via the same admin API path the working user
+     went through -- still failed) and every custom attribute (cleared entirely -- still
+     failed) before landing on this.
+  7. **Missing `aud` (audience) claim.** Keycloak does not automatically include the
+     requesting client in a token's `aud` claim -- that requires an explicit "Audience"
+     protocol mapper (`oidc-audience-mapper`), which nothing in the original realm
+     export defined. `ingestion-api`/`orchestration-mcp` validate `audience=rag-app`
+     (`common/claims.py`), so every real token failed with
+     `invalid token: Token is missing the "aud" claim` -- invisible until now because
+     `OIDC_SKIP_VERIFY=true` (used for every prior test this session, including all of
+     #1-6's verification) never exercises audience validation at all, only real
+     signature-verified tokens do. Added the mapper to the shared `nexus-rag-claims`
+     client scope, verified live against the running realm before committing it.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
