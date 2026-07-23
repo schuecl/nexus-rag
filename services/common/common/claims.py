@@ -21,9 +21,10 @@ RAG_CURATE_PREFIX = "rag-curate:"
 # -- under two different hostnames depending on who's asking, and Keycloak's
 # default (no fixed KC_HOSTNAME) behavior stamps `iss` with whichever hostname the
 # token request actually used: `http://keycloak:8080` for other containers on the
-# Docker network (scripts/_keycloak.py), and `http://localhost:8080` for a human's
-# browser/curl from outside it (docs/dev-setup.md's "Getting a token" instructions,
-# and the ingestion UI's paste-a-token field). Both are legitimate tokens from the
+# Docker network (scripts/_keycloak.py, and the ingestion UI's own server-side
+# OIDC login token exchange -- app/routes/auth.py), and `http://localhost:8080`
+# for a human's curl from outside it (docs/dev-setup.md's "Getting a token"
+# instructions, for direct API testing). Both are legitimate tokens from the
 # same realm and have to be accepted; production (a single real external Keycloak,
 # one canonical hostname -- see helm/nexus-rag/values.yaml's externalKeycloak) never
 # needs more than one entry here. The first entry is also what JWKS gets fetched

@@ -50,7 +50,7 @@ once everything above is healthy.
 |---|---|---|
 | Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
 | Keycloak health/metrics | http://localhost:9000/health/ready | `KC_HEALTH_ENABLED=true` moves `/health*` onto Keycloak's separate management interface (default port 9000) rather than 8080 -- what the `keycloak` service's Compose healthcheck actually probes |
-| Ingestion UI | http://localhost:8001 | upload form + curation queue (paste-a-token, see below) |
+| Ingestion UI | http://localhost:8001 | upload form + curation queue (click "Log in", real Keycloak login) |
 | orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
 | Qdrant | http://localhost:6333/dashboard | |
@@ -71,9 +71,9 @@ environment.**
 
 ## Getting a token for API testing (dev-only password grant)
 
-The ingestion UI's browser pages take a pasted bearer token instead of a full OIDC
-login redirect (that flow isn't implemented in this skeleton — see gaps below). Get one
-with:
+The ingestion UI's browser pages now use a real Keycloak login redirect (click "Log in" —
+ARCHITECTURE.md Section 4.4); this section is for curl/API testing, which still needs a
+raw bearer token. Get one with:
 
 ```bash
 curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
@@ -98,8 +98,8 @@ immediately, get a `bob-query` token (step 3's instructions) and search for e.g.
 walk through the same flow manually, useful for understanding what the seed script
 automated or for testing with your own file.
 
-1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (paste
-   the token from above into the field at the top of the page) or directly:
+1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (click
+   "Log in", authenticate as `alice-ingest` at Keycloak) or directly:
 
    ```bash
    TOKEN=$(...)  # from above
@@ -130,7 +130,8 @@ automated or for testing with your own file.
    role) gets a 403 from `/curate/queue`. Approving flips the chunks' `status` in Qdrant
    to `approved` too (not just the Postgres row) — that's what actually makes them
    visible to queries. Then check http://localhost:8001/notifications as `alice-ingest`
-   (paste her token) and confirm a notification about the decision is there (FR-15).
+   (log in as her — or log out and back in as a different seeded user to switch) and
+   confirm a notification about the decision is there (FR-15).
 
 3. **Query** as `bob-query` against the debug endpoint with a phrase that appears in the
    document you submitted:
@@ -328,6 +329,15 @@ automated or for testing with your own file.
      `master` realm (same technique as #5), verified live against the running realm
      (creating the scope and assigning it via the Admin API, confirming a fresh token
      carried `sub`) before committing it to `nexus-rag-claims`'s sibling scope list.
+- **Browser OIDC Authorization Code + PKCE login for the ingestion UI (ARCHITECTURE.md
+  Section 4.4)** — replaces the old paste-a-token workaround. "Log in" redirects to
+  Keycloak; the callback (`app/routes/auth.py`) exchanges the code for tokens
+  server-to-server and stores them in a new `user_sessions` Postgres row, keyed by an
+  opaque session ID in an `HttpOnly` cookie (never the token itself in browser-reachable
+  storage). `app/deps.get_current_user` resolves that cookie to the same `UserClaims` as
+  the header-based bearer-token path used by curl/API/MCP callers — transparently
+  refreshing an expired access token via the stored refresh token — so no enforcement
+  logic forks between the two. See "Stubbed / TODO" below for what's still Compose-only.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
@@ -367,8 +377,12 @@ automated or for testing with your own file.
 - `infra/librechat/librechat.yaml`'s exact schema hasn't been validated against a running
   LibreChat 0.8.7 instance (only `orchestration-mcp`'s side of the OBO connection has been
   verified, using the real MCP client SDK standing in for LibreChat's MCP client).
-- Full OIDC Authorization Code login flow for the ingestion UI's browser pages (uses a
-  pasted-token workaround instead, see above).
+- **Helm/production wiring for browser OIDC login** — `OIDC_CLIENT_ID`/`OIDC_REDIRECT_URI`/
+  `COOKIE_SECURE` are dev Compose env vars only so far; the Helm chart doesn't yet pass
+  them to `ingestion-api`, and there's no ingress-derived redirect URI or Secret-backed
+  client secret wired up there.
+- Full Keycloak SSO logout (`/auth/logout` only clears this app's own session today, not a
+  shared browser SSO session with LibreChat).
 
 ## Resetting
 

@@ -98,6 +98,36 @@ class AuditLogEntry(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class OAuthState(SQLModel, table=True):
+    """Short-lived, one-time-use row backing the ingestion UI's OIDC
+    Authorization Code + PKCE login (ARCHITECTURE.md Section 4.4) -- id is the
+    `state` value handed to Keycloak and echoed back at /auth/callback, bound
+    to the same browser via a cookie holding the identical value. Deleted
+    once consumed; an abandoned row is harmless (never redeemable without the
+    matching cookie) and low-volume enough not to need a cleanup job here."""
+
+    __tablename__ = "oauth_states"
+
+    id: str = Field(primary_key=True)
+    code_verifier: str
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class UserSession(SQLModel, table=True):
+    """Server-side session backing the ingestion UI's browser login (Section
+    4.4). The cookie only carries this row's id (an opaque token), never the
+    access/refresh token itself, so a session is individually revocable
+    (delete the row) and the tokens never touch JS-reachable storage."""
+
+    __tablename__ = "user_sessions"
+
+    id: str = Field(primary_key=True)
+    access_token: str
+    refresh_token: str | None = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class Notification(SQLModel, table=True):
     """FR-15: the uploader is notified of a curator's decision. No SMTP/email
     infra in this dev stack -- this is a discrete, markable-as-read record

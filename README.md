@@ -64,6 +64,10 @@ vs working" section for the honest, current list.
   access-scope combination, and a Helm chart scoped to just this project's new components
   (ingestion-api, orchestration-mcp, reranker-service, a dedicated embedding-service,
   Qdrant) that assumes the rest of MPNexus already exists.
+- **Browser login for the ingestion UI:** a real OIDC Authorization Code + PKCE flow
+  against Keycloak (`/auth/login` → `/auth/callback`) — tokens live server-side in a
+  Postgres-backed session, refreshed transparently, never in browser-reachable storage.
+  Replaces the earlier paste-a-token dev workaround. See `ARCHITECTURE.md` Section 4.4.
 
 **What's explicitly not done, and why:**
 
@@ -73,8 +77,9 @@ vs working" section for the honest, current list.
 - **`infra/librechat/librechat.yaml`'s exact schema** hasn't been validated against a
   running LibreChat 0.8.7 instance — only `orchestration-mcp`'s side of the MCP connection
   has been verified, using the real MCP client SDK standing in for LibreChat's client.
-- **Full OIDC Authorization Code browser login** for the ingestion UI is a paste-a-token
-  workaround instead — a reasonable dev-UX simplification, not attempted as a gap.
+- **Helm/production wiring for browser login** — the new OIDC client-secret/redirect-URI/
+  cookie-security env vars are dev Compose-only so far; see `docs/dev-setup.md`'s
+  "Stubbed / TODO" list.
 - **A concrete PyKMIP integration for encryption at rest (NFR-6)** — REQUIREMENTS.md names
   it only as a candidate, with no integration point, key rotation policy, or scope
   specified; building against that would mean guessing at a requirement rather than

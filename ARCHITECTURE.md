@@ -188,10 +188,12 @@ The access filter (`status=approved` + `classification` at-or-below clearance +
 verified token — never from anything the client/LibreChat supplies — which is what makes
 FR-26 non-bypassable.
 
-### 4.4 Ingestion UI login — designed, not yet built
+### 4.4 Ingestion UI login
 
-Today the ingestion UI takes a pasted access token (dev-only workaround, see
-`base.html`). The designed replacement, sketched in chat and recorded here for reference:
+Replaces the old pasted-access-token dev workaround. Page routes (`GET /`, `/curate`, ...)
+still render unauthenticated — there's no forced redirect on page load — but every
+underlying fetch call (upload, curate, notifications) now rides a session cookie instead
+of a manually-attached header, and a "Log in"/"Log out" pair sits in the nav:
 
 ```mermaid
 sequenceDiagram
@@ -199,32 +201,35 @@ sequenceDiagram
     participant I as ingestion-api
     participant KC as Keycloak
 
-    U->>I: GET / (no session cookie)
-    I-->>U: 302 /auth/login
-    U->>I: GET /auth/login
-    I->>I: generate state + PKCE verifier, store in short-lived signed cookie
-    I-->>U: 302 to Keycloak authorize endpoint
+    U->>I: GET /auth/login (clicked "Log in")
+    I->>I: generate state + PKCE verifier, insert oauth_states row
+    I-->>U: 302 to Keycloak authorize endpoint, state cookie set
     U->>KC: authenticate
     KC-->>U: 302 /auth/callback?code&state
     U->>I: GET /auth/callback
-    I->>I: validate state
+    I->>I: state == state cookie? oauth_states row exists?
     I->>KC: exchange code for tokens (client secret + PKCE verifier)
     KC-->>I: access_token, refresh_token
-    I->>I: insert sessions row, set HttpOnly session-id cookie
+    I->>I: insert user_sessions row, set HttpOnly session-id cookie
     I-->>U: 302 / (now authenticated)
-    Note over I: subsequent requests: cookie -> sessions row -> access_token<br/>-> same parse_claims() used by the header-auth path today
+    Note over I: subsequent requests: cookie -> user_sessions row -> access_token<br/>(refreshed via refresh_token if expired) -> same parse_claims() as the header-auth path
 ```
 
-Design notes:
-- `rag-app` is already a confidential client with a secret in the realm export — no new
-  Keycloak config needed, just the callback wiring.
-- Tokens live in a new Postgres `sessions` table, not in the cookie itself — keeps the
-  token out of JS-reachable storage and makes a session individually revocable.
-- The existing header-based `get_current_user` (bearer token) stays as-is for API/MCP
-  callers; session middleware just resolves "what's the current access token" for browser
-  requests before handing off to the same `parse_claims()` — no forked enforcement logic.
-- Open question: whether to keep a `AUTH_MODE=dev-token` escape hatch alongside real login,
-  or retire the paste-a-token box entirely once this lands. Leaning toward retiring it.
+Implementation notes:
+- `rag-app` is already a confidential client with a secret in the realm export, so no new
+  Keycloak config was needed — `app/routes/auth.py` and `app/deps.py`.
+- Tokens live in a new Postgres `user_sessions` table (`common/models.py`), not in the
+  cookie itself — keeps the token out of JS-reachable storage and makes a session
+  individually revocable. `oauth_states` is a matching short-lived table for the
+  login-in-progress `state`/PKCE `code_verifier` pair.
+- The existing header-based `get_current_user` path is untouched for API/MCP callers;
+  it now checks the session cookie first and falls back to the Authorization header — no
+  forked enforcement logic between browser and API callers.
+- The paste-a-token box was retired outright (not kept behind a flag) rather than running
+  two parallel auth UX paths.
+- Not yet done: Helm/production wiring (`OIDC_CLIENT_ID`/`OIDC_REDIRECT_URI`/
+  `COOKIE_SECURE` are Compose-only so far) and full Keycloak SSO logout — see
+  `docs/dev-setup.md`'s "Stubbed / TODO" list.
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 

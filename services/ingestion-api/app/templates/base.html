@@ -21,18 +21,19 @@
     <a href="/">Upload</a>
     <a href="/curate">Curation Queue</a>
     <a href="/notifications">Notifications</a>
+    <a href="/auth/login">Log in</a>
+    <a href="/auth/logout">Log out</a>
   </nav>
-  <label>Bearer token <span class="hint">(dev-only: paste an access token obtained from Keycloak; see docs/dev-setup.md -- a full browser OIDC login flow is not implemented in this skeleton)</span>
-    <input id="token" type="text" placeholder="paste Keycloak access_token here" />
-  </label>
   <hr />
   {% block content %}{% endblock %}
   <script>
-    const tokenInput = document.getElementById('token');
-    tokenInput.value = localStorage.getItem('nexus_rag_token') || '';
-    tokenInput.addEventListener('change', () => localStorage.setItem('nexus_rag_token', tokenInput.value));
+    // Auth is a browser session cookie now (ARCHITECTURE.md Section 4.4,
+    // set by /auth/login -> /auth/callback) -- fetch() already sends it
+    // same-origin, so there's no header to attach here. Kept as a no-op so
+    // the existing `headers: authHeaders()` calls elsewhere don't need
+    // touching.
     function authHeaders() {
-      return { 'Authorization': 'Bearer ' + tokenInput.value };
+      return {};
     }
   </script>
 </body>
