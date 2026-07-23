@@ -74,6 +74,11 @@ vs working" section for the honest, current list.
 - **Qdrant access control (NFR-15):** authenticated access required in every
   environment — a full read/write API key for `ingestion-api`, a read-only key for
   `orchestration-mcp` (least-privilege split, since it never writes to Qdrant).
+- **Pinned image/model versions (NFR-16):** no more `:latest`/`main-latest`/bare-major-
+  version tags in Compose or the Helm chart's default values — every external image is a
+  specific recent release, researched at pin time (see `docs/dev-setup.md` for the exact
+  list and version-by-version reasoning, including why LibreChat is deliberately held at
+  the exact version its OBO integration recipe was verified against rather than bumped).
 
 **What's explicitly not done, and why:**
 

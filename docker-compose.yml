@@ -16,7 +16,10 @@ volumes:
 services:
   # ---------------------------------------------------------------- storage
   postgres:
-    image: postgres:16
+    # NFR-16: pinned to a specific patch release, not the floating "16" tag
+    # -- same reasoning applies to every other image in this file that used
+    # to say :latest, main-latest, or a bare major version.
+    image: postgres:16.14
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
@@ -30,7 +33,7 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.18.2
     environment:
       # NFR-15: require authenticated access even in dev -- anonymous
       # read/write to the vector store is never acceptable, network
@@ -56,7 +59,15 @@ services:
 
   # -------------------------------------------------------------- identity
   keycloak:
-    image: quay.io/keycloak/keycloak:26.2
+    # NFR-16: pinned to a recent release, up from 26.2 (the version this
+    # whole realm/OBO setup was originally debugged against -- see
+    # docs/dev-setup.md's eight-bug Keycloak list). Still >= 26.2, so
+    # RFC 8693 token exchange (Section 7.7) stays supported, but this bump
+    # specifically deserves a full down -v / up / realm-import / login
+    # retest before trusting it -- more so than the other pins in this
+    # commit, given how many of those eight bugs were version-behavior
+    # surprises, not code bugs.
+    image: quay.io/keycloak/keycloak:26.7.0
     command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
@@ -90,7 +101,7 @@ services:
 
   # --------------------------------------------------------------- serving
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.1
     volumes:
       - ollama-data:/root/.ollama
     ports:
@@ -102,7 +113,7 @@ services:
       retries: 10
 
   ollama-model-init:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.1
     depends_on:
       ollama:
         condition: service_healthy
@@ -256,12 +267,16 @@ services:
 
   # ---------------------------------------------------- throwaway MPNexus stack
   mongodb:
-    image: mongo:7
+    image: mongo:7.0.31
     volumes:
       - mongo-data:/data/db
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    # NFR-16: pinned, up from the moving main-latest tag -- researched as
+    # the current release at pin time, not exhaustively verified to pull
+    # cleanly (this is C7's "entirely LibreChat's own pipeline, not this
+    # project's concern" territory, so lower scrutiny than Keycloak above).
+    image: ghcr.io/berriai/litellm:v1.93.0
     volumes:
       - ./infra/litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -273,7 +288,12 @@ services:
       - ollama-model-init
 
   librechat:
-    image: ghcr.io/danny-avila/librechat:latest
+    # NFR-16: pinned, up from :latest -- deliberately held at v0.8.7 rather
+    # than whatever's newest, since that's the exact version Section 7.7's
+    # OBO/addUserJwtToken integration recipe was verified against
+    # (REQUIREMENTS.md: "LibreChat 0.8.7 (confirmed version in use)").
+    # Bumping past it would mean re-verifying that recipe, not just pinning.
+    image: ghcr.io/danny-avila/librechat:v0.8.7
     volumes:
       - ./infra/librechat/librechat.yaml:/app/librechat.yaml:ro
     environment:
