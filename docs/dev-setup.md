@@ -24,7 +24,9 @@ the new schema on its own.
   generation/reranker/BM25 models (the last two from Hugging Face — `ingestion-api` and
   `orchestration-mcp` both pull `Qdrant/bm25` via `fastembed` on first use). None of this
   is air-gapped yet — NFR-1 applies to the production Helm deployment (NFR-10), not this
-  dev stack.
+  dev stack. Same goes for NFR-6 (encryption at rest): Compose's Postgres/Qdrant volumes
+  are plain local Docker volumes with no encryption, fine for throwaway dev data — see
+  `helm/nexus-rag/README.md`'s "Encryption at rest" section for the production posture.
 
 ## Start the stack
 

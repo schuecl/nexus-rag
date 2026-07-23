@@ -90,3 +90,29 @@ storage class supports `ReadWriteMany`. Qdrant runs as a single-node
 `StatefulSet` — no distributed clustering (multi-node consensus, shard
 replication) is configured; REQUIREMENTS.md doesn't call for it, and it's
 meaningfully more operational complexity than this chart takes on.
+
+## Encryption at rest (NFR-6)
+
+NFR-6 calls for the vector store and raw document storage to "support
+encryption at rest," with MPNexus's existing PyKMIP deployment named as "a
+candidate key-management integration point" — not a settled design. Disk/
+volume encryption is a **StorageClass** (or underlying block-storage)
+property; it isn't something a Helm chart, Qdrant, or this project's
+application code can turn on by itself. What this chart does:
+
+- `qdrant.persistence.storageClassName`, `embeddingService.persistence.storageClassName`,
+  and `rerankerService.persistence.storageClassName` are all left overridable
+  (empty string = your cluster's default StorageClass, whatever that
+  provides) — point them at an encrypted StorageClass if your cluster offers
+  one, the same way you'd do for any other PVC-backed workload.
+- `externalPostgres` is, per this chart's scope, infrastructure you already
+  manage separately — its encryption-at-rest posture is entirely that
+  deployment's responsibility, not something a `DATABASE_URL` Secret
+  reference can configure.
+
+What this chart deliberately does **not** attempt: a concrete PyKMIP
+integration. REQUIREMENTS.md itself only names PyKMIP as a candidate, not a
+specified integration (what it would encrypt, at what layer, with what key
+rotation policy are all still open); building against an unspecified design
+would mean guessing at requirements rather than implementing them. Revisit
+this section once that design exists.
