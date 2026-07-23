@@ -207,7 +207,10 @@ automated or for testing with your own file.
   (`app/parsing.py`'s `_check_zip_bomb`: a `.docx`/`.pptx`/`.xlsx` whose ZIP entries would
   decompress past 200MB or at a >200:1 ratio is rejected before python-docx/python-pptx/
   openpyxl ever touch it, since `MAX_UPLOAD_BYTES` only bounds the *compressed* upload)
-  files land here instead of a synchronous 4xx like before this change. `GET /documents/{id}`
+  files land here instead of a synchronous 4xx like before this change. `MAX_UPLOAD_BYTES`
+  itself is env-configurable (FR-9's "configurable size limit"), default 50MB -- see
+  `.env.example`/`docker-compose.yml` here, `ingestionApi.maxUploadBytes` in the Helm
+  chart. `GET /documents/{id}`
   (scoped to the uploader) polls current status; the ingestion UI polls it
   automatically after upload. Uses FastAPI's `BackgroundTasks`, not a durable queue —
   simple and adequate for this dev stack, but not crash-resilient: a process restart

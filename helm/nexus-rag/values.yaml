@@ -140,6 +140,8 @@ ingestionApi:
     repository: ingestion-api
     tag: "latest"
   replicas: 2
+  # FR-9/NFR-7: upload size guard in bytes.
+  maxUploadBytes: 52428800
   service:
     type: ClusterIP
     port: 8001

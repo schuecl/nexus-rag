@@ -122,6 +122,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
     volumes:
       - ingestion-api-cache:/srv/.cache/huggingface
     ports:
