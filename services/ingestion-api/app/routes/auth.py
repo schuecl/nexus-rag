@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
-from app.deps import OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_TOKEN_ISSUER, SESSION_COOKIE
+from app.deps import CSRF_COOKIE, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_TOKEN_ISSUER, SESSION_COOKIE
 from common.claims import OIDC_ISSUERS
 from common.db import get_session
 from common.models import OAuthState, UserSession
@@ -129,6 +129,19 @@ def callback(
         samesite="lax",
         max_age=int(SESSION_LIFETIME.total_seconds()),
     )
+    # NFR-14: double-submit CSRF token, deliberately NOT httponly -- base.html's
+    # JS has to read it and echo it back as a header on state-changing requests
+    # (deps.verify_csrf checks cookie == header). Not itself a secret the way
+    # the session cookie is; its only job is being unreadable to a cross-site
+    # attacker who can make the browser *send* cookies but can't read them.
+    resp.set_cookie(
+        CSRF_COOKIE,
+        secrets.token_urlsafe(32),
+        httponly=False,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+    )
     return resp
 
 
@@ -160,4 +173,5 @@ def logout(request: Request, db: Session = Depends(get_session)) -> RedirectResp
 
     resp = RedirectResponse(target)
     resp.delete_cookie(SESSION_COOKIE)
+    resp.delete_cookie(CSRF_COOKIE)
     return resp

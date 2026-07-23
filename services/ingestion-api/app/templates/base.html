@@ -34,11 +34,15 @@
   <script>
     // Auth is a browser session cookie now (ARCHITECTURE.md Section 4.4,
     // set by /auth/login -> /auth/callback) -- fetch() already sends it
-    // same-origin, so there's no header to attach here. Kept as a no-op so
-    // the existing `headers: authHeaders()` calls elsewhere don't need
-    // touching.
+    // same-origin, so there's no Authorization header to attach here. What
+    // this still needs to attach is the CSRF token (NFR-14, deps.verify_csrf):
+    // the session cookie alone rides along on a forged cross-site request,
+    // but this app's own JS is the only thing that can read the sibling
+    // nexus_rag_csrf cookie (not HttpOnly, unlike the session cookie) and
+    // echo it back as a header -- a cross-site attacker can't.
     function authHeaders() {
-      return {};
+      const match = document.cookie.match(/(?:^|; )nexus_rag_csrf=([^;]*)/);
+      return match ? { 'X-CSRF-Token': decodeURIComponent(match[1]) } : {};
     }
   </script>
 </body>

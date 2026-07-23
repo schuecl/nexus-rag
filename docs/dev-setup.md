@@ -348,6 +348,16 @@ automated or for testing with your own file.
   the nav bar's logged-in-username display (`get_current_user_optional`, used by the three
   page routes) are sandbox-`TestClient`-verified only so far, not yet run against a real
   Keycloak. See "Stubbed / TODO" below for what's still Compose-only.
+- **CSRF protection on cookie-authenticated routes (NFR-14)** — a double-submit cookie
+  (`nexus_rag_csrf`, set alongside the session cookie at login, deliberately *not*
+  `HttpOnly` so the page's own JS can read and echo it) checked against an `X-CSRF-Token`
+  header (`app/deps.verify_csrf`) on every state-changing route: document submission,
+  curation approve/reject, notification read, and the admin classification/releasability
+  endpoints. Only enforced when a session cookie is present — a bearer-token caller (curl,
+  MCP) is never CSRF-exposed and skips this check entirely, same reasoning as
+  `get_current_user`'s two paths never forking enforcement logic. Sandbox-`TestClient`-
+  verified (mismatched/missing header rejected, matching header passes, bearer-token
+  callers unaffected, logout clears both cookies) but not yet run against a real browser.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded

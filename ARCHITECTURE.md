@@ -248,6 +248,12 @@ Implementation notes:
   `nexus-rag.oidcRedirectUri` — fails the render rather than deploying a broken callback
   URL if neither is available) / `.cookieSecure`. Like the rest of the chart, unverified by
   `helm lint`/`helm template` — see `docs/dev-setup.md`'s "Stubbed / TODO" list.
+- CSRF protection (NFR-14): a second, non-`HttpOnly` cookie (`nexus_rag_csrf`) set
+  alongside the session cookie — the session cookie alone would ride along on a forged
+  cross-site request, but only this app's own JS can read the CSRF cookie's value to echo
+  it back as a header, which a cross-site attacker can't. `deps.verify_csrf` checks
+  cookie == header on every state-changing route, and is a no-op for bearer-token callers
+  (no session cookie means nothing CSRF can forge in the first place).
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 

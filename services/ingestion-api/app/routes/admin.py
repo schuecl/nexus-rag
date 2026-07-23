@@ -3,7 +3,7 @@ reorder without a code change or redeploy."""
 
 from __future__ import annotations
 
-from app.deps import require_admin
+from app.deps import require_admin, verify_csrf
 from common.db import get_session
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import APIRouter, Depends
@@ -30,6 +30,7 @@ def upsert_classification(
     body: ClassificationIn,
     _user=Depends(require_admin),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     existing = session.exec(
         select(ClassificationLevel).where(ClassificationLevel.value == body.value)
@@ -50,7 +51,10 @@ def upsert_classification(
 
 @router.delete("/classifications/{value}")
 def retire_classification(
-    value: str, _user=Depends(require_admin), session: Session = Depends(get_session)
+    value: str,
+    _user=Depends(require_admin),
+    session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     row = session.exec(
         select(ClassificationLevel).where(ClassificationLevel.value == value)
@@ -76,6 +80,7 @@ def upsert_releasability(
     body: ReleasabilityIn,
     _user=Depends(require_admin),
     session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     existing = session.exec(
         select(ReleasabilityValue).where(ReleasabilityValue.value == body.value)
@@ -95,7 +100,10 @@ def upsert_releasability(
 
 @router.delete("/releasability/{value}")
 def retire_releasability(
-    value: str, _user=Depends(require_admin), session: Session = Depends(get_session)
+    value: str,
+    _user=Depends(require_admin),
+    session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
 ):
     row = session.exec(
         select(ReleasabilityValue).where(ReleasabilityValue.value == value)
