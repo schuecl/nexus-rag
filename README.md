@@ -90,6 +90,11 @@ vs working" section for the honest, current list.
   Qdrant's chunk vectors, not just held in memory for a single background task's lifetime.
   First piece of the P0 durability work (NATS-based durable ingestion queue in progress next
   — see `REQUIREMENTS.md`'s NFR-11).
+- **NATS JetStream infrastructure (NFR-11, infra only):** a durable, token-authenticated
+  message queue is now part of the stack, with an idempotent stream-management helper
+  (`common/job_queue.py`), but nothing publishes or consumes from it yet — `ingestion-api`
+  still processes documents in-process. The `ingestion-worker` service that actually moves
+  processing off `BackgroundTasks` is next.
 
 **What's explicitly not done, and why:**
 

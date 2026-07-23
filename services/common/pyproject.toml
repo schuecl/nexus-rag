@@ -15,6 +15,8 @@ dependencies = [
     # S3-compatible client (existing enterprise S3, Ceph RGW, MinIO, ...),
     # not AWS-specific despite the package name.
     "boto3>=1.34",
+    # NFR-11: durable ingestion job queue (common/job_queue.py).
+    "nats-py>=2.7",
 ]
 
 [build-system]

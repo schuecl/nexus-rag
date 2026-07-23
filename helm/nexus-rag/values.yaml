@@ -118,6 +118,41 @@ qdrant:
       memory: "4Gi"
 
 # ---------------------------------------------------------------------------
+# NATS JetStream (NFR-11 -- durable ingestion job queue, common/job_queue.py).
+# New to the cluster, hand-deployed here for the same reason as qdrant above:
+# avoids depending on an external Helm chart repo, which would need its own
+# air-gapped mirroring step.
+# ---------------------------------------------------------------------------
+
+nats:
+  enabled: true
+  image:
+    repository: nats
+    tag: "2.14.3-alpine"
+  replicas: 1
+  service:
+    clientPort: 4222
+    monitorPort: 8222
+  persistence:
+    size: 10Gi
+    # NFR-6: see qdrant.persistence.storageClassName's comment above -- same
+    # applies here.
+    storageClassName: ""
+  # NFR-11: shared token auth between ingestion-api (publisher) and
+  # ingestion-worker (consumer) -- pre-created Secret, same existingSecret
+  # pattern as externalPostgres/externalKeycloak.
+  authToken:
+    existingSecret: "nexus-rag-nats-token"
+    secretKey: "token"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+# ---------------------------------------------------------------------------
 # Dedicated embedding-serving Ollama (NFR-8: a separate GPU allocation from
 # the cluster's existing generation-serving vLLM/Ollama, not the same
 # deployment as C7's chat-generation instance)

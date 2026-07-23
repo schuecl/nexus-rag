@@ -424,6 +424,20 @@ automated or for testing with your own file.
   `TestClient` POST confirming the object actually lands at the expected key before any
   background processing runs) but the S3 backend itself is untested — no S3-compatible
   endpoint available in this sandbox.
+- **NATS JetStream infrastructure (NFR-11, infra only so far)** — a `nats` service
+  (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`, monitoring
+  endpoint on 8222 for the healthcheck, client port on 4222) plus `common/job_queue.py`: an
+  `ensure_stream()` helper (idempotent, matching `common/qdrant_store.py`'s
+  `ensure_collection()` pattern) and `publish_ingestion_job()`, publishing just a
+  `document_id` to the `INGESTION_JOBS` stream — the original file lives in the object
+  store (NFR-12 above), not the message payload, so this stays small regardless of upload
+  size. **Not yet used anywhere** — nothing publishes or consumes from this stream yet;
+  `ingestion-api` still processes documents via the same in-process `BackgroundTasks`
+  mechanism as before. That's the next piece (`ingestion-worker`, NFR-11's actual
+  durability fix). Smoke-tested `ensure_stream()`/`publish_ingestion_job()`'s control flow
+  against a mocked JetStream context (creates the stream when missing, no-ops when it
+  already exists, publishes the right bytes to the right subject) — no live NATS server in
+  this sandbox to test the real connection/auth/persistence behavior against.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
