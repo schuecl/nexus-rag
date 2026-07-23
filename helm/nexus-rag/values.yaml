@@ -67,7 +67,8 @@ qdrant:
   enabled: true
   image:
     repository: qdrant/qdrant
-    tag: "v1.12.4"
+    # NFR-16: pinned to a specific, recent release -- never :latest.
+    tag: "v1.18.2"
   replicas: 1
   # NFR-15: Qdrant must require authenticated access -- pre-created Secret
   # (out-of-band, same existingSecret pattern as externalPostgres/
@@ -109,7 +110,8 @@ embeddingService:
   enabled: true
   image:
     repository: ollama/ollama
-    tag: "latest"
+    # NFR-16: pinned, never :latest.
+    tag: "0.32.1"
   model: "nomic-embed-text"
   replicas: 1
   service:
@@ -137,7 +139,13 @@ rerankerService:
   enabled: true
   image:
     repository: reranker-service
-    tag: "latest"
+    # NFR-16: matches Chart.yaml's appVersion, not :latest -- there's no CI
+    # pipeline yet that builds/pushes a version-tagged image for this
+    # first-party service, so this is a placeholder for the convention
+    # ("build and push something tagged to match this") rather than a
+    # value already backed by an existing tagged image. Bump alongside
+    # Chart.yaml's appVersion when that pipeline exists.
+    tag: "0.1.0"
   model: "cross-encoder/ms-marco-MiniLM-L6-v2"
   replicas: 1
   service:
@@ -163,7 +171,9 @@ ingestionApi:
   enabled: true
   image:
     repository: ingestion-api
-    tag: "latest"
+    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
+    # for the convention, no versioned-image CI pipeline yet" caveat.
+    tag: "0.1.0"
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
@@ -210,7 +220,9 @@ orchestrationMcp:
   enabled: true
   image:
     repository: orchestration-mcp
-    tag: "latest"
+    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
+    # for the convention, no versioned-image CI pipeline yet" caveat.
+    tag: "0.1.0"
   replicas: 2
   service:
     type: ClusterIP

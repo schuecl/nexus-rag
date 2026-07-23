@@ -371,6 +371,19 @@ automated or for testing with your own file.
   unset, the client just doesn't send the header (so this degrades gracefully against an
   unconfigured/older Qdrant rather than hard-failing, though every deployment this repo
   ships — Compose and Helm — now sets it).
+- **Pinned image/model versions (NFR-16)** — every `:latest`, `main-latest`, or bare
+  major-version image tag in `docker-compose.yml` and the Helm chart's `values.yaml` is now
+  a specific, researched-as-current-at-pin-time release (`postgres:16.14`,
+  `qdrant/qdrant:v1.18.2`, `keycloak:26.7.0`, `ollama/ollama:0.32.1`, `mongo:7.0.31`,
+  `litellm:v1.93.0`) — except `librechat:v0.8.7`, deliberately held at the exact version
+  Section 7.7's OBO integration recipe was verified against rather than bumped to newest.
+  The three first-party images (`ingestion-api`, `orchestration-mcp`, `reranker-service`)
+  in `values.yaml` are pinned to `0.1.0` (matching `Chart.yaml`'s `appVersion`) as a
+  placeholder for a versioning convention, not a value backed by an actual tagged image
+  yet — there's no CI pipeline in this repo that builds/pushes one. The Keycloak bump in
+  particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
+  before trusting it, given how many of the eight Keycloak bugs above turned out to be
+  version-behavior surprises rather than code bugs.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
