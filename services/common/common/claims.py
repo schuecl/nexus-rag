@@ -16,7 +16,27 @@ from pydantic import BaseModel, Field
 
 RAG_CURATE_PREFIX = "rag-curate:"
 
-OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "http://keycloak:8080/realms/nexus-rag")
+# Comma-separated list of `iss` claim values to accept. Not a hypothetical: in the
+# dev Compose stack, the same Keycloak instance is reachable -- and issues tokens
+# -- under two different hostnames depending on who's asking, and Keycloak's
+# default (no fixed KC_HOSTNAME) behavior stamps `iss` with whichever hostname the
+# token request actually used: `http://keycloak:8080` for other containers on the
+# Docker network (scripts/_keycloak.py), and `http://localhost:8080` for a human's
+# browser/curl from outside it (docs/dev-setup.md's "Getting a token" instructions,
+# and the ingestion UI's paste-a-token field). Both are legitimate tokens from the
+# same realm and have to be accepted; production (a single real external Keycloak,
+# one canonical hostname -- see helm/nexus-rag/values.yaml's externalKeycloak) never
+# needs more than one entry here. The first entry is also what JWKS gets fetched
+# from below, so it has to be a URL this container can actually reach over the
+# network -- `localhost` from inside a container would not resolve to Keycloak.
+OIDC_ISSUERS = [
+    v.strip()
+    for v in os.environ.get(
+        "OIDC_ISSUERS",
+        "http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag",
+    ).split(",")
+    if v.strip()
+]
 OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE", "rag-app")
 # Dev-only escape hatch: skip signature verification when running against a
 # throwaway local Keycloak without a reachable JWKS endpoint yet. Never set in prod.
@@ -54,7 +74,7 @@ class UserClaims(BaseModel):
 
 @lru_cache(maxsize=1)
 def _jwk_client() -> PyJWKClient:
-    return PyJWKClient(f"{OIDC_ISSUER}/protocol/openid-connect/certs")
+    return PyJWKClient(f"{OIDC_ISSUERS[0]}/protocol/openid-connect/certs")
 
 
 def parse_claims(bearer_token: str) -> UserClaims:
@@ -72,7 +92,7 @@ def parse_claims(bearer_token: str) -> UserClaims:
             signing_key.key,
             algorithms=["RS256"],
             audience=OIDC_AUDIENCE,
-            issuer=OIDC_ISSUER,
+            issuer=OIDC_ISSUERS,
         )
 
     return UserClaims(

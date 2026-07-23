@@ -52,7 +52,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.externalPostgres.existingSecret }}
                   key: {{ .Values.externalPostgres.secretKey }}
-            - name: OIDC_ISSUER
+            - name: OIDC_ISSUERS
               value: {{ .Values.externalKeycloak.issuerUrl | quote }}
             - name: OIDC_AUDIENCE
               value: {{ .Values.externalKeycloak.audience | quote }}

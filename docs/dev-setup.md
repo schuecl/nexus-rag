@@ -81,6 +81,8 @@ curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
   | jq -r .access_token
 ```
 
+A token requested this way (via `localhost:8080`, i.e. from outside the Compose network) carries a different `iss` claim than one requested via `keycloak:8080` (i.e. from another container, like `scripts/_keycloak.py`) -- Keycloak's default (no fixed `KC_HOSTNAME`) behavior stamps `iss` with whichever hostname the request actually used. `ingestion-api`/`orchestration-mcp` accept both (`OIDC_ISSUERS`, a comma-separated allowlist -- see `common/claims.py`), found and fixed after a real "invalid token: Invalid issuer" error pasting a `localhost`-obtained token into the ingestion UI, which validated against only the `keycloak:8080` form at the time.
+
 Swap `username`/`password` for any seeded user above.
 
 ## Exercising the flow
