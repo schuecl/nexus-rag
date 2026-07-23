@@ -51,7 +51,10 @@ class Document(SQLModel, table=True):
     owner_org: str
 
     classification: str
-    releasability: list[str] = Field(sa_column=Column(JSON))
+    # FR-20/Section 6.3: exactly one Releasability value per document (no
+    # multi-select, no chunk-level override) -- not a list, unlike
+    # access_scope below, which is explicitly "one or more" per Section 6.3.
+    releasability: str
     access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "PUBLIC"
     source_originator: str
     doc_type: str

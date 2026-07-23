@@ -27,7 +27,7 @@ async function loadQueue() {
     row.innerHTML = `
       <div>
         <strong>${doc.filename}</strong><br/>
-        org: ${doc.owner_org} · classification: ${doc.classification} · releasability: ${doc.releasability.join(', ')}<br/>
+        org: ${doc.owner_org} · classification: ${doc.classification} · releasability: ${doc.releasability}<br/>
         access_scope: ${doc.access_scope.join(', ')} · uploaded by ${doc.uploader_username}
         ${doc.supersedes_document_id ? `<br/><strong>supersedes</strong>: ${doc.supersedes_document_id} (approving this will retire and delete that document's chunks)` : ''}
       </div>

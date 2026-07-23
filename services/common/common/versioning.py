@@ -42,9 +42,7 @@ def validate_supersede_target(
         errors.append(
             "target document's classification is above the submitter's cleared level"
         )
-    if not set(old_doc.releasability) & set(user_releasability):
-        errors.append(
-            "submitter does not hold any releasability value the target document carries"
-        )
+    if old_doc.releasability not in user_releasability:
+        errors.append("submitter does not hold the target document's releasability value")
     if errors:
         raise SupersedeValidationError(errors)

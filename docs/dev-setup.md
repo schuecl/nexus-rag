@@ -100,7 +100,7 @@ automated or for testing with your own file.
      -H "Authorization: Bearer $TOKEN" \
      -F file=@/path/to/some.pdf \
      -F classification=CUI \
-     -F 'releasability=["REL TO USA/FVEY"]' \
+     -F 'releasability=REL TO USA/FVEY' \
      -F 'access_scope=["USAREUR-AF"]' \
      -F source_originator="Test Org" \
      -F doc_type="SOP"
