@@ -1,6 +1,6 @@
 # Security Policy
 
-Nexus Scheduler handles authentication, encrypted credentials (LibreChat
+Nexus RAG handles authentication, encrypted credentials (LibreChat
 API keys, SMTP passwords, webhook secrets), and an audit trail, and is
 often deployed in regulated or air-gapped environments. We take security
 reports seriously.
