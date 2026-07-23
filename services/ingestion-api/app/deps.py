@@ -95,6 +95,38 @@ def get_current_user(request: Request, db: Session = Depends(get_session)) -> Us
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
 
 
+def get_current_access_token(request: Request, db: Session = Depends(get_session)) -> str:
+    """Raw bearer token for the current request -- session cookie (refreshed
+    transparently by expiry if needed) or the Authorization header -- always
+    returned without a "Bearer " prefix either way. For server-side calls
+    this app makes to other services on the caller's own behalf (see
+    routes/search.py proxying to orchestration-mcp), where the caller's own
+    token, not a re-derivation of it, is what has to be forwarded.
+
+    Deliberately does not share _claims_from_session/_refresh_session with
+    get_current_user above: a route needing both a token and validated
+    claims in one request would otherwise resolve this session twice
+    independently, and if Keycloak rotates refresh tokens (a common default),
+    the second resolution could try to reuse one already consumed by the
+    first. Keeping this separate means it only ever refreshes a session
+    that's actually expired by clock, once.
+    """
+    session_id = request.cookies.get(SESSION_COOKIE)
+    if session_id:
+        row = db.get(UserSession, session_id)
+        if row is not None:
+            if _as_aware_utc(row.expires_at) > _utcnow():
+                return row.access_token
+            if _refresh_session(db, row) is not None:
+                return row.access_token
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expired, please log in again")
+
+    auth = request.headers.get("Authorization")
+    if not auth:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+    return auth.removeprefix("Bearer ").strip()
+
+
 def get_current_user_optional(
     request: Request, db: Session = Depends(get_session)
 ) -> UserClaims | None:
