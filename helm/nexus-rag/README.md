@@ -56,6 +56,12 @@ doesn't render cleanly as a bug to fix, not a surprise.
   full key, `orchestration-mcp` gets the read-only one. Generate both however
   your cluster's secret-management practice calls for (e.g. `openssl rand
   -hex 32` for each) before creating the Secret.
+- An S3-compatible bucket (existing enterprise S3, Ceph RGW, ...) already
+  reachable at `externalObjectStore.endpoint`/`.bucket`, and a pre-created
+  Secret matching `externalObjectStore.existingSecret` containing an access
+  key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
+  read/write access to it — original uploaded files are stored there,
+  independent of Qdrant/Postgres (NFR-12)
 
 ## Install
 

@@ -91,6 +91,25 @@ spec:
             # Section 4.3's /debug/rag_search, same as docker-compose.yml's dev wiring).
             - name: ORCHESTRATION_MCP_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-orchestration-mcp:{{ .Values.orchestrationMcp.service.port }}"
+            # NFR-12: durable original-file storage (common/object_store.py).
+            - name: OBJECT_STORE_BACKEND
+              value: "s3"
+            - name: OBJECT_STORE_S3_ENDPOINT
+              value: {{ .Values.externalObjectStore.endpoint | quote }}
+            - name: OBJECT_STORE_S3_BUCKET
+              value: {{ .Values.externalObjectStore.bucket | quote }}
+            - name: OBJECT_STORE_S3_REGION
+              value: {{ .Values.externalObjectStore.region | quote }}
+            - name: OBJECT_STORE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalObjectStore.existingSecret }}
+                  key: {{ .Values.externalObjectStore.accessKeySecretKey }}
+            - name: OBJECT_STORE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalObjectStore.existingSecret }}
+                  key: {{ .Values.externalObjectStore.secretKeySecretKey }}
           livenessProbe:
             httpGet:
               path: /health

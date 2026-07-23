@@ -84,6 +84,12 @@ vs working" section for the honest, current list.
   has `SELECT`/`INSERT` only on the audit log — `UPDATE`/`DELETE` require the bootstrap
   superuser, which day-to-day traffic never uses. Not yet run against a real environment —
   see `docs/dev-setup.md`, this is the riskiest of the hardening-batch changes.
+- **Durable object storage for uploaded originals (NFR-12):** the raw file is written to a
+  dedicated store (filesystem in dev, any S3-compatible endpoint in production) and its key
+  recorded on the `Document` row before the upload request returns — durable independent of
+  Qdrant's chunk vectors, not just held in memory for a single background task's lifetime.
+  First piece of the P0 durability work (NATS-based durable ingestion queue in progress next
+  — see `REQUIREMENTS.md`'s NFR-11).
 
 **What's explicitly not done, and why:**
 

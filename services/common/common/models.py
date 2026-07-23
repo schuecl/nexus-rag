@@ -61,6 +61,12 @@ class Document(SQLModel, table=True):
     program_community: str | None = None
     effective_date: str | None = None
 
+    # NFR-12: where the original uploaded file lives in the object store
+    # (common/object_store.py), independent of this row and of Qdrant's
+    # chunk vectors. Set at submission time, before processing ever starts --
+    # see app/routes/upload.py.
+    original_object_key: str | None = None
+
     status: str = Field(default="queued")
     # FR-8 progress states, in order: queued -> processing -> embedded ->
     # pending_review -> approved | rejected | superseded (FR-7 -- set when a
