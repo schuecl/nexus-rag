@@ -395,10 +395,12 @@ automated or for testing with your own file.
 - `infra/librechat/librechat.yaml`'s exact schema hasn't been validated against a running
   LibreChat 0.8.7 instance (only `orchestration-mcp`'s side of the OBO connection has been
   verified, using the real MCP client SDK standing in for LibreChat's MCP client).
-- **Helm/production wiring for browser OIDC login** — `OIDC_CLIENT_ID`/`OIDC_REDIRECT_URI`/
-  `COOKIE_SECURE` are dev Compose env vars only so far; the Helm chart doesn't yet pass
-  them to `ingestion-api`, and there's no ingress-derived redirect URI or Secret-backed
-  client secret wired up there.
+- **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
+  network access to install the `helm` CLI in this environment (see
+  `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This
+  applies to the new `externalKeycloak.clientId`/`clientSecret` and
+  `ingestionApi.oidcRedirectUri`/`cookieSecure` wiring same as everything else in the
+  chart — run `helm template --debug` against a real values override before trusting it.
 
 ## Resetting
 

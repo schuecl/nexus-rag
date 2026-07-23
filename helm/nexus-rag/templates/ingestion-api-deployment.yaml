@@ -56,6 +56,18 @@ spec:
               value: {{ .Values.externalKeycloak.issuerUrl | quote }}
             - name: OIDC_AUDIENCE
               value: {{ .Values.externalKeycloak.audience | quote }}
+            # Browser OIDC login (ARCHITECTURE.md Section 4.4).
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.externalKeycloak.clientId | quote }}
+            - name: RAG_APP_KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalKeycloak.clientSecret.existingSecret }}
+                  key: {{ .Values.externalKeycloak.clientSecret.secretKey }}
+            - name: OIDC_REDIRECT_URI
+              value: {{ include "nexus-rag.oidcRedirectUri" . | quote }}
+            - name: COOKIE_SECURE
+              value: {{ .Values.ingestionApi.cookieSecure | quote }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
             - name: OLLAMA_URL
@@ -68,6 +80,10 @@ spec:
               value: {{ .Values.ingestionApi.chunkTargetWords | quote }}
             - name: CHUNK_OVERLAP_RATIO
               value: {{ .Values.ingestionApi.chunkOverlapRatio | quote }}
+            # app/routes/search.py's query-testing page proxies here (ARCHITECTURE.md
+            # Section 4.3's /debug/rag_search, same as docker-compose.yml's dev wiring).
+            - name: ORCHESTRATION_MCP_URL
+              value: "http://{{ include "nexus-rag.fullname" . }}-orchestration-mcp:{{ .Values.orchestrationMcp.service.port }}"
           livenessProbe:
             httpGet:
               path: /health

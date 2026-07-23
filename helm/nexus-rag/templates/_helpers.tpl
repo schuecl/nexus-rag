@@ -92,3 +92,26 @@ readOnlyRootFilesystem: true
 capabilities:
   drop: ["ALL"]
 {{- end -}}
+
+{{/*
+OIDC browser-login callback URL for ingestion-api (ARCHITECTURE.md Section
+4.4), passed through as OIDC_REDIRECT_URI. ingestionApi.oidcRedirectUri wins
+if set explicitly; otherwise derived from ingestionApi.ingress.host, using
+https if ingress.tls is set (else http). Fails the render (rather than
+silently emitting an empty/broken callback URL that would only surface as a
+confusing runtime login failure) if neither an explicit override nor an
+enabled ingress with a host is available to derive one from.
+*/}}
+{{- define "nexus-rag.oidcRedirectUri" -}}
+{{- if .Values.ingestionApi.oidcRedirectUri -}}
+{{- .Values.ingestionApi.oidcRedirectUri -}}
+{{- else if and .Values.ingestionApi.ingress.enabled .Values.ingestionApi.ingress.host -}}
+{{- $scheme := "http" -}}
+{{- if .Values.ingestionApi.ingress.tls -}}
+{{- $scheme = "https" -}}
+{{- end -}}
+{{- printf "%s://%s/auth/callback" $scheme .Values.ingestionApi.ingress.host -}}
+{{- else -}}
+{{- fail "Set ingestionApi.oidcRedirectUri explicitly, or enable ingestionApi.ingress with a host, so the OIDC login callback URL (ARCHITECTURE.md Section 4.4) can be derived." -}}
+{{- end -}}
+{{- end -}}
