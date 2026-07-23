@@ -384,6 +384,29 @@ automated or for testing with your own file.
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.
+- **Separate DB credentials for the app and Keycloak, and an append-only audit log
+  (NFR-2/NFR-3)** — `POSTGRES_USER` is now the bootstrap superuser only, never used for
+  day-to-day traffic. `infra/postgres/init-app-roles.sh` (runs automatically on the
+  `postgres` container's first boot, via Postgres's own `docker-entrypoint-initdb.d`)
+  creates two non-superuser roles: `APP_DB_USER` (`ingestion-api`/`orchestration-mcp`'s
+  `DATABASE_URL`, on the existing app database) and `KEYCLOAK_DB_USER` (Keycloak's
+  `KC_DB_URL`, on its own separate `KEYCLOAK_DB_NAME` database) — the app and Keycloak no
+  longer share a database or credentials, in this dev stack same as production always
+  required (Helm never put them on the same Postgres instance to begin with, since
+  Keycloak is external there). A new one-shot `harden-audit-log` service, gated on
+  `ingestion-api: condition: service_healthy` (so `audit_log` definitely exists by then --
+  it's created by `common/db.py`'s `init_db()` during that service's own startup),
+  reassigns `audit_log`'s ownership away from `APP_DB_USER` entirely and grants it only
+  `SELECT, INSERT` — not just a `REVOKE` while `APP_DB_USER` remains the owner, which it
+  could trivially undo (table owners always retain `GRANT` on their own objects; losing
+  ownership outright is what actually closes that). Confirmed nothing in the codebase ever
+  issues an `UPDATE`/`DELETE` against `AuditLogEntry` rows (grepped for it) before revoking
+  those privileges, so this shouldn't break anything that was working. **Not tested
+  live** — this is the riskiest change in this hardening batch (unlike the others, a
+  mistake here could break every DB-touching code path in both services, not just degrade
+  one feature), and deserves a full `docker compose down -v && docker compose up` pass with
+  close attention to whether `ingestion-api`/`orchestration-mcp`/`keycloak` actually come up
+  healthy before relying on it.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
