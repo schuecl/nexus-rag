@@ -14,8 +14,8 @@
     </select>
   </label>
 
-  <label>Releasability * <span class="hint">(select one or more)</span>
-    <select name="releasability" multiple required>
+  <label>Releasability *
+    <select name="releasability" required>
       {% for value in releasability %}
       <option value="{{ value }}">{{ value }}</option>
       {% endfor %}
@@ -45,7 +45,7 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
   const fd = new FormData();
   fd.append('file', form.file.files[0]);
   fd.append('classification', form.classification.value);
-  fd.append('releasability', JSON.stringify(Array.from(form.releasability.selectedOptions).map(o => o.value)));
+  fd.append('releasability', form.releasability.value);
   const scope = form.access_scope.value.split(',').map(s => s.trim()).filter(Boolean);
   fd.append('access_scope', JSON.stringify(scope));
   fd.append('source_originator', form.source_originator.value);

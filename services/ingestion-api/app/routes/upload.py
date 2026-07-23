@@ -141,7 +141,8 @@ async def submit_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     classification: str = Form(...),
-    releasability: str = Form(..., description="JSON array of strings"),
+    # FR-20/Section 6.3: a single value, unlike access_scope below.
+    releasability: str = Form(...),
     access_scope: str = Form(..., description="JSON array of strings"),
     source_originator: str = Form(...),
     doc_type: str = Form(...),
@@ -160,7 +161,7 @@ async def submit_document(
     try:
         metadata = DocumentMetadataIn(
             classification=classification,
-            releasability=json.loads(releasability),
+            releasability=releasability,
             access_scope=json.loads(access_scope),
             source_originator=source_originator,
             doc_type=doc_type,

@@ -14,7 +14,9 @@ class DocumentMetadataIn(BaseModel):
     below -- this model alone does not enforce that, since it has no claims context."""
 
     classification: str
-    releasability: list[str] = Field(min_length=1)
+    # FR-20/Section 6.3: exactly one Releasability value per document (no
+    # multi-select) -- unlike access_scope below, which is "one or more".
+    releasability: str = Field(min_length=1)
     access_scope: list[str] = Field(min_length=1)
     source_originator: str
     doc_type: str
@@ -47,7 +49,7 @@ def validate_against_claims(
     user_releasability: list[str],
 ) -> None:
     """Server-side enforcement of FR-18: an uploader may only assign a
-    Classification at or below their clearance, and Releasability values they
+    Classification at or below their clearance, and a Releasability value they
     themselves hold -- never just hidden in the UI, always re-checked here."""
     errors = []
     if metadata.classification not in allowed_classifications:
@@ -55,10 +57,9 @@ def validate_against_claims(
             f"classification '{metadata.classification}' is above the submitter's "
             "cleared level"
         )
-    disallowed = set(metadata.releasability) - set(user_releasability)
-    if disallowed:
+    if metadata.releasability not in user_releasability:
         errors.append(
-            f"releasability value(s) {sorted(disallowed)} are not held by the submitter"
+            f"releasability value '{metadata.releasability}' is not held by the submitter"
         )
     if errors:
         raise MetadataValidationError(errors)

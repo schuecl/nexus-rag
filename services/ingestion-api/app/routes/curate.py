@@ -53,13 +53,12 @@ def _check_curator_authority(user, doc: Document, session: Session) -> None:
             "cannot approve a document above your own cleared level",
         )
     # FR-14.1: "by clearance/releasability, same as FR-18" -- a curator who
-    # doesn't hold every releasability caveat on the document can't publish
-    # it, mirroring validate_against_claims' uploader-side check exactly.
-    disallowed = set(doc.releasability) - set(user.releasability)
-    if disallowed:
+    # doesn't hold the document's releasability value can't publish it,
+    # mirroring validate_against_claims' uploader-side check exactly.
+    if doc.releasability not in user.releasability:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            f"cannot approve a document with releasability value(s) {sorted(disallowed)} "
+            f"cannot approve a document with releasability value '{doc.releasability}' "
             "you do not hold",
         )
 
@@ -112,7 +111,7 @@ def _execute_supersede(user, old_doc: Document, new_doc: Document, session: Sess
 
 class Corrections(BaseModel):
     classification: str | None = None
-    releasability: list[str] | None = None
+    releasability: str | None = None  # FR-20/Section 6.3: single value
     access_scope: list[str] | None = None
 
 
