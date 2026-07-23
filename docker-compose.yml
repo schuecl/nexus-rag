@@ -125,7 +125,7 @@ services:
       dockerfile: services/ingestion-api/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
-      OIDC_ISSUER: http://keycloak:8080/realms/nexus-rag
+      OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
@@ -157,7 +157,7 @@ services:
       dockerfile: services/orchestration-mcp/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
-      OIDC_ISSUER: http://keycloak:8080/realms/nexus-rag
+      OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434

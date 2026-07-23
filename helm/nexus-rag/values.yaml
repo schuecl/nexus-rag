@@ -39,6 +39,10 @@ externalPostgres:
   secretKey: "database-url"
 
 externalKeycloak:
+  # Passed through as OIDC_ISSUERS (common/claims.py accepts a comma-separated
+  # list there, for the dev Compose stack's two-hostnames-one-Keycloak problem --
+  # see that file's comment). Production has one real Keycloak behind one
+  # canonical hostname, so a single value here is all that's ever needed.
   issuerUrl: "https://keycloak.example.mil/realms/nexus-rag"
   audience: "rag-app"
 
