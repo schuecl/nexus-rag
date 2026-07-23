@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Search — nexus-rag{% endblock %}
+{% block content %}
+<h1>Search (query testing)</h1>
+<p>Runs the same claims-based access-filtered hybrid retrieval + rerank (FR-24..FR-29)
+   LibreChat's <code>rag_search</code> MCP tool uses, against your own logged-in
+   identity -- for testing outside of LibreChat's chat UI.</p>
+<form id="searchForm">
+  <label>Query <input type="text" name="query" required autofocus /></label>
+  <label>Top K <input type="number" name="top_k" value="5" min="1" max="20" /></label>
+  <button type="submit">Search</button>
+</form>
+<div id="result" class="msg"></div>
+
+<script>
+document.getElementById('searchForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const resultEl = document.getElementById('result');
+  resultEl.className = 'msg';
+  resultEl.textContent = 'Searching...';
+  const params = new URLSearchParams({ query: form.query.value, top_k: form.top_k.value });
+  try {
+    const res = await fetch(`/search/query?${params}`);
+    const body = await res.json();
+    resultEl.className = 'msg ' + (res.ok && !body.error ? 'ok' : 'err');
+    resultEl.textContent = JSON.stringify(body, null, 2);
+  } catch (err) {
+    resultEl.className = 'msg err';
+    resultEl.textContent = String(err);
+  }
+});
+</script>
+{% endblock %}

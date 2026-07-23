@@ -50,7 +50,7 @@ once everything above is healthy.
 |---|---|---|
 | Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
 | Keycloak health/metrics | http://localhost:9000/health/ready | `KC_HEALTH_ENABLED=true` moves `/health*` onto Keycloak's separate management interface (default port 9000) rather than 8080 -- what the `keycloak` service's Compose healthcheck actually probes |
-| Ingestion UI | http://localhost:8001 | upload form + curation queue (click "Log in", real Keycloak login) |
+| Ingestion UI | http://localhost:8001 | upload form, curation queue, and a search page (click "Log in", real Keycloak login) |
 | orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
 | Qdrant | http://localhost:6333/dashboard | |
@@ -133,13 +133,17 @@ automated or for testing with your own file.
    (log in as her — or log out and back in as a different seeded user to switch) and
    confirm a notification about the decision is there (FR-15).
 
-3. **Query** as `bob-query` against the debug endpoint with a phrase that appears in the
-   document you submitted:
+3. **Query** as `bob-query` with a phrase that appears in the document you submitted,
+   either through http://localhost:8001/search (log in as `bob-query`) or directly
+   against the debug endpoint:
 
    ```bash
    curl -s -X POST "http://localhost:8002/debug/rag_search?query=<a+phrase+from+your+doc>&top_k=5" \
      -H "Authorization: Bearer $TOKEN"
    ```
+
+   The UI page is a thin proxy over this same endpoint (`app/routes/search.py`), forwarding
+   your logged-in session's own token — same access filter either way.
 
    Expect `results` to contain the matching chunk(s), each with the source document's
    `applied_filter`-passing payload (classification, releasability, access_scope,
@@ -344,6 +348,14 @@ automated or for testing with your own file.
   the nav bar's logged-in-username display (`get_current_user_optional`, used by the three
   page routes) are sandbox-`TestClient`-verified only so far, not yet run against a real
   Keycloak. See "Stubbed / TODO" below for what's still Compose-only.
+- **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
+  page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
+  REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
+  unchanged. No enforcement logic duplicated here — `orchestration-mcp` (FR-24..FR-29)
+  still does all of it, including the `rag-query` role check; this route just resolves
+  "what's the current user's token" and passes the response through, same access filter a
+  real LibreChat query would get. Not a LibreChat replacement, just a faster way to test a
+  query than curl.
 - **Pre-seeded sample documents (NFR-9)** — the `seed-sample-data` one-shot service
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion

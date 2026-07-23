@@ -188,6 +188,12 @@ The access filter (`status=approved` + `classification` at-or-below clearance +
 verified token — never from anything the client/LibreChat supplies — which is what makes
 FR-26 non-bypassable.
 
+`orchestration-mcp` also exposes this same logic as a plain REST endpoint,
+`POST /debug/rag_search`, for curl-based testing without an MCP client (§4.4's ingestion
+UI has a `/search` page that's a thin proxy over this same endpoint, forwarding the
+logged-in user's own session token — no enforcement logic duplicated in `ingestion-api`,
+it's still all in `orchestration-mcp`).
+
 ### 4.4 Ingestion UI login
 
 Replaces the old pasted-access-token dev workaround. Page routes (`GET /`, `/curate`, ...)

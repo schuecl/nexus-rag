@@ -143,6 +143,9 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
       CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
+      # app/routes/search.py's query-testing page proxies here, forwarding the
+      # logged-in user's own access token (ARCHITECTURE.md Section 4.3).
+      ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
     volumes:
       - ingestion-api-cache:/srv/.cache/huggingface
     ports:
@@ -159,6 +162,8 @@ services:
       keycloak:
         condition: service_healthy
       qdrant:
+        condition: service_started
+      orchestration-mcp:
         condition: service_started
 
   orchestration-mcp:

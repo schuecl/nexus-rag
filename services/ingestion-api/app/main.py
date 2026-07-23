@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from app.deps import get_current_user_optional
-from app.routes import admin, auth, curate, notifications, upload
+from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
 from common.models import ClassificationLevel, ReleasabilityValue
@@ -50,6 +50,7 @@ app.include_router(upload.router)
 app.include_router(curate.router)
 app.include_router(admin.router)
 app.include_router(notifications.router)
+app.include_router(search.router)
 
 
 @app.get("/health")
@@ -107,3 +108,10 @@ def notifications_page(
     return templates.TemplateResponse(
         request, "notifications.html", {"current_user": current_user}
     )
+
+
+@app.get("/search", response_class=HTMLResponse)
+def search_page(
+    request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
+):
+    return templates.TemplateResponse(request, "search.html", {"current_user": current_user})
