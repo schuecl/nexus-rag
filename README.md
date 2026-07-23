@@ -7,6 +7,8 @@ tagging, curator review, and claims-based access-controlled retrieval on top of 
 existing stack, exposed to LibreChat as a custom MCP tool.
 
 Full requirements, design constraints, and open questions: **[REQUIREMENTS.md](REQUIREMENTS.md)**.
+For how the pieces fit together — component diagram, data model, and sequence diagrams for
+every major flow — see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 Everything below is a snapshot of what's actually built against that spec, not a plan.
 
 ## Status
