@@ -200,6 +200,8 @@
     {
       "username": "alice-ingest",
       "email": "alice-ingest@example.mil",
+      "firstName": "Alice",
+      "lastName": "Ingest",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
@@ -214,6 +216,8 @@
     {
       "username": "bob-query",
       "email": "bob-query@example.mil",
+      "firstName": "Bob",
+      "lastName": "Query",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
@@ -228,6 +232,8 @@
     {
       "username": "carol-curator",
       "email": "carol-curator@example.mil",
+      "firstName": "Carol",
+      "lastName": "Curator",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
@@ -242,6 +248,8 @@
     {
       "username": "dave-admin",
       "email": "dave-admin@example.mil",
+      "firstName": "Dave",
+      "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
