@@ -30,6 +30,11 @@ externalPostgres:
   # Pre-created Secret containing the full SQLAlchemy DATABASE_URL
   # (postgresql+psycopg://user:pass@host:5432/dbname) under secretKey.
   # Created out-of-band by your cluster's secrets process, not by this chart.
+  # NFR-6 (encryption at rest): since Postgres is external to this chart,
+  # its storage encryption is entirely your existing Postgres deployment's
+  # responsibility -- not something a DATABASE_URL or Secret reference can
+  # configure from here. See helm/nexus-rag/README.md's "Encryption at rest"
+  # section.
   existingSecret: "nexus-rag-db"
   secretKey: "database-url"
 
@@ -54,6 +59,12 @@ qdrant:
     grpcPort: 6334
   persistence:
     size: 50Gi
+    # NFR-6 (encryption at rest): set this to a StorageClass backed by
+    # encrypted volumes -- disk/volume encryption is a StorageClass-level
+    # (or underlying block-storage-level) property, not something this
+    # chart or Qdrant itself can turn on. Empty string uses the cluster's
+    # default StorageClass as-is, whatever that provides. See
+    # helm/nexus-rag/README.md's "Encryption at rest" section.
     storageClassName: ""
   resources:
     requests:
@@ -80,6 +91,8 @@ embeddingService:
     port: 11434
   persistence:
     size: 20Gi
+    # NFR-6: see qdrant.persistence.storageClassName's comment above -- same
+    # applies here.
     storageClassName: ""
   resources:
     requests:
@@ -106,6 +119,8 @@ rerankerService:
     port: 8003
   persistence:
     size: 5Gi
+    # NFR-6: see qdrant.persistence.storageClassName's comment above -- same
+    # applies here.
     storageClassName: ""
   resources:
     requests:
