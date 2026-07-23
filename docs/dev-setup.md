@@ -7,8 +7,12 @@ parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6), retr
 genuinely fuses dense+BM25 hybrid search with a reranking pass (FR-24/FR-25), documents
 can be versioned (FR-7), and `orchestration-mcp`'s MCP tool reads the caller's identity
 from the connection's Authorization header rather than a client-supplied argument, the
-way LibreChat's OBO/addUserJwtToken forwarding actually delivers it. See "What's stubbed
-vs working" below for what's still open.
+way LibreChat's OBO/addUserJwtToken forwarding actually delivers it. **Confirmed against
+a real `docker compose up`** (not just inspected as code) end to end: upload through the
+ingestion UI with a real browser-obtained token, curation, and search all manually
+verified working -- see the Keycloak realm bullet below for the eight real bugs that
+stood between "should work" and actually working. See "What's stubbed vs working" below
+for what's still open.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
 `bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
