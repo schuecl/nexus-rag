@@ -70,6 +70,13 @@ spec:
               value: {{ .Values.ingestionApi.cookieSecure | quote }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+            # NFR-15: full read/write key -- this service creates the
+            # collection and writes/deletes points (common/qdrant_store.py).
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.qdrant.apiKey.existingSecret }}
+                  key: {{ .Values.qdrant.apiKey.secretKey }}
             - name: OLLAMA_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
             - name: EMBEDDING_MODEL

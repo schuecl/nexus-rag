@@ -71,6 +71,9 @@ vs working" section for the honest, current list.
   double-submit cookie, checked on every state-changing route, that only applies to
   cookie-authenticated browser requests — bearer-token API/MCP callers are unaffected.
   See `ARCHITECTURE.md` Section 4.4.
+- **Qdrant access control (NFR-15):** authenticated access required in every
+  environment — a full read/write API key for `ingestion-api`, a read-only key for
+  `orchestration-mcp` (least-privilege split, since it never writes to Qdrant).
 
 **What's explicitly not done, and why:**
 

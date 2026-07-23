@@ -37,6 +37,13 @@ from qdrant_client.models import (
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "nexus_rag_chunks")
+# NFR-15: Qdrant must require authenticated access in every environment,
+# including local dev. Each caller sets this to whichever key its deployment
+# config grants it -- ingestion-api gets the full read/write key (it creates
+# the collection and writes/deletes points), orchestration-mcp gets a
+# read-only key (it only ever calls query_points) -- this module doesn't need
+# to know which is which, it just forwards whatever's in its own environment.
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "bm25"
@@ -44,7 +51,7 @@ SPARSE_VECTOR = "bm25"
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:
-    return QdrantClient(url=QDRANT_URL)
+    return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
 
 def ensure_collection(client: QdrantClient, dense_size: int) -> None:

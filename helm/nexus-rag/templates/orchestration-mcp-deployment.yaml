@@ -51,6 +51,13 @@ spec:
               value: {{ .Values.externalKeycloak.audience | quote }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+            # NFR-15: read-only key -- this service only ever calls
+            # query_points (app/rag_search.py), never writes to Qdrant.
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.qdrant.apiKey.existingSecret }}
+                  key: {{ .Values.qdrant.apiKey.readOnlySecretKey }}
             - name: OLLAMA_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
             - name: EMBEDDING_MODEL
