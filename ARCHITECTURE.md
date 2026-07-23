@@ -193,7 +193,8 @@ FR-26 non-bypassable.
 Replaces the old pasted-access-token dev workaround. Page routes (`GET /`, `/curate`, ...)
 still render unauthenticated — there's no forced redirect on page load — but every
 underlying fetch call (upload, curate, notifications) now rides a session cookie instead
-of a manually-attached header, and a "Log in"/"Log out" pair sits in the nav:
+of a manually-attached header. The nav shows "Log in" when logged out, or the current
+user's `preferred_username` plus "Log out" when logged in.
 
 ```mermaid
 sequenceDiagram
@@ -209,10 +210,14 @@ sequenceDiagram
     U->>I: GET /auth/callback
     I->>I: state == state cookie? oauth_states row exists?
     I->>KC: exchange code for tokens (client secret + PKCE verifier)
-    KC-->>I: access_token, refresh_token
+    KC-->>I: access_token, refresh_token, id_token
     I->>I: insert user_sessions row, set HttpOnly session-id cookie
     I-->>U: 302 / (now authenticated)
     Note over I: subsequent requests: cookie -> user_sessions row -> access_token<br/>(refreshed via refresh_token if expired) -> same parse_claims() as the header-auth path
+    U->>I: GET /auth/logout
+    I->>I: delete user_sessions row
+    I-->>U: 302 to Keycloak end_session_endpoint (id_token_hint + post_logout_redirect_uri)
+    Note over U,KC: ends the browser's Keycloak SSO session too, not just this app's --<br/>logging back in re-prompts for credentials
 ```
 
 Implementation notes:
@@ -224,12 +229,16 @@ Implementation notes:
   login-in-progress `state`/PKCE `code_verifier` pair.
 - The existing header-based `get_current_user` path is untouched for API/MCP callers;
   it now checks the session cookie first and falls back to the Authorization header — no
-  forked enforcement logic between browser and API callers.
+  forked enforcement logic between browser and API callers. `get_current_user_optional`
+  (used only by the three page routes, for the nav's username display) is the same
+  resolution but returns `None` instead of raising on an anonymous visitor.
 - The paste-a-token box was retired outright (not kept behind a flag) rather than running
   two parallel auth UX paths.
+- Logout uses `id_token_hint` (the `id_token` captured at `/callback`) rather than just
+  `client_id`, since newer Keycloak versions reject the latter for RP-initiated logout.
 - Not yet done: Helm/production wiring (`OIDC_CLIENT_ID`/`OIDC_REDIRECT_URI`/
-  `COOKIE_SECURE` are Compose-only so far) and full Keycloak SSO logout — see
-  `docs/dev-setup.md`'s "Stubbed / TODO" list.
+  `COOKIE_SECURE` are Compose-only so far) — see `docs/dev-setup.md`'s "Stubbed / TODO"
+  list.
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 

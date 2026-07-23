@@ -95,6 +95,19 @@ def get_current_user(request: Request, db: Session = Depends(get_session)) -> Us
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
 
 
+def get_current_user_optional(
+    request: Request, db: Session = Depends(get_session)
+) -> UserClaims | None:
+    """Same resolution as get_current_user, but returns None instead of
+    raising -- for page routes (main.py) that render whether or not the
+    visitor is logged in, and just want to know who (if anyone) to display
+    in the nav."""
+    try:
+        return get_current_user(request, db)
+    except HTTPException:
+        return None
+
+
 def require_ingest(user: UserClaims = Depends(get_current_user)) -> UserClaims:
     if not user.can_ingest:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-ingest role")
