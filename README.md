@@ -79,6 +79,11 @@ vs working" section for the honest, current list.
   specific recent release, researched at pin time (see `docs/dev-setup.md` for the exact
   list and version-by-version reasoning, including why LibreChat is deliberately held at
   the exact version its OBO integration recipe was verified against rather than bumped).
+- **Separate DB credentials + append-only audit log (NFR-2/NFR-3):** the app and Keycloak
+  no longer share a database or credentials in the dev stack, and the app's own DB role
+  has `SELECT`/`INSERT` only on the audit log — `UPDATE`/`DELETE` require the bootstrap
+  superuser, which day-to-day traffic never uses. Not yet run against a real environment —
+  see `docs/dev-setup.md`, this is the riskiest of the hardening-batch changes.
 
 **What's explicitly not done, and why:**
 

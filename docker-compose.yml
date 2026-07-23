@@ -21,11 +21,21 @@ services:
     # to say :latest, main-latest, or a bare major version.
     image: postgres:16.14
     environment:
+      # POSTGRES_USER/PASSWORD stays the bootstrap superuser -- NFR-3: never
+      # used for day-to-day app or Keycloak traffic (see APP_DB_USER/
+      # KEYCLOAK_DB_USER below and infra/postgres/init-app-roles.sh, which
+      # creates both as separate, non-superuser roles on first boot).
       POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
       POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      APP_DB_USER: ${APP_DB_USER:-nexus_rag_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-nexus_rag_app}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak_app}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
+      KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:-keycloak}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init-app-roles.sh:/docker-entrypoint-initdb.d/init-app-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus_rag}"]
       interval: 5s
@@ -73,9 +83,11 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-nexus_rag}
-      KC_DB_USERNAME: ${POSTGRES_USER:-nexus_rag}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+      # NFR-3: Keycloak's own database/role, separate from the app's -- see
+      # postgres service's init-app-roles.sh.
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak_app}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       KC_HEALTH_ENABLED: "true"
     volumes:
       - ./infra/keycloak/realm-export:/opt/keycloak/data/import
@@ -148,7 +160,9 @@ services:
       context: .
       dockerfile: services/ingestion-api/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
+      # postgres service's init-app-roles.sh.
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
       # Browser OIDC login (ARCHITECTURE.md Section 4.4). RAG_APP_KEYCLOAK_CLIENT_SECRET
@@ -198,7 +212,9 @@ services:
       context: .
       dockerfile: services/orchestration-mcp/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
+      # postgres service's init-app-roles.sh.
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       OIDC_ISSUERS: http://keycloak:8080/realms/nexus-rag,http://localhost:8080/realms/nexus-rag
       OIDC_AUDIENCE: rag-app
       QDRANT_URL: http://qdrant:6333
@@ -227,6 +243,42 @@ services:
         condition: service_started
       reranker-service:
         condition: service_healthy
+
+  harden-audit-log:
+    # NFR-2: audit_log must be append-only from the app's own DB credentials
+    # (APP_DB_USER, not the postgres superuser). Can't do this from
+    # postgres's docker-entrypoint-initdb.d (init-app-roles.sh) -- the
+    # audit_log table doesn't exist yet at that point, it's created by
+    # SQLModel's create_all() (common/db.py's init_db(), called from
+    # ingestion-api's lifespan) the first time that service starts. Runs
+    # once ingestion-api reports healthy, connecting as the bootstrap
+    # superuser (the only other place besides init-app-roles.sh that ever
+    # does) to reassign table ownership away from APP_DB_USER entirely --
+    # not just REVOKE while it's still the owner, which it could trivially
+    # undo (owners always retain GRANT on their own objects; only losing
+    # ownership outright closes that).
+    image: postgres:16.14
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - postgres
+      - -U
+      - ${POSTGRES_USER:-nexus_rag}
+      - -d
+      - ${POSTGRES_DB:-nexus_rag}
+      - -c
+      - >-
+        ALTER TABLE audit_log OWNER TO "${POSTGRES_USER:-nexus_rag}";
+        REVOKE ALL ON audit_log FROM "${APP_DB_USER:-nexus_rag_app}";
+        GRANT SELECT, INSERT ON audit_log TO "${APP_DB_USER:-nexus_rag_app}";
+    depends_on:
+      ingestion-api:
+        condition: service_healthy
+    restart: "no"
 
   seed-sample-data:
     build:
