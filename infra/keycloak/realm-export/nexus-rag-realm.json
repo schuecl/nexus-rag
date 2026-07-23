@@ -118,7 +118,7 @@
         "access.token.lifespan": "900",
         "use.refresh.tokens": "true"
       },
-      "_comment": "Reusable access tokens (Section 7.7 OBO prerequisite) are a LibreChat-side OpenID setting, not a Keycloak client attribute -- set in infra/librechat/librechat.yaml."
+      "_comment": "Reusable access tokens (Section 7.7 OBO prerequisite) are a LibreChat-side OpenID setting, not a Keycloak client attribute -- set via OPENID_REUSE_TOKENS=true in docker-compose.yml's librechat service environment, not librechat.yaml (that file is LibreChat's endpoints/mcpServers config, not its auth env vars)."
     }
   ],
   "roles": {
