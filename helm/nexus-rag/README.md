@@ -3,11 +3,12 @@
 Production packaging for the air-gapped Kubernetes deployment. Scoped to only
 the components this project adds: **ingestion-api**, **orchestration-mcp**,
 **reranker-service**, a dedicated **embedding-service** (Ollama, embedding
-model only), and **Qdrant**. LibreChat, LiteLLM, Keycloak, and the cluster's
-existing generation-serving vLLM/Ollama (C7) are assumed to already be
-deployed and managed separately; this chart integrates with them via
-configuration (`externalKeycloak`, MCP server registration in LibreChat's own
-config) rather than deploying or bundling them.
+model only), **Qdrant**, and **NATS** (JetStream -- the durable ingestion job
+queue, NFR-11). LibreChat, LiteLLM, Keycloak, and the cluster's existing
+generation-serving vLLM/Ollama (C7) are assumed to already be deployed and
+managed separately; this chart integrates with them via configuration
+(`externalKeycloak`, MCP server registration in LibreChat's own config)
+rather than deploying or bundling them.
 
 **Assumption called out explicitly:** REQUIREMENTS.md's NFR-10 lists Qdrant
 among the new components this chart deploys, but doesn't mention Postgres —
@@ -33,8 +34,8 @@ doesn't render cleanly as a bug to fix, not a surprise.
   `*.persistence.storageClassName` explicitly for each component)
 - The air-gapped registry (`global.imageRegistry`) already has this
   project's three custom images (`ingestion-api`, `orchestration-mcp`,
-  `reranker-service`), plus `qdrant/qdrant` and `ollama/ollama`, mirrored
-  into it (NFR-1)
+  `reranker-service`), plus `qdrant/qdrant`, `ollama/ollama`, and `nats`,
+  mirrored into it (NFR-1)
 - A pre-created Secret matching `externalPostgres.existingSecret` /
   `externalPostgres.secretKey`, containing a full SQLAlchemy
   `DATABASE_URL` (`postgresql+psycopg://user:pass@host:5432/dbname`)
@@ -62,6 +63,9 @@ doesn't render cleanly as a bug to fix, not a surprise.
   key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
   read/write access to it — original uploaded files are stored there,
   independent of Qdrant/Postgres (NFR-12)
+- A pre-created Secret matching `nats.authToken.existingSecret` /
+  `.secretKey`, containing a token both `ingestion-api` (publisher) and
+  `ingestion-worker` (consumer) authenticate to NATS with (NFR-11)
 
 ## Install
 

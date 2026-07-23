@@ -17,6 +17,7 @@ volumes:
   # this single-node dev stack; production uses S3ObjectStore instead, which
   # doesn't have this same-filesystem constraint (see helm's externalObjectStore).
   object-store-data:
+  nats-data:
 
 services:
   # ---------------------------------------------------------------- storage
@@ -68,6 +69,29 @@ services:
       - qdrant-data:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------------ queue
+  nats:
+    # NFR-11: durable ingestion job queue (common/job_queue.py) -- JetStream
+    # (-js) gives ack/redelivery semantics so a worker crash or restart
+    # mid-processing doesn't silently strand a document, unlike the
+    # FastAPI BackgroundTasks mechanism this replaces. -sd persists stream
+    # data to the mounted volume; -m exposes the monitoring HTTP endpoint
+    # (port 8222, unauthenticated by design, used by the healthcheck below)
+    # separate from the client protocol port (4222, which --auth protects).
+    image: nats:2.14.3-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222", "--auth", "${NATS_AUTH_TOKEN:-dev-nats-token}"]
+    volumes:
+      - nats-data:/data
+    ports:
+      # Bound to localhost only, same reasoning as qdrant's port binding
+      # above -- other containers reach it via nats:4222 regardless.
+      - "127.0.0.1:4222:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8222/healthz || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10

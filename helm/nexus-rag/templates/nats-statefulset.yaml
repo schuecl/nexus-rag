@@ -1,0 +1,91 @@
+{{- if .Values.nats.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-nats
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  # Single-node config, same reasoning as qdrant-statefulset.yaml -- NATS
+  # clustering (multi-node consensus for JetStream) isn't set up here;
+  # REQUIREMENTS.md doesn't call for it, and it's meaningfully more
+  # operational complexity than this chart takes on. Revisit if ingestion
+  # volume/throughput ever actually needs it.
+  serviceName: {{ include "nexus-rag.fullname" . }}-nats
+  replicas: {{ .Values.nats.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "nats") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nats
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.nats.image) }}
+          # -js: JetStream (NFR-11's ack/redelivery semantics). -sd:
+          # persist stream data to the mounted volume. -m: monitoring HTTP
+          # endpoint (unauthenticated by design, used by the probes below),
+          # separate from the client protocol port that --auth protects.
+          args:
+            - "-js"
+            - "-sd"
+            - "/data"
+            - "-m"
+            - {{ .Values.nats.service.monitorPort | quote }}
+            - "--auth"
+            - "$(NATS_AUTH_TOKEN)"
+          env:
+            # NFR-11: shared token auth between ingestion-api (publisher) and
+            # ingestion-worker (consumer) -- pre-created Secret, same
+            # existingSecret pattern as externalPostgres/externalKeycloak.
+            - name: NATS_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.authToken.existingSecret }}
+                  key: {{ .Values.nats.authToken.secretKey }}
+          ports:
+            - name: client
+              containerPort: {{ .Values.nats.service.clientPort }}
+            - name: monitor
+              containerPort: {{ .Values.nats.service.monitorPort }}
+          volumeMounts:
+            - name: storage
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+        labels:
+          {{- include "nexus-rag.labels" . | nindent 10 }}
+          app.kubernetes.io/component: nats
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.nats.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nats.persistence.size }}
+{{- end }}

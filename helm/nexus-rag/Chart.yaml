@@ -2,10 +2,11 @@ apiVersion: v2
 name: nexus-rag
 description: >-
   MPNexus RAG pipeline (REQUIREMENTS.md) -- ingestion UI, RAG orchestration/MCP
-  service, Qdrant, and embedding/reranker model serving. Scoped to only the
-  components this project adds (NFR-10); LibreChat, LiteLLM, Keycloak,
-  vLLM/Ollama (generation), and Postgres are assumed to already exist in the
-  cluster and are integrated via configuration, not deployed by this chart.
+  service, Qdrant, NATS JetStream (durable ingestion queue), and
+  embedding/reranker model serving. Scoped to only the components this
+  project adds (NFR-10); LibreChat, LiteLLM, Keycloak, vLLM/Ollama
+  (generation), and Postgres are assumed to already exist in the cluster and
+  are integrated via configuration, not deployed by this chart.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
