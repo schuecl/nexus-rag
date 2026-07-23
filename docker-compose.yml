@@ -123,6 +123,8 @@ services:
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
+      CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
     volumes:
       - ingestion-api-cache:/srv/.cache/huggingface
     ports:

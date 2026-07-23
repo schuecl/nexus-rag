@@ -64,6 +64,10 @@ spec:
               value: {{ .Values.embeddingService.model | quote }}
             - name: MAX_UPLOAD_BYTES
               value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
+            - name: CHUNK_TARGET_WORDS
+              value: {{ .Values.ingestionApi.chunkTargetWords | quote }}
+            - name: CHUNK_OVERLAP_RATIO
+              value: {{ .Values.ingestionApi.chunkOverlapRatio | quote }}
           livenessProbe:
             httpGet:
               path: /health

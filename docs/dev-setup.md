@@ -192,7 +192,10 @@ automated or for testing with your own file.
 - **Document parsing, chunking, embedding, and Qdrant storage (FR-3..FR-6)** —
   `services/ingestion-api/app/{parsing,chunking,embedding}.py`. Handles PDF, DOCX,
   PPTX, XLSX, TXT/MD, HTML; chunks respect section/heading/page/slide boundaries
-  (~512 words, ~15% overlap — word-based, not a model-specific tokenizer).
+  (~512 words, ~15% overlap — word-based, not a model-specific tokenizer; both are
+  env-configurable per FR-4 via `CHUNK_TARGET_WORDS`/`CHUNK_OVERLAP_RATIO` --
+  `.env.example`/`docker-compose.yml` here, `ingestionApi.chunkTargetWords`/
+  `chunkOverlapRatio` in the Helm chart).
   A curator's approve/reject (and any tag corrections made while approving) propagate
   to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`)
   — that's what actually changes query-time visibility.

@@ -142,6 +142,10 @@ ingestionApi:
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
+  # FR-4: chunking target size (words) and overlap ratio -- Section 2's
+  # starting point.
+  chunkTargetWords: 512
+  chunkOverlapRatio: 0.15
   service:
     type: ClusterIP
     port: 8001

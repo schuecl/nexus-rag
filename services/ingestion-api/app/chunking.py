@@ -11,12 +11,16 @@ need to track the embedding model's actual token count precisely.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from app.parsing import ParsedSection
 
-DEFAULT_TARGET_WORDS = 512
-DEFAULT_OVERLAP_RATIO = 0.15
+# FR-4: "configurable target chunk size and overlap" -- these were hardcoded
+# constants with no way to change them short of editing code; now read from
+# the environment, with the same Section 2 starting-point values as defaults.
+DEFAULT_TARGET_WORDS = int(os.environ.get("CHUNK_TARGET_WORDS", 512))
+DEFAULT_OVERLAP_RATIO = float(os.environ.get("CHUNK_OVERLAP_RATIO", 0.15))
 
 
 @dataclass
