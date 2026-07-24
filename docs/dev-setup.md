@@ -619,6 +619,39 @@ the docs, not a silent "it works" — flag it if you find one.
   `OPENID_CALLBACK_URL`'s relative path to build the absolute callback URL used in the OIDC
   redirect, and leaving it unset risked a second, separate failure mode once the button
   itself was fixed.
+- **`librechat`'s `depends_on` now waits for `keycloak: condition: service_healthy`**
+  (matching `ingestion-api`/`orchestration-mcp`'s existing dependency on the same
+  healthcheck) rather than the bare list form, which only waits for the container to
+  start -- reasonable hardening regardless (Keycloak takes a while to import the realm and
+  become genuinely ready), but turned out not to be this bug's actual cause -- see the
+  `OPENID_SCOPE` bullet below.
+- **`Unknown authentication strategy "openid"`'s real cause: a missing required env var,
+  not a timing race.** The `depends_on` fix above didn't resolve it, and
+  `DEBUG_OPENID_REQUESTS=true` produced zero additional output on retry -- a real clue in
+  itself: nothing about OIDC ever logged past `"Configuring social logins..."`, meaning no
+  HTTP request was even attempted to debug. Checked LibreChat's own source
+  (`api/server/socialLogins.js`) directly rather than guess further:
+  `configureOpenId()` -- the function that actually calls `passport.use('openid', ...)` --
+  only runs at all if `OPENID_CLIENT_ID`/`OPENID_ISSUER`/`OPENID_SCOPE`/
+  `OPENID_SESSION_SECRET` are *all* present. `OPENID_SCOPE` was missing from this stack's
+  config the whole time -- not failing partway through discovery, never called in the
+  first place, which is exactly consistent with the total silence in the logs and
+  explains why the Keycloak-healthcheck timing fix couldn't have helped either way. Added
+  `OPENID_SCOPE: "openid profile email"` (LibreChat's own `.env.example` default) to
+  `docker-compose.yml`'s `librechat` service. `DEBUG_OPENID_REQUESTS=true` left in for one
+  more live retest to confirm this is actually the full fix; remove once confirmed.
+- **LibreChat also blocks MCP server connections to private/internal hosts by
+  default (SSRF protection)** — found live: `[MCPServersRegistry] Failed to inspect server
+  "nexus-rag-search": Domain "http://orchestration-mcp:8002" is not allowed`, meaning
+  `rag_search` was never actually reachable through LibreChat despite the rest of the MCP
+  config being valid. Fixed with a new top-level `mcpSettings.allowedAddresses` entry in
+  `infra/librechat/librechat.yaml` — the narrower of LibreChat's two exemption mechanisms
+  (`allowedDomains` is a strict whitelist that also blocks everything else not listed;
+  `allowedAddresses` just exempts specific private `host:port` targets, which is all this
+  config needs). Also bumped this file's `version: 1.2.8` to `1.3.13` to match what the
+  running image itself reported as current (`Outdated Config version: 1.2.8, Latest
+  version: 1.3.13`) — not required for `mcpSettings` to work (that field isn't
+  version-gated), just to stop the stale-version log line.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This

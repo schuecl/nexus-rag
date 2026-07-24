@@ -1,6 +1,13 @@
 # Throwaway dev LibreChat config (NFR-9). Only enough to exercise Keycloak
 # login and the orchestration-mcp connection -- not a production config.
-version: 1.2.8
+#
+# version bumped 1.2.8 -> 1.3.13 (confirmed live: the running v0.8.7 image
+# logged "Outdated Config version: 1.2.8, Latest version: 1.3.13" at boot) --
+# not because the old value was rejected (it wasn't; the field is
+# informational, not a schema gate), but because mcpSettings below is a
+# 1.3.3+ config key and matching the version to what we actually use avoids
+# the stale warning.
+version: 1.3.13
 cache: true
 
 endpoints:
@@ -12,6 +19,17 @@ endpoints:
         default: ["${GENERATION_MODEL}"]
         fetch: false
       titleConvo: true
+
+# Found live: LibreChat rejects MCP server connections to private/internal
+# hosts by default (SSRF protection) -- "[MCPServersRegistry] Failed to
+# inspect server \"nexus-rag-search\": Domain \"http://orchestration-mcp:8002\"
+# is not allowed". allowedAddresses is the narrower of the two exemption
+# mechanisms (the other, allowedDomains, is a strict whitelist that also
+# blocks everything else not listed) -- appropriate here since this config
+# only ever needs to reach orchestration-mcp, not the public internet.
+mcpSettings:
+  allowedAddresses:
+    - "orchestration-mcp:8002"
 
 mcpServers:
   nexus-rag-search:
