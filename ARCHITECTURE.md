@@ -262,6 +262,16 @@ UI has a `/search` page that's a thin proxy over this same endpoint, forwarding 
 logged-in user's own session token — no enforcement logic duplicated in `ingestion-api`,
 it's still all in `orchestration-mcp`).
 
+**Prompt-injection mitigation (P1):** retrieved chunk `text` is untrusted by construction —
+it's whatever an uploader submitted, and FR-18's tagging validation constrains metadata, not
+document content. `run_rag_search()` (`app/rag_search.py`) delimits every result's `text`
+with an explicit `<untrusted_document_content>` marker (applied *after* reranking, so
+`reranker-service`'s cross-encoder still scores the raw text) and adds a `security_notice`
+field to the response instructing the calling model to treat delimited content as reference
+material to cite, not instructions to follow — the same marker-plus-notice pattern also
+carried in the tool's own MCP docstring, so it doesn't depend on one particular client
+surfacing docstrings to its model. This is a mitigation, not a guarantee (§7).
+
 ### 4.4 Ingestion UI login
 
 Replaces the old pasted-access-token dev workaround. Page routes (`GET /`, `/curate`, ...)
@@ -398,7 +408,10 @@ See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authorita
 (kept there rather than duplicated here, since it changes as work lands). Notable ones as
 of this writing: §4.4's browser OIDC login, Keycloak OBO admin-console steps that can't be
 expressed in the realm-export JSON, `librechat.yaml`'s schema not yet validated against a
-running LibreChat instance, and §4.1's NATS-based durable ingestion pipeline
+running LibreChat instance, §4.1's NATS-based durable ingestion pipeline
 (`ingestion-worker`, NFR-11) — the largest structural change in the current hardening
 batch, verified only with mocks in this sandbox (no live NATS/Postgres/Qdrant available),
-not yet exercised against a real `docker compose up`.
+not yet exercised against a real `docker compose up` — and §4.3's prompt-injection
+mitigation, which has no regression test proving a real generation model actually respects
+the delimiter/notice (needs a live LibreChat + generation model, same gap as the P1
+tool-invocation regression test).
