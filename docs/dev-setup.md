@@ -622,16 +622,24 @@ the docs, not a silent "it works" — flag it if you find one.
 - **`librechat`'s `depends_on` now waits for `keycloak: condition: service_healthy`**
   (matching `ingestion-api`/`orchestration-mcp`'s existing dependency on the same
   healthcheck) rather than the bare list form, which only waits for the container to
-  start. LibreChat registers its passport `openid` strategy once at boot by fetching
-  Keycloak's `/.well-known/openid-configuration`; if that fetch runs before Keycloak has
-  actually finished importing the realm, the strategy never registers and doesn't retry
-  later. **Applied, but not confirmed sufficient on its own** — a live retest (full
-  `docker compose down && up`, not just `restart`) still hit `Unknown authentication
-  strategy "openid"`, so either this wasn't the whole story or the fix needs a clean
-  volume state to actually take effect. `DEBUG_OPENID_REQUESTS=true` was added to
-  `docker-compose.yml`'s `librechat` service (temporary, remove once resolved) to get real
-  evidence of what LibreChat's OIDC client is doing during discovery/setup, since nothing
-  about that step logs at `error` level even on failure.
+  start -- reasonable hardening regardless (Keycloak takes a while to import the realm and
+  become genuinely ready), but turned out not to be this bug's actual cause -- see the
+  `OPENID_SCOPE` bullet below.
+- **`Unknown authentication strategy "openid"`'s real cause: a missing required env var,
+  not a timing race.** The `depends_on` fix above didn't resolve it, and
+  `DEBUG_OPENID_REQUESTS=true` produced zero additional output on retry -- a real clue in
+  itself: nothing about OIDC ever logged past `"Configuring social logins..."`, meaning no
+  HTTP request was even attempted to debug. Checked LibreChat's own source
+  (`api/server/socialLogins.js`) directly rather than guess further:
+  `configureOpenId()` -- the function that actually calls `passport.use('openid', ...)` --
+  only runs at all if `OPENID_CLIENT_ID`/`OPENID_ISSUER`/`OPENID_SCOPE`/
+  `OPENID_SESSION_SECRET` are *all* present. `OPENID_SCOPE` was missing from this stack's
+  config the whole time -- not failing partway through discovery, never called in the
+  first place, which is exactly consistent with the total silence in the logs and
+  explains why the Keycloak-healthcheck timing fix couldn't have helped either way. Added
+  `OPENID_SCOPE: "openid profile email"` (LibreChat's own `.env.example` default) to
+  `docker-compose.yml`'s `librechat` service. `DEBUG_OPENID_REQUESTS=true` left in for one
+  more live retest to confirm this is actually the full fix; remove once confirmed.
 - **LibreChat also blocks MCP server connections to private/internal hosts by
   default (SSRF protection)** — found live: `[MCPServersRegistry] Failed to inspect server
   "nexus-rag-search": Domain "http://orchestration-mcp:8002" is not allowed`, meaning

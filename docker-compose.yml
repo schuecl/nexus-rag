@@ -449,6 +449,17 @@ services:
       OPENID_ISSUER: http://keycloak:8080/realms/nexus-rag
       OPENID_CLIENT_ID: librechat
       OPENID_CLIENT_SECRET: ${LIBRECHAT_KEYCLOAK_CLIENT_SECRET:-dev-librechat-secret}
+      # Root cause of "Unknown authentication strategy \"openid\"", confirmed
+      # against LibreChat's own source (api/server/socialLogins.js):
+      # configureOpenId() -- the function that actually calls passport.use('openid', ...)
+      # -- only runs at all if OPENID_CLIENT_ID/OPENID_ISSUER/OPENID_SCOPE/
+      # OPENID_SESSION_SECRET are ALL present. OPENID_SCOPE was missing here, so
+      # the whole function was skipped -- not failing partway through, never
+      # called -- which is exactly why nothing about OIDC ever logged past
+      # "Configuring social logins..." even with DEBUG_OPENID_REQUESTS=true
+      # (there was no request to debug). Value matches LibreChat's own
+      # .env.example default.
+      OPENID_SCOPE: "openid profile email"
       OPENID_CALLBACK_URL: /oauth/openid/callback
       OPENID_SESSION_SECRET: dev-session-secret-change-me
       OPENID_USE_PKCE: "true"
