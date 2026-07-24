@@ -453,7 +453,20 @@ the docs, not a silent "it works" — flag it if you find one.
   process. Smoke-tested (put/get/delete round trip, path-traversal rejection, and a real
   `TestClient` POST confirming the object actually lands at the expected key before any
   processing runs) but the S3 backend itself is untested — no S3-compatible endpoint
-  available in this sandbox.
+  available in this sandbox. **Found live, fixed:** `ingestion-api`'s first real upload
+  failed with `PermissionError: [Errno 13] Permission denied: '/srv/object-store/documents'`
+  (surfacing to the browser as a cryptic `SyntaxError: JSON.parse: unexpected character at
+  line 1 column 1` — Starlette's default 500 page for an unhandled exception is plain text,
+  not JSON, and the upload page's JS didn't check `response.ok` before parsing). Root
+  cause: `/srv/object-store` doesn't exist in either Dockerfile's image, only at the
+  `object-store-data` Compose volume's mount point -- Docker auto-creates a missing mount
+  point owned by `root`, but both containers run as the fixed non-root `appuser` (UID
+  10001). `reranker-service`/`orchestration-mcp`'s Dockerfiles already `mkdir -p` their own
+  cache mount points before `chown -R appuser:appuser /srv` for exactly this reason; this
+  one just got missed when NFR-12 added the object-store mount after those were written.
+  Fixed in both `services/ingestion-api/Dockerfile` (writes) and
+  `services/ingestion-worker/Dockerfile` (reads) by adding `/srv/object-store` to the
+  existing `mkdir -p` line ahead of the `chown`.
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus

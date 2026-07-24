@@ -16,10 +16,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 # Fixed non-root UID/GID (matches helm/nexus-rag's securityContext.runAsUser)
 # rather than a runtime-injected one -- see ingestion-api/Dockerfile's
-# identical comment for why.
+# identical comment for why. Same reasoning applies to /srv/object-store
+# here as it does there (NFR-12) -- this service reads from it
+# (get_object_store().get(...) in app/processing.py), which needs the mount
+# point to already be owned by appuser for the same "volume inherits the
+# image's ownership on first creation" reason.
 RUN groupadd --gid 10001 appuser \
     && useradd --uid 10001 --gid appuser --no-create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p "$HF_HOME" \
+    && mkdir -p "$HF_HOME" /srv/object-store \
     && chown -R appuser:appuser /srv
 USER appuser
 
