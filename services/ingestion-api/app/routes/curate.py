@@ -5,6 +5,7 @@ for (FR-12), with approval capped by org (FR-14.2) and by clearance/releasabilit
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -15,6 +16,8 @@ from common.qdrant_store import delete_document_chunks, get_qdrant_client, updat
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
+
+logger = logging.getLogger("ingestion-api")
 
 router = APIRouter(prefix="/curate", tags=["curation"])
 
@@ -153,31 +156,54 @@ def approve(
             qdrant_fields["releasability"] = doc.releasability
         if corrections.access_scope is not None:
             qdrant_fields["access_scope"] = doc.access_scope
-    update_document_payload(get_qdrant_client(), str(doc.id), qdrant_fields)
+    qdrant = get_qdrant_client()
+    update_document_payload(qdrant, str(doc.id), qdrant_fields)
 
-    if old_doc is not None:
-        _execute_supersede(user, old_doc, doc, session)
+    # NFR-13: Qdrant now already shows the new document as `approved`, but
+    # nothing is durable yet -- Postgres (the system of record for the
+    # curation queue and the uploader-facing status) only reflects that once
+    # session.commit() below succeeds. If anything in this block raises (a DB
+    # error, the old document's Qdrant delete failing, etc.), the Postgres
+    # transaction rolls back on its own (get_session's context manager), but
+    # the Qdrant write above doesn't -- so best-effort revert it too, keeping
+    # both stores agreeing again on `pending_review` rather than leaving a
+    # document Postgres still lists as pending already showing as approved
+    # (and therefore retrievable, FR-11/FR-26) in Qdrant.
+    try:
+        if old_doc is not None:
+            _execute_supersede(user, old_doc, doc, session)
 
-    session.add(doc)
-    session.add(
-        AuditLogEntry(
-            actor_sub=user.sub,
-            actor_username=user.preferred_username,
-            action="document.approve",
-            target_id=str(doc.id),
-            detail={"corrections": corrections.model_dump() if corrections else None},
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.approve",
+                target_id=str(doc.id),
+                detail={"corrections": corrections.model_dump() if corrections else None},
+            )
         )
-    )
-    # FR-15: notify the uploader of the decision.
-    session.add(
-        Notification(
-            recipient_sub=doc.uploader_sub,
-            document_id=doc.id,
-            decision="approved",
-            message=f"Your document '{doc.filename}' was approved.",
+        # FR-15: notify the uploader of the decision.
+        session.add(
+            Notification(
+                recipient_sub=doc.uploader_sub,
+                document_id=doc.id,
+                decision="approved",
+                message=f"Your document '{doc.filename}' was approved.",
+            )
         )
-    )
-    session.commit()
+        session.commit()
+    except Exception:
+        try:
+            update_document_payload(qdrant, str(doc.id), {"status": "pending_review"})
+        except Exception:
+            logger.exception(
+                "approval of document %s failed and the Qdrant status revert also "
+                "failed -- its chunks may still show status=approved despite Postgres "
+                "still saying pending_review; needs manual reconciliation",
+                doc.id,
+            )
+        raise
     session.refresh(doc)
     return doc
 
@@ -201,26 +227,42 @@ def reject(
     doc.rejection_reason = body.reason
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(timezone.utc)
-    update_document_payload(get_qdrant_client(), str(doc.id), {"status": doc.status})
-    session.add(doc)
-    session.add(
-        AuditLogEntry(
-            actor_sub=user.sub,
-            actor_username=user.preferred_username,
-            action="document.reject",
-            target_id=str(doc.id),
-            detail={"reason": body.reason},
+    qdrant = get_qdrant_client()
+    update_document_payload(qdrant, str(doc.id), {"status": doc.status})
+    # NFR-13: same reasoning as approve() above -- revert the Qdrant write if
+    # the Postgres commit doesn't durably land, so the two stores don't end up
+    # disagreeing about whether this document is still pending.
+    try:
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.reject",
+                target_id=str(doc.id),
+                detail={"reason": body.reason},
+            )
         )
-    )
-    # FR-15: notify the uploader of the decision, with the stated reason.
-    session.add(
-        Notification(
-            recipient_sub=doc.uploader_sub,
-            document_id=doc.id,
-            decision="rejected",
-            message=f"Your document '{doc.filename}' was rejected: {body.reason}",
+        # FR-15: notify the uploader of the decision, with the stated reason.
+        session.add(
+            Notification(
+                recipient_sub=doc.uploader_sub,
+                document_id=doc.id,
+                decision="rejected",
+                message=f"Your document '{doc.filename}' was rejected: {body.reason}",
+            )
         )
-    )
-    session.commit()
+        session.commit()
+    except Exception:
+        try:
+            update_document_payload(qdrant, str(doc.id), {"status": "pending_review"})
+        except Exception:
+            logger.exception(
+                "rejection of document %s failed and the Qdrant status revert also "
+                "failed -- its chunks may still show status=rejected despite Postgres "
+                "still saying pending_review; needs manual reconciliation",
+                doc.id,
+            )
+        raise
     session.refresh(doc)
     return doc
