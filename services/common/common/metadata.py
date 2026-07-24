@@ -5,7 +5,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-PUBLIC_ACCESS_SCOPE = "PUBLIC"
+# FR-23: reserved access-scope value that waives Org/Group/User scoping for
+# every authenticated user, without touching Classification/Releasability.
+# Named ALL_AUTHENTICATED rather than PUBLIC (P1, REQUIREMENTS.md Section 11)
+# so it can't be misread as "publicly releasable"/unclassified -- it's still
+# gated by Classification/Releasability like anything else, just not by org/
+# group/user membership.
+ALL_AUTHENTICATED_ACCESS_SCOPE = "ALL_AUTHENTICATED"
 
 
 class DocumentMetadataIn(BaseModel):
@@ -30,9 +36,10 @@ class DocumentMetadataIn(BaseModel):
 
     @field_validator("access_scope")
     @classmethod
-    def public_is_exclusive_of_nothing(cls, v: list[str]) -> list[str]:
-        # PUBLIC only waives Org/Group/User scoping; it's still a valid value
-        # alongside explicit orgs/groups if an uploader wants both recorded.
+    def all_authenticated_is_exclusive_of_nothing(cls, v: list[str]) -> list[str]:
+        # ALL_AUTHENTICATED only waives Org/Group/User scoping; it's still a
+        # valid value alongside explicit orgs/groups if an uploader wants both
+        # recorded.
         return v
 
 

@@ -55,7 +55,7 @@ class Document(SQLModel, table=True):
     # multi-select, no chunk-level override) -- not a list, unlike
     # access_scope below, which is explicitly "one or more" per Section 6.3.
     releasability: str
-    access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "PUBLIC"
+    access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "ALL_AUTHENTICATED"
     source_originator: str
     doc_type: str
     program_community: str | None = None

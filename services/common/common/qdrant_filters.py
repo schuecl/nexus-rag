@@ -10,7 +10,7 @@ from __future__ import annotations
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from .claims import UserClaims
-from .metadata import PUBLIC_ACCESS_SCOPE
+from .metadata import ALL_AUTHENTICATED_ACCESS_SCOPE
 
 
 def build_access_filter(
@@ -23,7 +23,7 @@ def build_access_filter(
     computed by the caller from ClassificationLevel rows, not here, since this
     module has no DB session."""
 
-    scope_values = {PUBLIC_ACCESS_SCOPE, claims.sub, *claims.groups}
+    scope_values = {ALL_AUTHENTICATED_ACCESS_SCOPE, claims.sub, *claims.groups}
     if claims.org:
         scope_values.add(claims.org)
     scope_values = list(scope_values)
