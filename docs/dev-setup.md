@@ -153,7 +153,7 @@ automated or for testing with your own file.
    cross-encoder rerank via `reranker-service` (falls back to the fused order with a note
    if `reranker-service` is unreachable, rather than failing the query). Query as a user
    outside the document's `access_scope` (e.g. someone not in `USAREUR-AF` and the doc
-   isn't tagged `PUBLIC`) and confirm `results` comes back empty — that's FR-26
+   isn't tagged `ALL_AUTHENTICATED`) and confirm `results` comes back empty — that's FR-26
    enforcement holding on *both* the dense and sparse legs, not a bug.
 
 4. **Supersede** the document from step 1: submit a second file as `alice-ingest` with
@@ -511,7 +511,7 @@ automated or for testing with your own file.
   (`scripts/seed_sample_data.py`) runs automatically after `ingestion-api`, Keycloak, and
   the embedding model are all ready, submitting 7 documents through the real ingestion
   API as the seeded users and driving them to every `Status` value: `approved` (a
-  `PUBLIC` notice, an org-scoped policy, a `Signal-Corps`-scoped `SECRET` document
+  `ALL_AUTHENTICATED` notice, an org-scoped policy, a `Signal-Corps`-scoped `SECRET` document
   submitted by `dave-admin`), `pending_review` (left unreviewed on purpose),
   `rejected` (with a reason), and `superseded` (a two-version FR-7 demo). See "Exercising
   the flow" below for how to query them immediately after `docker compose up`.

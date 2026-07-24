@@ -137,11 +137,11 @@ def main() -> None:
         "the intranet.",
         classification="UNCLASSIFIED",
         releasability="REL TO USA/FVEY",
-        access_scope=["PUBLIC"],
+        access_scope=["ALL_AUTHENTICATED"],
         doc_type="Notice",
     )
     approve(carol, d["id"])
-    seeded.append(("public-notice.md", "approved", "UNCLASSIFIED / PUBLIC"))
+    seeded.append(("public-notice.md", "approved", "UNCLASSIFIED / ALL_AUTHENTICATED"))
 
     d = submit(
         alice,

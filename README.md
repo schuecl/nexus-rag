@@ -44,7 +44,7 @@ vs working" section for the honest, current list.
   uploader in-app.
 - **Metadata & tagging (FR-17..FR-23):** Classification and Releasability are each a
   single value per document chosen from admin-configurable controlled lists (add/retire/
-  reorder without a code change), Access-scope is an independent org/group/user/`PUBLIC`
+  reorder without a code change), Access-scope is an independent org/group/user/`ALL_AUTHENTICATED`
   dimension that a document must pass *in addition to* classification/releasability, and
   identity-linked fields (uploader, owning org) auto-populate from claims rather than
   free text.
