@@ -3,16 +3,24 @@
 One-command stand-up of the nexus-rag stack for exercising the ingest → curate → query
 flow on a workstation, with zero dependency on the production cluster. Every service is
 wired together, the auth/tagging plumbing works end to end, submitted documents are
-parsed, chunked, embedded, and made retrievable once approved (FR-3..FR-6), retrieval
-genuinely fuses dense+BM25 hybrid search with a reranking pass (FR-24/FR-25), documents
-can be versioned (FR-7), and `orchestration-mcp`'s MCP tool reads the caller's identity
-from the connection's Authorization header rather than a client-supplied argument, the
-way LibreChat's OBO/addUserJwtToken forwarding actually delivers it. **Confirmed against
-a real `docker compose up`** (not just inspected as code) end to end: upload through the
-ingestion UI with a real browser-obtained token, curation, and search all manually
-verified working -- see the Keycloak realm bullet below for the eight real bugs that
-stood between "should work" and actually working. See "What's stubbed vs working" below
-for what's still open.
+durably queued and parsed, chunked, embedded, and made retrievable once approved
+(FR-3..FR-6, NFR-11), retrieval genuinely fuses dense+BM25 hybrid search with a reranking
+pass (FR-24/FR-25), documents can be versioned (FR-7), and `orchestration-mcp`'s MCP tool
+reads the caller's identity from the connection's Authorization header rather than a
+client-supplied argument, the way LibreChat's OBO/addUserJwtToken forwarding actually
+delivers it. **Confirmed against a real `docker compose up`** (not just inspected as
+code) end to end, across two separate live-testing rounds: an earlier one against the
+pre-NATS pipeline (see the Keycloak realm bullet below for that round's eight real bugs),
+and a second one after NFR-11 restructured ingestion around a durable NATS queue and a new
+`ingestion-worker` service — upload through `ingestion-api` with a real Keycloak-obtained
+token, durable queuing and processing, curation, and a claims-filtered query all manually
+verified working end to end, catching and fixing a real object-store permission bug (see
+the NFR-11 bullet below) along the way. **Not yet confirmed**: LibreChat's own OIDC login
+specifically — several real LibreChat config bugs were found and fixed chasing it (see the
+`ALLOW_SOCIAL_LOGIN`/`OPENID_SCOPE`/MCP-allowlist bullets below), but login still fails and
+remains under investigation, so `rag_search` has only been exercised via
+`orchestration-mcp`'s own debug REST endpoint, not LibreChat's actual MCP connection. See
+"What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
 `bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
@@ -196,10 +204,12 @@ distinguish them explicitly wherever it matters:
   the only level that rules out surprises the mock/substitute couldn't reproduce.
 
 Every bullet below and every "Not tested against..."/"Smoke-tested..." caveat elsewhere in
-this repo's docs is written to make clear which of these three levels it's claiming — most
-recently NFR-11/NFR-12/NFR-13 and the P1 batch (the `ALL_AUTHENTICATED` rename, the
-prompt-injection mitigation), all of which are "tested against mocks," explicitly not yet
-"validated against a live environment." Treat the absence of an explicit level as a bug in
+this repo's docs is written to make clear which of these three levels it's claiming.
+NFR-11/NFR-12 and NFR-13's happy path have since moved from "tested against mocks" to
+"validated against a live environment" (a real `docker compose up` run); NFR-13's
+failure-injection revert logic specifically, and the P1 batch (the `ALL_AUTHENTICATED`
+rename, the prompt-injection mitigation), remain "tested against mocks" only. Treat the
+absence of an explicit level as a bug in
 the docs, not a silent "it works" — flag it if you find one.
 
 **Working:**
@@ -493,12 +503,21 @@ the docs, not a silent "it works" — flag it if you find one.
   `ParsingError`/`EmbeddingError` → `failed`, acked; unexpected exception → left un-acked,
   `doc.status` stays `processing` for redelivery to pick up) against an in-memory SQLite DB
   with Qdrant/object-store/embedding calls mocked, and confirmed both services' packages
-  install and import cleanly. **Not tested against a real `docker compose up`** — this is
-  the largest structural change in this hardening batch (a new service, a changed request
-  path, a changed Qdrant credential split) and deserves a full live run — submit a document,
-  confirm it actually reaches `pending_review` via `ingestion-worker`'s logs and
-  `GET /documents/{id}` polling, not just the mocked unit-level checks above — before being
-  trusted the way the smaller, more contained changes here can be.
+  install and import cleanly. **Validated against a real `docker compose up`**: a document
+  submitted as `alice-ingest` was durably queued, picked up by `ingestion-worker`, and
+  confirmed reaching `queued → processing → pending_review` via `GET /documents/{id}`
+  polling — not just the mocked unit-level checks above. That live run also caught a real
+  bug the mocks couldn't: `ingestion-api`/`ingestion-worker`'s Dockerfiles never created
+  `/srv/object-store` before `chown -R appuser:appuser /srv`, so the Compose volume's
+  auto-created mount point stayed owned by `root` and every write threw `PermissionError`
+  (surfacing to the browser as an opaque `SyntaxError: JSON.parse: unexpected character at
+  line 1 column 1`, since Starlette's default 500 page for an unhandled exception is plain
+  text, not JSON). Fixed by adding `/srv/object-store` to each Dockerfile's existing
+  `mkdir -p` line, matching the pattern `reranker-service`/`orchestration-mcp` already used
+  for their own cache mounts. The document was then curated/approved and found by a real
+  claims-filtered query against `orchestration-mcp`'s `/debug/rag_search` with a
+  `bob-query`-obtained Keycloak token — the full NFR-11 pipeline confirmed end to end, not
+  just its individual pieces.
 - **Document supersession safety, reviewed and hardened (NFR-13)** — re-read
   `app/routes/curate.py`'s `approve()`/`reject()` specifically for the failure-mode NFR-13
   calls out: "a partial failure during republication must not leave the corpus in an
@@ -534,7 +553,12 @@ the docs, not a silent "it works" — flag it if you find one.
   on a supersede where the old document's Qdrant delete itself raises — in every failure
   case, the Qdrant write is reverted to `pending_review`, the exception still propagates
   (so the caller gets a 5xx, not a silent partial success), and Postgres rolls back to
-  `pending_review` for both documents. Not tested against a live Postgres/Qdrant pair.
+  `pending_review` for both documents. The happy path — a normal `approve()` against a real
+  Postgres/Qdrant pair — has since been validated live (see the NFR-11 bullet above: the
+  live-tested document was curated and approved for real). The `try`/`except` revert-on-
+  failure branch specifically is still only mock-tested — nothing in a successful run
+  exercises it by construction, since it only runs when `session.commit()` or the old
+  document's Qdrant delete actually raises.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
