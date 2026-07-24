@@ -463,6 +463,42 @@ automated or for testing with your own file.
   confirm it actually reaches `pending_review` via `ingestion-worker`'s logs and
   `GET /documents/{id}` polling, not just the mocked unit-level checks above — before being
   trusted the way the smaller, more contained changes here can be.
+- **Document supersession safety, reviewed and hardened (NFR-13)** — re-read
+  `app/routes/curate.py`'s `approve()`/`reject()` specifically for the failure-mode NFR-13
+  calls out: "a partial failure during republication must not leave the corpus in an
+  inconsistent state." The ordering that was already there is the right one and needed no
+  change: on a supersede, the *new* document's Qdrant chunks are flipped to `approved`
+  (making it retrievable) *before* the *old* document's chunks are deleted, and
+  `_validate_supersede` re-checks the whole chain (old document's current status, the
+  curator's authority over *it*, not just the new one) before any mutation happens to
+  either document — so there's never a window where neither version is retrievable, and a
+  validation failure never leaves a half-approved document behind. What the ordering didn't
+  cover: Postgres (`session.commit()`) and Qdrant (`update_document_payload`/
+  `delete_document_chunks`) aren't one transaction — the Qdrant write happens first (it has
+  to, so a validation failure can still be rejected cleanly beforehand), and if the code
+  between that write and the eventual `session.commit()` then raises (a DB error, the old
+  document's Qdrant delete failing, etc.), `get_session()`'s context manager rolls Postgres
+  back to `pending_review`, but the earlier Qdrant write doesn't roll back with it — leaving
+  Qdrant already showing the document as `approved`/`rejected` (and therefore already
+  affecting retrieval, since FR-11/FR-26 filtering reads Qdrant's payload, not the Postgres
+  row) while Postgres and the curation queue both still call it `pending_review`. Both
+  `approve()` and `reject()` now wrap everything from that Qdrant write through
+  `session.commit()` in a `try`/`except` that, on any failure, best-effort reverts the
+  Qdrant payload back to `pending_review` (logging loudly, not silently, if the revert
+  itself also fails) before re-raising — so the normal outcome of a partial failure is both
+  stores agreeing again on `pending_review`, not a document that's live in search results
+  while every status view still calls it unreviewed. This doesn't (and can't, without
+  re-ingesting) undo an old document's chunks actually being deleted from Qdrant if that
+  step itself succeeds and something later fails — but by the time that delete runs, the
+  new document's Qdrant payload has already been flipped to `approved`, so the corpus
+  always has *something* retrievable; what could still lag is Postgres's bookkeeping view,
+  which is exactly the gap this change closes. Smoke-tested directly (bypassing the FastAPI
+  layer, calling `approve()`/`reject()` against an in-memory SQLite DB with a mocked Qdrant
+  client): a normal approve; `session.commit()` raising on a plain approve, on a reject, and
+  on a supersede where the old document's Qdrant delete itself raises — in every failure
+  case, the Qdrant write is reverted to `pending_review`, the exception still propagates
+  (so the caller gets a 5xx, not a silent partial success), and Postgres rolls back to
+  `pending_review` for both documents. Not tested against a live Postgres/Qdrant pair.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded

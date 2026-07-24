@@ -39,10 +39,12 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "nexus_rag_chunks")
 # NFR-15: Qdrant must require authenticated access in every environment,
 # including local dev. Each caller sets this to whichever key its deployment
-# config grants it -- ingestion-api gets the full read/write key (it creates
-# the collection and writes/deletes points), orchestration-mcp gets a
-# read-only key (it only ever calls query_points) -- this module doesn't need
-# to know which is which, it just forwards whatever's in its own environment.
+# config grants it -- ingestion-worker and ingestion-api both get the full
+# read/write key (ingestion-worker creates the collection and writes new
+# points; ingestion-api updates/deletes points on approve/reject/supersede),
+# orchestration-mcp gets a read-only key (it only ever calls query_points) --
+# this module doesn't need to know which is which, it just forwards whatever's
+# in its own environment.
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 
 DENSE_VECTOR = "dense"
