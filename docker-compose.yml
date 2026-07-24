@@ -433,6 +433,19 @@ services:
       HOST: 0.0.0.0
       PORT: 3080
       MONGO_URI: mongodb://mongodb:27017/LibreChat
+      # LibreChat's own domain config, used to build absolute callback/redirect
+      # URLs (paired with OPENID_CALLBACK_URL's relative path below) -- matches
+      # the host port binding (ports: "3080:3080"), since that's the URL a
+      # browser actually round-trips through during the OIDC redirect.
+      DOMAIN_CLIENT: http://localhost:3080
+      DOMAIN_SERVER: http://localhost:3080
+      # Required to show the OIDC login button at all -- confirmed live:
+      # without this, LibreChat starts fine but silently has no OIDC login
+      # option in the UI (LibreChat's own .env.example ships ALLOW_SOCIAL_LOGIN
+      # defaulted to false). This isn't a CSRF/security toggle, just a feature
+      # switch for the whole social/OIDC login family this config only uses
+      # OpenID from.
+      ALLOW_SOCIAL_LOGIN: "true"
       OPENID_ISSUER: http://keycloak:8080/realms/nexus-rag
       OPENID_CLIENT_ID: librechat
       OPENID_CLIENT_SECRET: ${LIBRECHAT_KEYCLOAK_CLIENT_SECRET:-dev-librechat-secret}

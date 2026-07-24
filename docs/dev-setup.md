@@ -607,6 +607,18 @@ the docs, not a silent "it works" — flag it if you find one.
   `LIBRECHAT_CREDS_KEY`/`LIBRECHAT_CREDS_IV` in `.env.example`/`docker-compose.yml`, with
   dev-only defaults generated via `openssl rand -hex 32`/`openssl rand -hex 16` — never
   reuse those specific values past throwaway local dev.
+- **`ALLOW_SOCIAL_LOGIN` must be set explicitly -- LibreChat's OIDC login button is
+  otherwise silently absent.** Found the same way: LibreChat started cleanly (past both
+  fixes above) but the login page had no OIDC option at all, no error logged anywhere.
+  LibreChat's own `.env.example` ships `ALLOW_SOCIAL_LOGIN=false` as the default -- it's a
+  feature switch for the whole social/OIDC login family, separate from actually configuring
+  an OIDC provider (`OPENID_ISSUER`/`OPENID_CLIENT_ID`/etc.), and nothing about a correctly
+  configured but unused provider produces a warning. Set to `"true"` in `docker-compose.yml`'s
+  `librechat` service. Also added `DOMAIN_CLIENT`/`DOMAIN_SERVER` (`http://localhost:3080`,
+  matching the host port binding) alongside it -- LibreChat combines `DOMAIN_SERVER` with
+  `OPENID_CALLBACK_URL`'s relative path to build the absolute callback URL used in the OIDC
+  redirect, and leaving it unset risked a second, separate failure mode once the button
+  itself was fixed.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This
