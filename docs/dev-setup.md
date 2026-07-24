@@ -619,6 +619,31 @@ the docs, not a silent "it works" — flag it if you find one.
   `OPENID_CALLBACK_URL`'s relative path to build the absolute callback URL used in the OIDC
   redirect, and leaving it unset risked a second, separate failure mode once the button
   itself was fixed.
+- **`librechat`'s `depends_on` now waits for `keycloak: condition: service_healthy`**
+  (matching `ingestion-api`/`orchestration-mcp`'s existing dependency on the same
+  healthcheck) rather than the bare list form, which only waits for the container to
+  start. LibreChat registers its passport `openid` strategy once at boot by fetching
+  Keycloak's `/.well-known/openid-configuration`; if that fetch runs before Keycloak has
+  actually finished importing the realm, the strategy never registers and doesn't retry
+  later. **Applied, but not confirmed sufficient on its own** — a live retest (full
+  `docker compose down && up`, not just `restart`) still hit `Unknown authentication
+  strategy "openid"`, so either this wasn't the whole story or the fix needs a clean
+  volume state to actually take effect. `DEBUG_OPENID_REQUESTS=true` was added to
+  `docker-compose.yml`'s `librechat` service (temporary, remove once resolved) to get real
+  evidence of what LibreChat's OIDC client is doing during discovery/setup, since nothing
+  about that step logs at `error` level even on failure.
+- **LibreChat also blocks MCP server connections to private/internal hosts by
+  default (SSRF protection)** — found live: `[MCPServersRegistry] Failed to inspect server
+  "nexus-rag-search": Domain "http://orchestration-mcp:8002" is not allowed`, meaning
+  `rag_search` was never actually reachable through LibreChat despite the rest of the MCP
+  config being valid. Fixed with a new top-level `mcpSettings.allowedAddresses` entry in
+  `infra/librechat/librechat.yaml` — the narrower of LibreChat's two exemption mechanisms
+  (`allowedDomains` is a strict whitelist that also blocks everything else not listed;
+  `allowedAddresses` just exempts specific private `host:port` targets, which is all this
+  config needs). Also bumped this file's `version: 1.2.8` to `1.3.13` to match what the
+  running image itself reported as current (`Outdated Config version: 1.2.8, Latest
+  version: 1.3.13`) — not required for `mcpSettings` to work (that field isn't
+  version-gated), just to stop the stale-version log line.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This

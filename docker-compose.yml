@@ -453,6 +453,14 @@ services:
       OPENID_SESSION_SECRET: dev-session-secret-change-me
       OPENID_USE_PKCE: "true"
       OPENID_REUSE_TOKENS: "true"
+      # Diagnostic only, temporary: the openid passport strategy has been
+      # failing to register at boot ("Unknown authentication strategy
+      # \"openid\"" on every login attempt) with no corresponding error logged
+      # for the discovery/setup step itself -- this surfaces what LibreChat's
+      # own OIDC client is actually doing during that step. Remove once the
+      # root cause is confirmed and fixed; not meant to ship long-term (logs
+      # request details, even with sensitive data masked).
+      DEBUG_OPENID_REQUESTS: "true"
       # LibreChat's own session JWTs (separate from Keycloak's OIDC tokens) --
       # required at startup regardless of auth method, confirmed live: LibreChat
       # refuses to start ("JwtStrategy requires a secret or key") without these.
