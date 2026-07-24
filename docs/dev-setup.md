@@ -594,6 +594,19 @@ the docs, not a silent "it works" — flag it if you find one.
   yet confirmed further than "LibreChat starts cleanly with this config" — the actual OBO
   token exchange in front of `orchestration-mcp` (Keycloak's fine-grained token-exchange
   admin permission, noted above) still needs to be exercised end to end.
+- **LibreChat also needs its own `JWT_SECRET`/`JWT_REFRESH_SECRET`/`CREDS_KEY`/`CREDS_IV`,
+  independent of the `librechat.yaml`/OIDC config above** — found via the same live
+  `docker compose up` run, one error at a time: after the `obo.scopes` fix, LibreChat's next
+  failure was `Failed to start server: JwtStrategy requires a secret or key`. These four are
+  required at LibreChat startup regardless of auth method (they're for LibreChat's own
+  session JWTs and its AES-256-CBC encryption of credentials it stores in MongoDB, e.g.
+  user-provided plugin API keys — nothing to do with Keycloak). `JWT_SECRET`/
+  `JWT_REFRESH_SECRET` have no length requirement; `CREDS_KEY`/`CREDS_IV` do, and LibreChat
+  validates it — 32 bytes/64 hex chars and 16 bytes/32 hex chars respectively, or it won't
+  start. Added as `LIBRECHAT_JWT_SECRET`/`LIBRECHAT_JWT_REFRESH_SECRET`/
+  `LIBRECHAT_CREDS_KEY`/`LIBRECHAT_CREDS_IV` in `.env.example`/`docker-compose.yml`, with
+  dev-only defaults generated via `openssl rand -hex 32`/`openssl rand -hex 16` — never
+  reuse those specific values past throwaway local dev.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This

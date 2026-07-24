@@ -440,6 +440,21 @@ services:
       OPENID_SESSION_SECRET: dev-session-secret-change-me
       OPENID_USE_PKCE: "true"
       OPENID_REUSE_TOKENS: "true"
+      # LibreChat's own session JWTs (separate from Keycloak's OIDC tokens) --
+      # required at startup regardless of auth method, confirmed live: LibreChat
+      # refuses to start ("JwtStrategy requires a secret or key") without these.
+      # No fixed-length requirement (any string works as an HMAC secret), unlike
+      # CREDS_KEY/CREDS_IV below.
+      JWT_SECRET: ${LIBRECHAT_JWT_SECRET:-6d5695c76c088051803a2711a694dc2a8c3e184b97ca2696639b663e289cb6bd}
+      JWT_REFRESH_SECRET: ${LIBRECHAT_JWT_REFRESH_SECRET:-e6ee049ff1278d2d966accf4a498589cfa8f2e90a239a36195ecea193606444c}
+      # AES-256-CBC key/IV LibreChat uses to encrypt credentials it stores in
+      # MongoDB (e.g. user-provided plugin API keys) -- also required at
+      # startup, and unlike JWT_SECRET/JWT_REFRESH_SECRET these have a strict
+      # length requirement LibreChat validates: CREDS_KEY must decode to exactly
+      # 32 bytes (64 hex chars), CREDS_IV to exactly 16 bytes (32 hex chars).
+      # Generated with `openssl rand -hex 32` / `openssl rand -hex 16`.
+      CREDS_KEY: ${LIBRECHAT_CREDS_KEY:-b981603e3853e792749bd57a37263dcac98f05e9bcc3221b28ea9ce1d31407f6}
+      CREDS_IV: ${LIBRECHAT_CREDS_IV:-59ac382baf239caa9f8bb22863d45e41}
     ports:
       - "3080:3080"
     depends_on:
