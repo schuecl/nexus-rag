@@ -30,10 +30,12 @@ vs working" section for the honest, current list.
 - **Ingestion (FR-1..FR-9):** upload UI for PDF/DOCX/PPTX/XLSX/TXT/MD/HTML, mandatory
   Classification/Releasability/Access-scope tagging enforced server-side against the
   uploader's OIDC claims (not just hidden in the UI), structure-aware parsing and chunking,
-  embedding via a self-hosted model, async processing with real `queued → processing →
-  embedded → pending_review` progress (not a synchronous request that ties up a worker),
-  and rejection/quarantine of corrupt, password-protected, oversized, or zip-bomb-shaped
-  files.
+  embedding via a self-hosted model, and durable async processing with real `queued →
+  processing → embedded → pending_review` progress: `ingestion-api` validates the request,
+  durably stores the original file, and returns immediately; a separate `ingestion-worker`
+  service does the actual parse/chunk/embed/store work off a durable NATS JetStream queue
+  (NFR-11), so a crash or restart mid-document doesn't strand it — and rejection/quarantine
+  of corrupt, password-protected, oversized, or zip-bomb-shaped files.
 - **Curation (FR-10..FR-16):** every submission is chunked and embedded immediately but
   stays excluded from retrieval until a curator approves it, scoped to the org(s) they hold
   curator authority for and capped by their own clearance *and* releasability. A curator
@@ -62,8 +64,8 @@ vs working" section for the honest, current list.
 - **Dev and production packaging (NFR-9/NFR-10):** a one-command Docker Compose stack with
   a pre-seeded Keycloak realm and sample documents across every status/classification/
   access-scope combination, and a Helm chart scoped to just this project's new components
-  (ingestion-api, orchestration-mcp, reranker-service, a dedicated embedding-service,
-  Qdrant) that assumes the rest of MPNexus already exists.
+  (ingestion-api, ingestion-worker, orchestration-mcp, reranker-service, a dedicated
+  embedding-service, Qdrant, NATS) that assumes the rest of MPNexus already exists.
 - **Browser login for the ingestion UI:** a real OIDC Authorization Code + PKCE flow
   against Keycloak (`/auth/login` → `/auth/callback`) — tokens live server-side in a
   Postgres-backed session, refreshed transparently, never in browser-reachable storage.
@@ -72,8 +74,9 @@ vs working" section for the honest, current list.
   cookie-authenticated browser requests — bearer-token API/MCP callers are unaffected.
   See `ARCHITECTURE.md` Section 4.4.
 - **Qdrant access control (NFR-15):** authenticated access required in every
-  environment — a full read/write API key for `ingestion-api`, a read-only key for
-  `orchestration-mcp` (least-privilege split, since it never writes to Qdrant).
+  environment — a full read/write API key for `ingestion-api` and `ingestion-worker`
+  (the two services that write to Qdrant), a read-only key for `orchestration-mcp`
+  (least-privilege split, since it never writes to Qdrant).
 - **Pinned image/model versions (NFR-16):** no more `:latest`/`main-latest`/bare-major-
   version tags in Compose or the Helm chart's default values — every external image is a
   specific recent release, researched at pin time (see `docs/dev-setup.md` for the exact
@@ -87,14 +90,24 @@ vs working" section for the honest, current list.
 - **Durable object storage for uploaded originals (NFR-12):** the raw file is written to a
   dedicated store (filesystem in dev, any S3-compatible endpoint in production) and its key
   recorded on the `Document` row before the upload request returns — durable independent of
-  Qdrant's chunk vectors, not just held in memory for a single background task's lifetime.
-  First piece of the P0 durability work (NATS-based durable ingestion queue in progress next
-  — see `REQUIREMENTS.md`'s NFR-11).
-- **NATS JetStream infrastructure (NFR-11, infra only):** a durable, token-authenticated
-  message queue is now part of the stack, with an idempotent stream-management helper
-  (`common/job_queue.py`), but nothing publishes or consumes from it yet — `ingestion-api`
-  still processes documents in-process. The `ingestion-worker` service that actually moves
-  processing off `BackgroundTasks` is next.
+  Qdrant's chunk vectors. `ingestion-worker` reads the original back from this store rather
+  than taking it as a direct argument, so the file survives independently of whichever
+  process/pod happens to handle it.
+- **Durable, crash-resistant ingestion processing (NFR-11):** the parse/chunk/embed/store
+  pipeline no longer runs in-process via FastAPI `BackgroundTasks` — `ingestion-api`
+  publishes a job (just the document ID) to a NATS JetStream queue
+  (`common/job_queue.py`), and a separate `ingestion-worker` service durably consumes it.
+  A worker crash or restart mid-document doesn't silently strand it: the JetStream message
+  is only acked on a terminal outcome (success, or a permanent parse/embed failure that
+  lands the document in `failed`) — an unexpected/transient error is left un-acked, so
+  JetStream redelivers it to another attempt.
+- **Safe document supersession under partial failure (NFR-13):** re-ingestion/versioning
+  (FR-7) already ordered its Qdrant/Postgres writes to avoid a window where neither the old
+  nor the new version of a document is retrievable (confirmed by review, not just assumed).
+  What was added: `approve()`/`reject()` now revert their Qdrant status write if the paired
+  Postgres commit doesn't durably land, so a partial failure (a DB error, the old document's
+  Qdrant delete failing, etc.) can't leave Qdrant showing a document as `approved` while
+  Postgres and the curation queue both still call it `pending_review`.
 
 **What's explicitly not done, and why:**
 
@@ -115,17 +128,26 @@ vs working" section for the honest, current list.
 - **NetworkPolicies, PodDisruptionBudgets, HorizontalPodAutoscalers** in the Helm chart —
   not called for by REQUIREMENTS.md; add them if your cluster's baseline requires them.
 - **Nothing here has been run against a real Docker daemon, cluster, or `helm lint`** — see
-  the "Status" paragraph above.
+  the "Status" paragraph above. This applies with extra force to `ingestion-worker`
+  (NFR-11): it's the largest structural change in the P0 hardening batch — a new service,
+  the ingestion request path moving from in-process `BackgroundTasks` to a NATS JetStream
+  queue, and a changed Qdrant credential split — and was only verified with mocks (an
+  in-memory SQLite DB, a mocked Qdrant/object-store/embedding client), never against a live
+  NATS/Postgres/Qdrant stack. Run a real `docker compose up`, submit a document, and confirm
+  it reaches `pending_review` via `ingestion-worker`'s logs and `GET /documents/{id}`
+  polling before trusting it the way the rest of this batch can be.
 
 ## Architecture
 
 **Ingestion:** a user uploads through `ingestion-api`'s web UI → mandatory tagging is
-validated against their OIDC claims → the document is parsed, chunked, and embedded (via
-Ollama) → chunk vectors and metadata land in Qdrant tagged `pending_review`, and the
-document row lands in Postgres → a curator with authority over that org/classification/
-releasability reviews it in the same UI and approves, rejects, or corrects it → approval
-flips the Qdrant chunks' status to `approved`, which is what actually makes them
-retrievable.
+validated against their OIDC claims → the original file is durably stored (NFR-12) and the
+document row lands in Postgres as `queued` → `ingestion-api` returns immediately and
+publishes a job to NATS JetStream (NFR-11) rather than doing any further work itself → a
+separate `ingestion-worker` service durably consumes that queue, parses, chunks, and embeds
+the document (via Ollama), and writes chunk vectors and metadata into Qdrant tagged
+`pending_review` → a curator with authority over that org/classification/releasability
+reviews it in `ingestion-api`'s UI and approves, rejects, or corrects it → approval flips
+the Qdrant chunks' status to `approved`, which is what actually makes them retrievable.
 
 **Retrieval:** LibreChat calls `orchestration-mcp`'s `rag_search` MCP tool over streamable
 HTTP, forwarding the user's identity in the connection's Authorization header (an
@@ -144,8 +166,9 @@ implementations.
 
 | Component | Role | FR/NFR coverage |
 |---|---|---|
-| `services/common` | Shared claims parsing, Section 6.3 metadata schema, Qdrant access-filter builder, DB models | FR-18, FR-26, Section 6.1 |
-| `services/ingestion-api` | Upload UI + API, mandatory tagging, curation queue + UI, parsing/chunking/embedding, admin-configurable lists | FR-1..FR-23, C9 |
+| `services/common` | Shared claims parsing, Section 6.3 metadata schema, Qdrant access-filter builder, DB models, object-store abstraction, NATS job-queue helpers | FR-18, FR-26, Section 6.1, NFR-11, NFR-12 |
+| `services/ingestion-api` | Upload UI + API, mandatory tagging, curation queue + UI, admin-configurable lists — validates and durably stages a submission, then hands the actual pipeline off to `ingestion-worker` | FR-1..FR-23, C9, NFR-11..NFR-13 |
+| `services/ingestion-worker` | Durable NATS JetStream consumer: parsing/chunking/embedding, Qdrant writes | FR-3..FR-6, NFR-11 |
 | `services/orchestration-mcp` | FastMCP server exposing `rag_search` to LibreChat; hybrid retrieval, reranking, access enforcement, audit logging | FR-24..FR-31 |
 | `services/reranker-service` | Cross-encoder reranking over the fused hybrid candidate pool | FR-25 |
 | `infra/keycloak` | Seeded realm: claims schema, per-org curator client roles, test users | Section 6.2 |
@@ -167,11 +190,12 @@ implementations.
 ```
 nexus-rag/
   REQUIREMENTS.md            # source of truth for scope; everything above traces back to it
-  docker-compose.yml         # one-command dev stack (NFR-9)
+  docker-compose.yml         # one-command dev stack (NFR-9), incl. NATS (NFR-11)
   .env.example
   services/
-    common/                  # shared claims/metadata/Qdrant-filter library
+    common/                  # shared claims/metadata/Qdrant-filter/object-store/job-queue library
     ingestion-api/           # upload + curation UI/API (FastAPI)
+    ingestion-worker/        # durable parse/chunk/embed/store pipeline, NATS JetStream consumer (NFR-11)
     orchestration-mcp/       # retrieval MCP server (FastMCP)
     reranker-service/        # cross-encoder reranking API
   infra/

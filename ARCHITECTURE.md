@@ -19,6 +19,9 @@ flowchart LR
 
     subgraph new["Built by this project"]
         IngestUI["ingestion-api<br/>(upload + curation UI/API)"]
+        Worker["ingestion-worker<br/>(durable parse/chunk/embed/store)"]
+        NATS[("NATS JetStream<br/>(durable job queue)")]
+        ObjStore[("object store<br/>(original files)")]
         MCP["orchestration-mcp<br/>(rag_search MCP tool)"]
         Reranker["reranker-service"]
         EmbedOllama["embedding Ollama<br/>(dedicated instance)"]
@@ -32,9 +35,15 @@ flowchart LR
     LibreChat --> LiteLLM --> VLLM
     IngestUI -->|validate token| Keycloak
     MCP -->|validate token| Keycloak
-    IngestUI --> EmbedOllama
-    IngestUI --> Qdrant
+    IngestUI --> ObjStore
+    IngestUI -->|publish job| NATS
     IngestUI --> Postgres
+    IngestUI --> Qdrant
+    NATS -->|durable consume| Worker
+    Worker --> ObjStore
+    Worker --> EmbedOllama
+    Worker --> Qdrant
+    Worker --> Postgres
     MCP --> Qdrant
     MCP --> Reranker
     MCP --> EmbedOllama
@@ -49,10 +58,13 @@ throwaway copies of the `existing` box too, so the whole diagram runs on a lapto
 
 | Component | Built here? | Tech | Role |
 |---|---|---|---|
-| `ingestion-api` | Yes | FastAPI + Jinja2/HTMX | Upload, mandatory tagging, curation queue, admin lists, notifications — both the browser UI and its REST API |
+| `ingestion-api` | Yes | FastAPI + Jinja2/HTMX | Upload, mandatory tagging, curation queue, admin lists, notifications — both the browser UI and its REST API. Validates and durably stages a submission (Postgres row + object-store write), then publishes a job rather than processing it itself |
+| `ingestion-worker` | Yes | FastAPI (health-check only) + a NATS JetStream pull consumer | Durable parse/chunk/embed/store pipeline (FR-3..FR-6), moved out of `ingestion-api`'s request path (NFR-11) |
 | `orchestration-mcp` | Yes | FastMCP (Python MCP SDK) | Exposes `rag_search` to LibreChat; builds the claims-based Qdrant filter, runs hybrid retrieval + rerank |
 | `reranker-service` | Yes | FastAPI + sentence-transformers `CrossEncoder` | Scores/reorders fused retrieval candidates |
-| `common` | Yes | Python package | Shared claims parsing, metadata schema, Qdrant filter builder, DB models — the single source of truth both services import rather than reimplement |
+| `common` | Yes | Python package | Shared claims parsing, metadata schema, Qdrant filter builder, DB models, object-store abstraction (NFR-12), NATS job-queue helpers (NFR-11) — the single source of truth every service imports rather than reimplements |
+| NATS JetStream | Config only | NATS | Durable, token-authenticated ingestion job queue between `ingestion-api` and `ingestion-worker` (NFR-11) |
+| object store | Config only | Filesystem (dev) / any S3-compatible endpoint (prod) | Durable storage for original uploaded files, independent of Qdrant/Postgres (NFR-12) |
 | embedding Ollama | Config only | Ollama | Dedicated embedding-serving instance (NFR-8: separate GPU allocation from generation) |
 | Qdrant | Config only | Qdrant | Vector store — dense + BM25 named vectors per chunk, access-control payload fields |
 | Postgres | Config only | Postgres | System of record: document status, audit log, notifications, admin-configurable classification/releasability lists |
@@ -76,6 +88,7 @@ erDiagram
         json access_scope
         string status "queued|processing|embedded|pending_review|approved|rejected|superseded|failed"
         uuid supersedes_document_id FK
+        string original_object_key "NFR-12: key into the object store, set at submission time"
     }
     audit_log {
         uuid id PK
@@ -107,32 +120,66 @@ erDiagram
 Postgres is the transactional system of record (status, audit, admin lists). Qdrant holds
 the actual chunk vectors — one point per chunk, two named vectors (`dense`, `bm25`) — plus
 a copy of the access-control fields (`status`, `classification`, `releasability`,
-`access_scope`) as payload, so retrieval can filter without a round trip to Postgres.
+`access_scope`) as payload, so retrieval can filter without a round trip to Postgres. The
+object store (NFR-12) holds the original uploaded bytes, keyed by `original_object_key` on
+the `documents` row — independent of both, so the source file survives regardless of what
+happens to either the vector or metadata copy.
 
 ## 4. Major flows
 
-### 4.1 Ingestion (FR-1..FR-9)
+### 4.1 Ingestion (FR-1..FR-9, durable via NFR-11/NFR-12)
 
 ```mermaid
 sequenceDiagram
     actor U as Uploader (browser)
     participant I as ingestion-api
+    participant OS as object store
     participant PG as Postgres
+    participant N as NATS JetStream
+    participant W as ingestion-worker
     participant O as embedding Ollama
     participant Q as Qdrant
 
     U->>I: POST /documents (file + Section 6.3 tags)
     I->>I: parse_claims(token), validate tags against claims (FR-18)
-    I->>PG: insert Document(status=queued)
+    I->>OS: put(original bytes)
+    I->>PG: insert Document(status=queued, original_object_key)
+    I->>N: publish(document_id)
     I-->>U: 202 Accepted {status: queued}
-    Note over I: BackgroundTasks — request already returned
-    I->>I: parse -> chunk (app/parsing.py, app/chunking.py)
-    I->>O: embed chunks
-    I->>Q: upsert_chunks (status=pending_review in payload)
-    I->>PG: update Document(status=embedded -> pending_review)
+    Note over I,N: request already returned -- everything below runs<br/>in a separate process/pod, asynchronously
+    N->>W: pull_subscribe delivers document_id
+    W->>PG: update Document(status=processing)
+    W->>OS: get(original bytes)
+    W->>W: parse -> chunk (app/parsing.py, app/chunking.py)
+    W->>O: embed chunks
+    W->>Q: ensure_collection, upsert_chunks (status=pending_review in payload)
+    W->>PG: update Document(status=embedded -> pending_review)
+    W->>N: ack
     U->>I: GET /documents/{id} (polls)
     I-->>U: current status
 ```
+
+Implementation notes:
+- **Why a queue, not `BackgroundTasks`:** the previous in-process design lost queued/
+  in-flight documents on a process restart or crash mid-processing — nothing recorded
+  that work needed to happen again. JetStream's ack/redelivery semantics fix that: `W`
+  only acks the message on a terminal outcome. A success or a *permanent* failure
+  (`ParsingError`/`EmbeddingError` — corrupt/unsupported input, an embedding request the
+  service rejects outright) lands the document in `failed` and acks, since retrying the
+  identical input wouldn't help. An *unexpected/transient* error (Qdrant or Postgres
+  unreachable, a bug) is deliberately left un-acked, so JetStream redelivers the message
+  to another attempt (this worker's next poll, or a different replica) after its
+  `ack_wait` timeout — see `services/ingestion-worker/app/processing.py`.
+- **Why a separate object store, not just the request's in-memory bytes:** before NFR-12,
+  the original file only existed in memory/`/tmp` for the lifetime of a single
+  `BackgroundTask` — nothing to hand off to a separate worker process, and nothing left
+  if that process died before finishing. `common/object_store.py`'s `ObjectStore`
+  abstraction (filesystem in dev, S3-compatible in prod) durably persists the bytes
+  *before* the 202 response returns, keyed by `document_object_key(document_id)`; `W`
+  reads it back independently rather than receiving it as an argument.
+- **Qdrant credentials:** `ingestion-worker` now holds the full read/write Qdrant key
+  (it's the one that calls `ensure_collection`/`upsert_chunks`); `ingestion-api` keeps
+  its own full key too, since curation (§4.2) still updates/deletes points directly.
 
 ### 4.2 Curation (FR-10..FR-16)
 
@@ -150,8 +197,29 @@ sequenceDiagram
     I->>I: re-check claims against (possibly corrected) tags — cap by clearance & releasability
     I->>Q: update chunk payload (status=approved, corrected tags if any)
     I->>PG: update Document(status=approved), insert audit_log, insert notification
+    alt Postgres commit fails
+        I->>Q: revert chunk payload (status=pending_review)
+        Note over I: exception still propagates -- caller gets a 5xx,<br/>both stores agree again (NFR-13)
+    end
     Note over I: reject follows the same path with a required reason,<br/>status=rejected, no Qdrant payload flip to approved
 ```
+
+**NFR-13 (safe supersession under partial failure):** validation (curator authority,
+supersede-chain checks — see §4.5) already runs before *any* mutation, Qdrant or Postgres.
+Given that, the Qdrant write happens before the Postgres commit rather than after: if
+`session.commit()` came first, a curator could never retry a failed sync through the same
+API call, since `_load_pending` only accepts a document still in `pending_review`, and
+Postgres would already say `approved`. Writing Qdrant first, then committing, keeps the
+document retry-able for as long as the commit hasn't happened. The cost is the reverse
+failure mode: if something *between* the Qdrant write and the commit raises (a DB error, the
+old document's Qdrant chunk delete failing on a supersede), Postgres rolls back to
+`pending_review`, but the Qdrant write doesn't roll back with it — leaving Qdrant already
+showing `approved`/`rejected`, and therefore already affecting retrieval (FR-11/FR-26
+filtering reads Qdrant's payload, not the Postgres row), while Postgres and the curation
+queue both still call the document `pending_review`. `approve()`/`reject()` close that gap:
+they wrap the sequence in a `try`/`except` that best-effort reverts the Qdrant write back to
+`pending_review` on any failure before re-raising, so the two stores can't end up
+disagreeing about a document's status.
 
 ### 4.3 Query / retrieval (FR-24..FR-29)
 
@@ -277,6 +345,14 @@ sequenceDiagram
     I->>PG: audit_log: document.supersede (old id, new id, curator)
 ```
 
+Ordering matters here (NFR-13): the *new* document's Qdrant chunks are flipped to
+`approved` — see §4.2's diagram — *before* the old document's chunks are deleted, and
+`_validate_supersede` re-checks the whole chain (old document still `approved`, curator's
+authority over the old document specifically, not just the new one) before any of this
+runs. That's what guarantees there's never a window where neither version is retrievable:
+worst case, both are briefly retrievable at once, which REQUIREMENTS.md's NFR-13 calls out
+as the acceptable, preferable outcome over the alternative.
+
 ## 5. Security model
 
 Single enforcement principle: every claim-gated decision — what a user may *tag* a
@@ -298,27 +374,31 @@ rather than reimplementing the check:
 flowchart TB
     subgraph dev["Dev: docker compose (NFR-9)"]
         direction LR
-        d1["postgres"] & d2["keycloak"] & d3["qdrant"] & d4["ollama"] & d5["ingestion-api"] & d6["orchestration-mcp"] & d7["reranker-service"] & d8["librechat + litellm<br/>(throwaway)"]
+        d1["postgres"] & d2["keycloak"] & d3["qdrant"] & d4["ollama"] & d5["ingestion-api"] & d5b["ingestion-worker"] & d5c["nats"] & d6["orchestration-mcp"] & d7["reranker-service"] & d8["librechat + litellm<br/>(throwaway)"]
     end
     subgraph prod["Prod: Helm chart (NFR-10)"]
         direction LR
-        p1["ingestion-api"] & p2["orchestration-mcp"] & p3["reranker-service"] & p4["embedding-service"] & p5["qdrant (StatefulSet)"]
+        p1["ingestion-api"] & p1b["ingestion-worker"] & p1c["nats (StatefulSet)"] & p2["orchestration-mcp"] & p3["reranker-service"] & p4["embedding-service"] & p5["qdrant (StatefulSet)"]
         p6[["external Postgres<br/>(Secret ref)"]]
         p7[["external Keycloak"]]
         p8[["existing LibreChat/LiteLLM/vLLM"]]
+        p9[["external object store<br/>(S3-compatible, Secret ref)"]]
     end
 ```
 
 Dev stands up *everything*, including throwaway LibreChat/LiteLLM/Keycloak instances, so
 the full OBO/MCP flow can be exercised locally. The Helm chart deploys only the boxes in
-the `new` component table (§2) — Postgres and Keycloak are referenced via `values.yaml`
-(`externalPostgres.existingSecret`, `externalKeycloak.issuerUrl`), not deployed by the
-chart.
+the `new` component table (§2) — Postgres, Keycloak, and the object store are referenced
+via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUrl`,
+`externalObjectStore.endpoint`/`.bucket`), not deployed by the chart.
 
 ## 7. Known gaps
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). Notable ones as
 of this writing: §4.4's browser OIDC login, Keycloak OBO admin-console steps that can't be
-expressed in the realm-export JSON, and `librechat.yaml`'s schema not yet validated against
-a running LibreChat instance.
+expressed in the realm-export JSON, `librechat.yaml`'s schema not yet validated against a
+running LibreChat instance, and §4.1's NATS-based durable ingestion pipeline
+(`ingestion-worker`, NFR-11) — the largest structural change in the current hardening
+batch, verified only with mocks in this sandbox (no live NATS/Postgres/Qdrant available),
+not yet exercised against a real `docker compose up`.
