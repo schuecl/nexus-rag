@@ -407,8 +407,10 @@ via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUr
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). Notable ones as
 of this writing: §4.4's browser OIDC login, Keycloak OBO admin-console steps that can't be
-expressed in the realm-export JSON, `librechat.yaml`'s schema not yet validated against a
-running LibreChat instance, §4.1's NATS-based durable ingestion pipeline
+expressed in the realm-export JSON, `librechat.yaml`'s `mcpServers` shape (checked against a
+real LibreChat 0.8.7 instance -- fixed a real schema mismatch, `obo.scopes` needs a
+space-delimited string not a JSON array -- but the OBO exchange itself still isn't exercised
+end to end), §4.1's NATS-based durable ingestion pipeline
 (`ingestion-worker`, NFR-11) — the largest structural change in the current hardening
 batch, verified only with mocks in this sandbox (no live NATS/Postgres/Qdrant available),
 not yet exercised against a real `docker compose up` — and §4.3's prompt-injection

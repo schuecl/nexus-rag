@@ -1,10 +1,5 @@
 # Throwaway dev LibreChat config (NFR-9). Only enough to exercise Keycloak
 # login and the orchestration-mcp connection -- not a production config.
-#
-# NOTE: schema fields below are best-effort against LibreChat 0.8.7's
-# documented mcpServers/obo shape (REQUIREMENTS.md Section 7.7); verify
-# against the actual librechat.yaml JSON schema once this is stood up, since
-# it hasn't been validated against a running LibreChat instance yet.
 version: 1.2.8
 cache: true
 
@@ -26,8 +21,14 @@ mcpServers:
     # mode -- exchanges the user's LibreChat session token for one scoped to
     # this MCP server's audience (the rag-app client) rather than forwarding
     # the whole-session token via addUserJwtToken.
+    #
+    # obo.scopes is a single space-delimited string (standard OAuth2 scope
+    # parameter format, RFC 6749), not a JSON array -- confirmed against a
+    # real LibreChat 0.8.7 instance's Zod validation error, which rejected
+    # scopes: ["rag-query"] with "Expected string, received array" on every
+    # union branch that otherwise matched this streamable-http+obo shape.
     obo:
-      scopes: ["rag-query"]
+      scopes: "rag-query"
     # orchestration-mcp's rag_search tool now reads the bearer token from the
     # forwarded Authorization header on this connection (verified against the
     # real MCP client SDK, see services/orchestration-mcp/app/server.py), so
@@ -36,5 +37,4 @@ mcpServers:
     # correctly. REMAINING GAP: Keycloak's fine-grained token-exchange admin
     # permission (required on top of the client's standard.token.exchange.enabled
     # attribute -- see the realm export's _comment) still needs a manual
-    # admin-console step, and this config's exact schema hasn't been validated
-    # against a running LibreChat 0.8.7 instance.
+    # admin-console step.
