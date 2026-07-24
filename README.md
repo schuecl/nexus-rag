@@ -114,9 +114,11 @@ vs working" section for the honest, current list.
 - **Keycloak's fine-grained token-exchange admin permission** for the OBO flow is a manual
   admin-console step (Keycloak 26.2+) — not expressible in a realm-export JSON or anything
   code can do for you.
-- **`infra/librechat/librechat.yaml`'s exact schema** hasn't been validated against a
-  running LibreChat 0.8.7 instance — only `orchestration-mcp`'s side of the MCP connection
-  has been verified, using the real MCP client SDK standing in for LibreChat's client.
+- **`infra/librechat/librechat.yaml`'s `mcpServers` shape has been checked against a real
+  LibreChat 0.8.7 instance** — one real error found and fixed (`obo.scopes` needs to be a
+  space-delimited string, not a JSON array; see `docs/dev-setup.md`). LibreChat now starts
+  cleanly with this config, but the OBO token exchange itself still hasn't been exercised
+  end to end (Keycloak's admin-console step above is still outstanding).
 - **Helm/production wiring for browser login** — the new OIDC client-secret/redirect-URI/
   cookie-security env vars are dev Compose-only so far; see `docs/dev-setup.md`'s
   "Stubbed / TODO" list.

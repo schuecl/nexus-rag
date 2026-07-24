@@ -583,9 +583,17 @@ the docs, not a silent "it works" — flag it if you find one.
   via `OPENID_REUSE_TOKENS=true` in `docker-compose.yml`'s `librechat` service environment,
   not `librechat.yaml` (that file is LibreChat's `endpoints`/`mcpServers` config, not its
   auth environment variables).
-- `infra/librechat/librechat.yaml`'s exact schema hasn't been validated against a running
-  LibreChat 0.8.7 instance (only `orchestration-mcp`'s side of the OBO connection has been
-  verified, using the real MCP client SDK standing in for LibreChat's MCP client).
+- `infra/librechat/librechat.yaml`'s `mcpServers` shape was checked against a real running
+  LibreChat 0.8.7 instance and found one real error: `obo.scopes` was a JSON array
+  (`["rag-query"]`), but LibreChat's actual Zod config schema wants a single space-delimited
+  string (standard OAuth2 scope-parameter format, RFC 6749) — LibreChat refused to start at
+  all (`Exiting due to invalid configuration`) until fixed. The Zod error's discriminated
+  union also confirms the rest of this shape is right: `type: streamable-http` plus an
+  `obo` object are valid together, `obo.scopes` was the only field flagged once the other
+  union branches (`stdio`, `websocket`, `sse` — which don't apply here) are excluded. Not
+  yet confirmed further than "LibreChat starts cleanly with this config" — the actual OBO
+  token exchange in front of `orchestration-mcp` (Keycloak's fine-grained token-exchange
+  admin permission, noted above) still needs to be exercised end to end.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This
