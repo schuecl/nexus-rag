@@ -405,15 +405,26 @@ via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUr
 ## 7. Known gaps
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
-(kept there rather than duplicated here, since it changes as work lands). Notable ones as
-of this writing: §4.4's browser OIDC login, Keycloak OBO admin-console steps that can't be
-expressed in the realm-export JSON, `librechat.yaml`'s `mcpServers` shape (checked against a
-real LibreChat 0.8.7 instance -- fixed a real schema mismatch, `obo.scopes` needs a
-space-delimited string not a JSON array -- but the OBO exchange itself still isn't exercised
-end to end), §4.1's NATS-based durable ingestion pipeline
-(`ingestion-worker`, NFR-11) — the largest structural change in the current hardening
-batch, verified only with mocks in this sandbox (no live NATS/Postgres/Qdrant available),
-not yet exercised against a real `docker compose up` — and §4.3's prompt-injection
-mitigation, which has no regression test proving a real generation model actually respects
-the delimiter/notice (needs a live LibreChat + generation model, same gap as the P1
-tool-invocation regression test).
+(kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based
+durable ingestion pipeline (`ingestion-worker`, NFR-11) — the largest structural change in
+the P0 hardening batch — has since been **validated against a real `docker compose up`**:
+a document submitted through `ingestion-api` was durably queued, picked up and processed by
+`ingestion-worker` (`queued → processing → pending_review`), curated and approved, and
+found by a real claims-filtered query against `orchestration-mcp`. That run also surfaced a
+real bug this sandbox's mocked verification couldn't have caught (a missing `mkdir` before
+the non-root `chown` in `ingestion-api`/`ingestion-worker`'s Dockerfiles left the
+object-store mount unwritable) — fixed, see `docs/dev-setup.md`.
+
+Still genuinely open: **LibreChat's own OIDC login does not yet work**, even after fixing
+`librechat.yaml`'s `mcpServers` schema (`obo.scopes` needs a space-delimited string, not a
+JSON array), `ALLOW_SOCIAL_LOGIN` (off by default), `JWT_SECRET`/`JWT_REFRESH_SECRET`/
+`CREDS_KEY`/`CREDS_IV` (all required at LibreChat boot, unrelated to Keycloak), an MCP
+SSRF domain-allowlist blocking `orchestration-mcp`, a `depends_on`/Keycloak-healthcheck
+race, and a missing `OPENID_SCOPE` (LibreChat's `configureOpenId()` silently never runs
+without it) — every one of those confirmed live and fixed, yet the login still fails,
+under active investigation. Because of that, §4.3's `rag_search` has only been exercised via
+`orchestration-mcp`'s own `/debug/rag_search` REST endpoint with a real Keycloak token
+(itself now live-validated end to end), not through LibreChat's actual MCP wire connection —
+so Keycloak OBO admin-console steps (§4.4) and §4.3's prompt-injection mitigation (no
+regression test that a real generation model actually respects the delimiter/notice) both
+remain unconfirmed against the real LibreChat path specifically.

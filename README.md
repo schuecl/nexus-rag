@@ -16,14 +16,28 @@ Everything below is a snapshot of what's actually built against that spec, not a
 The full ingest → tag → curate → retrieve flow works end to end against every functional
 requirement in `REQUIREMENTS.md` (FR-1 through FR-32), with claims-based access control
 enforced server-side at every stage — tagging, curation, and retrieval all check the same
-OIDC claims through one shared library, not three separate implementations. There is no
-Docker daemon, live Keycloak/Qdrant/Ollama, or Hugging Face access in the environment this
-was built in, so **nothing here has been run against a real cluster or a real
-`docker compose up`** — every piece has instead been verified as rigorously as the sandbox
-allows (real `TestClient`/`uvicorn`/MCP-client round trips, in-memory Postgres/Qdrant,
-hand-crafted JWTs matching the seeded realm) and every gap that verification couldn't close is
-called out explicitly rather than left implicit. See `docs/dev-setup.md`'s "What's stubbed
-vs working" section for the honest, current list.
+OIDC claims through one shared library, not three separate implementations. Most of this was
+built with no Docker daemon, live Keycloak/Qdrant/Ollama, or Hugging Face access available, so
+initial verification leaned on `TestClient`/`uvicorn`/MCP-client round trips, in-memory
+Postgres/Qdrant, and hand-crafted JWTs — rigorous, but not the same as a real cluster.
+**The full pipeline has since been validated against a real `docker compose up`**, including
+the P0 durability work: a document submitted as `alice-ingest` was durably queued (NATS
+JetStream), picked up and processed by `ingestion-worker` (`queued → processing →
+pending_review`, confirmed via `GET /documents/{id}` polling), curated and approved, and then
+found by a real claims-filtered query against `orchestration-mcp`'s `/debug/rag_search` with a
+`bob-query`-obtained Keycloak token. That live run also surfaced and fixed eight real bugs
+this sandbox's mocked verification couldn't have caught — a missing `mkdir` before a
+non-root `chown` (object-store write permissions), several LibreChat config gaps
+(`obo.scopes`'s array-vs-string schema mismatch, missing `JWT_SECRET`/`CREDS_KEY`/`CREDS_IV`,
+`ALLOW_SOCIAL_LOGIN` defaulting off, an MCP SSRF domain-allowlist blocking `orchestration-mcp`,
+and a missing `OPENID_SCOPE`), and a `depends_on` race against Keycloak's healthcheck — see
+`docs/dev-setup.md`'s live-debugging notes for each one. Not yet live-confirmed: LibreChat's
+own OIDC login still doesn't work even with all of the above fixed (still under
+investigation), so the MCP tool call has only been exercised via the REST debug endpoint,
+not LibreChat's actual MCP wire connection; and NFR-13's revert-on-partial-failure logic,
+which nothing in a successful run exercises by construction. See `docs/dev-setup.md`'s
+"What's stubbed vs working" section for the complete, current list, labeled per the
+implemented/mocked/live-verified convention described there.
 
 **What's working:**
 
@@ -129,15 +143,12 @@ vs working" section for the honest, current list.
   encrypted `StorageClass`) is done and documented.
 - **NetworkPolicies, PodDisruptionBudgets, HorizontalPodAutoscalers** in the Helm chart —
   not called for by REQUIREMENTS.md; add them if your cluster's baseline requires them.
-- **Nothing here has been run against a real Docker daemon, cluster, or `helm lint`** — see
-  the "Status" paragraph above. This applies with extra force to `ingestion-worker`
-  (NFR-11): it's the largest structural change in the P0 hardening batch — a new service,
-  the ingestion request path moving from in-process `BackgroundTasks` to a NATS JetStream
-  queue, and a changed Qdrant credential split — and was only verified with mocks (an
-  in-memory SQLite DB, a mocked Qdrant/object-store/embedding client), never against a live
-  NATS/Postgres/Qdrant stack. Run a real `docker compose up`, submit a document, and confirm
-  it reaches `pending_review` via `ingestion-worker`'s logs and `GET /documents/{id}`
-  polling before trusting it the way the rest of this batch can be.
+- **The Helm chart specifically has not been run against a real cluster or `helm lint`** —
+  see the "Status" paragraph above for what *has* been validated against a real
+  `docker compose up` (the whole ingest → curate → retrieve flow, including `ingestion-worker`
+  and NFR-11's durable queue). The chart itself is a separate, still-unverified deployment
+  path — run `helm lint`/`helm template --debug` against a real values override before
+  trusting it.
 
 ## Architecture
 
