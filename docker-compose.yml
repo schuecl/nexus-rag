@@ -471,7 +471,21 @@ services:
     ports:
       - "3080:3080"
     depends_on:
-      - mongodb
-      - keycloak
-      - litellm
-      - orchestration-mcp
+      mongodb:
+        condition: service_started
+      # LibreChat registers its passport "openid" strategy at boot by fetching
+      # Keycloak's /.well-known/openid-configuration -- if that fails (Keycloak
+      # container started but not yet actually serving, still mid realm-import)
+      # the strategy setup fails and never retries, so every later login
+      # attempt 500s with "Unknown authentication strategy \"openid\"" even
+      # once Keycloak comes up. condition: service_started (the bare depends_on
+      # this used to be) doesn't wait for that; service_healthy does -- same
+      # fix ingestion-api/orchestration-mcp already needed for their own
+      # Keycloak dependency, found live the same way (see the Keycloak
+      # healthcheck bullet above).
+      keycloak:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+      orchestration-mcp:
+        condition: service_started
