@@ -1,10 +1,10 @@
 # nexus-rag Helm chart (NFR-10)
 
 Production packaging for the air-gapped Kubernetes deployment. Scoped to only
-the components this project adds: **ingestion-api**, **orchestration-mcp**,
-**reranker-service**, a dedicated **embedding-service** (Ollama, embedding
-model only), **Qdrant**, and **NATS** (JetStream -- the durable ingestion job
-queue, NFR-11). LibreChat, LiteLLM, Keycloak, and the cluster's existing
+the components this project adds: **ingestion-api**, **ingestion-worker**,
+**orchestration-mcp**, **reranker-service**, a dedicated **embedding-service**
+(Ollama, embedding model only), **Qdrant**, and **NATS** (JetStream -- the
+durable ingestion job queue, NFR-11). LibreChat, LiteLLM, Keycloak, and the cluster's existing
 generation-serving vLLM/Ollama (C7) are assumed to already be deployed and
 managed separately; this chart integrates with them via configuration
 (`externalKeycloak`, MCP server registration in LibreChat's own config)
@@ -33,9 +33,9 @@ doesn't render cleanly as a bug to fix, not a surprise.
 - A Kubernetes cluster with a default `StorageClass` (or set
   `*.persistence.storageClassName` explicitly for each component)
 - The air-gapped registry (`global.imageRegistry`) already has this
-  project's three custom images (`ingestion-api`, `orchestration-mcp`,
-  `reranker-service`), plus `qdrant/qdrant`, `ollama/ollama`, and `nats`,
-  mirrored into it (NFR-1)
+  project's four custom images (`ingestion-api`, `ingestion-worker`,
+  `orchestration-mcp`, `reranker-service`), plus `qdrant/qdrant`,
+  `ollama/ollama`, and `nats`, mirrored into it (NFR-1)
 - A pre-created Secret matching `externalPostgres.existingSecret` /
   `externalPostgres.secretKey`, containing a full SQLAlchemy
   `DATABASE_URL` (`postgresql+psycopg://user:pass@host:5432/dbname`)
@@ -53,10 +53,12 @@ doesn't render cleanly as a bug to fix, not a surprise.
 - A pre-created Secret matching `qdrant.apiKey.existingSecret`, containing two
   keys: `qdrant.apiKey.secretKey` (a full read/write API key) and
   `qdrant.apiKey.readOnlySecretKey` (a read-only one) — Qdrant requires
-  authenticated access in every environment (NFR-15); `ingestion-api` gets the
-  full key, `orchestration-mcp` gets the read-only one. Generate both however
-  your cluster's secret-management practice calls for (e.g. `openssl rand
-  -hex 32` for each) before creating the Secret.
+  authenticated access in every environment (NFR-15); `ingestion-worker` and
+  `ingestion-api` both get the full key (the worker creates the collection
+  and writes new points; ingestion-api updates/deletes points on
+  approve/reject/supersede), `orchestration-mcp` gets the read-only one.
+  Generate both however your cluster's secret-management practice calls for
+  (e.g. `openssl rand -hex 32` for each) before creating the Secret.
 - An S3-compatible bucket (existing enterprise S3, Ceph RGW, ...) already
   reachable at `externalObjectStore.endpoint`/`.bucket`, and a pre-created
   Secret matching `externalObjectStore.existingSecret` containing an access
@@ -99,14 +101,14 @@ Or supply a `values-production.yaml` override file with all of the above
   them.
 - Harden `qdrant`'s or `embeddingService`'s `securityContext` — both run
   upstream images (`qdrant/qdrant`, `ollama/ollama`) whose own user/filesystem
-  conventions this chart doesn't override. `ingestion-api`,
-  `orchestration-mcp`, and `reranker-service` (the three custom-built images)
+  conventions this chart doesn't override. `ingestion-api`, `ingestion-worker`,
+  `orchestration-mcp`, and `reranker-service` (the four custom-built images)
   *do* run hardened: `services/*/Dockerfile` bakes in a fixed non-root UID/GID
   (10001), and their Deployments set `runAsNonRoot: true`,
   `readOnlyRootFilesystem: true`, and drop all capabilities
   (`nexus-rag.podSecurityContext`/`nexus-rag.containerSecurityContext` in
   `_helpers.tpl`), with `emptyDir` volumes at `/tmp` (upload spooling,
-  ML-library scratch files) and, for `ingestion-api`/`orchestration-mcp`, at
+  ML-library scratch files) and, for `ingestion-worker`/`orchestration-mcp`, at
   their `HF_HOME` model cache (no PVC there — see the persistence note below).
 
 ## Persistence notes

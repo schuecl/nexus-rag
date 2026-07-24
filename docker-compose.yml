@@ -9,7 +9,7 @@ volumes:
   qdrant-data:
   ollama-data:
   reranker-cache:
-  ingestion-api-cache:
+  ingestion-worker-cache:
   orchestration-mcp-cache:
   mongo-data:
   # NFR-12: original uploaded files, independent of Qdrant/Postgres. Shared
@@ -205,14 +205,11 @@ services:
       OIDC_REDIRECT_URI: http://localhost:8001/auth/callback
       COOKIE_SECURE: "false"
       QDRANT_URL: http://qdrant:6333
-      # NFR-15: full read/write key -- this service creates the collection
-      # and writes/deletes points (common/qdrant_store.py).
+      # NFR-15: full read/write key -- app/routes/curate.py updates/deletes
+      # points directly (approve/reject/supersede); ingestion-worker (below)
+      # is the one that now creates the collection and writes new points.
       QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
-      OLLAMA_URL: http://ollama:11434
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
-      CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
-      CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       # app/routes/search.py's query-testing page proxies here, forwarding the
       # logged-in user's own access token (ARCHITECTURE.md Section 4.3).
       ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
@@ -221,8 +218,10 @@ services:
       # OBJECT_STORE_BACKEND=s3 (helm's externalObjectStore).
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
+      # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
+      NATS_URL: nats://nats:4222
+      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
     volumes:
-      - ingestion-api-cache:/srv/.cache/huggingface
       - object-store-data:/srv/object-store
     ports:
       - "8001:8001"
@@ -239,8 +238,55 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      nats:
+        condition: service_healthy
       orchestration-mcp:
         condition: service_started
+
+  ingestion-worker:
+    # NFR-11: the durable consumer side of the queue ingestion-api publishes
+    # to above -- actually does the parse/chunk/embed/store pipeline
+    # (FR-3..FR-6), out of process so a crash mid-document doesn't strand it
+    # (see services/ingestion-worker/app/processing.py).
+    build:
+      context: .
+      dockerfile: services/ingestion-worker/Dockerfile
+    environment:
+      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
+      # postgres service's init-app-roles.sh.
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      QDRANT_URL: http://qdrant:6333
+      # NFR-15: full read/write key -- this is now the service that creates
+      # the collection and writes points, moved out of ingestion-api.
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
+      CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
+      OBJECT_STORE_BACKEND: filesystem
+      OBJECT_STORE_PATH: /srv/object-store
+      NATS_URL: nats://nats:4222
+      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
+    volumes:
+      - ingestion-worker-cache:/srv/.cache/huggingface
+      - object-store-data:/srv/object-store
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      nats:
+        condition: service_healthy
+      ollama-model-init:
+        condition: service_completed_successfully
 
   orchestration-mcp:
     build:

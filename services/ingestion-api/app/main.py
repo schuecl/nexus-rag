@@ -6,6 +6,7 @@ from app.deps import get_current_user_optional
 from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
+from common.job_queue import ensure_stream, get_nats_connection
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -36,10 +37,20 @@ def _seed_defaults() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     init_db()
     _seed_defaults()
-    yield
+    # NFR-11: one long-lived JetStream connection for the process, not a
+    # reconnect per request -- app/routes/upload.py publishes through this
+    # via request.app.state.jetstream.
+    nc = await get_nats_connection()
+    js = nc.jetstream()
+    await ensure_stream(js)
+    app.state.jetstream = js
+    try:
+        yield
+    finally:
+        await nc.close()
 
 
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
