@@ -179,6 +179,29 @@ automated or for testing with your own file.
 
 ## What's stubbed vs working
 
+**Status-label convention (P1, REQUIREMENTS.md Section 11):** a bare "works" claim conflates
+three genuinely different confidence levels, so this doc (and `README.md`/`ARCHITECTURE.md`)
+distinguish them explicitly wherever it matters:
+- **Implemented** — the code exists and does what it says, but hasn't been executed at all
+  in this environment (e.g. no network access to a dependency, or a code path only a live
+  cluster would exercise).
+- **Tested against mocks/in-process substitutes** — actually run, but against a stand-in for
+  a real dependency: an in-memory SQLite DB instead of Postgres, a mocked Qdrant/NATS/object-
+  store client, a hand-crafted JWT instead of a real Keycloak token, a real `TestClient`/
+  `uvicorn` round trip instead of a live `docker compose up`. Confirms the logic is correct
+  in isolation; does not confirm the real dependency's actual behavior (auth quirks, network
+  failure modes, version-specific API behavior) matches the stand-in.
+- **Validated against a live environment** — actually run against the real thing (a live
+  Postgres/Qdrant/NATS/Keycloak, a real `docker compose up`, a real MCP client SDK). This is
+  the only level that rules out surprises the mock/substitute couldn't reproduce.
+
+Every bullet below and every "Not tested against..."/"Smoke-tested..." caveat elsewhere in
+this repo's docs is written to make clear which of these three levels it's claiming — most
+recently NFR-11/NFR-12/NFR-13 and the P1 batch (the `ALL_AUTHENTICATED` rename, the
+prompt-injection mitigation), all of which are "tested against mocks," explicitly not yet
+"validated against a live environment." Treat the absence of an explicit level as a bug in
+the docs, not a silent "it works" — flag it if you find one.
+
 **Working:**
 - Claims parsing, the Section 6.3 metadata schema, and the Qdrant access-filter builder
   (`services/common`) — shared by both services, not implemented twice.
