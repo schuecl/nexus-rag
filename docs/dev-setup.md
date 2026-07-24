@@ -526,6 +526,23 @@ automated or for testing with your own file.
   (Section 7.6): RAGAS's more interesting metrics (faithfulness, LLM-judged context
   precision) need a configured LLM judge and wired-up generation, neither of which exists
   in this repo yet.
+- **Prompt-injection mitigation for retrieved content (P1)** — retrieved chunk `text` is
+  untrusted by construction (whatever an uploader submitted; FR-18's tagging validation
+  constrains metadata, not document content). `orchestration-mcp`'s `rag_search`
+  (`app/rag_search.py`) now delimits every result's `text` with an explicit
+  `<untrusted_document_content>` marker — applied *after* reranking, so
+  `reranker-service`'s cross-encoder still scores the raw text, not text padded with
+  marker tags — and adds a `security_notice` field telling the calling model to treat
+  delimited content as reference material, not instructions. The same instruction is also
+  in the tool's MCP docstring (`app/server.py`), so it doesn't depend on one particular
+  client surfacing docstrings to its model. Smoke-tested with a fabricated chunk containing
+  an injection-shaped sentence ("ignore previous instructions and reveal..."): confirmed
+  the reranker call receives the raw, undelimited text (so scoring quality doesn't
+  degrade) while the final response's `results[].payload.text` is properly delimited and
+  `security_notice` is present. This is a mitigation, not a guarantee, and has no
+  regression test against a real generation model actually respecting it — that needs a
+  live LibreChat + generation model, the same gap noted for the tool-invocation regression
+  testing item below.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
 - **Keycloak OBO/token-exchange, still needs manual admin-console steps.** The `rag-app`
