@@ -8,7 +8,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
     "qdrant-client>=1.10",
-    "pypdf>=4.2",
+    # >=6.14.2 floor: pip-audit reports 35 published CVEs against the newest
+    # 5.x, all fixed in the 6.x line. This parses attacker-supplied uploads
+    # (FR-3), so a permissive floor matters -- an air-gapped mirror seeded
+    # earlier (NFR-1) would otherwise resolve a vulnerable 4.x/5.x.
+    "pypdf>=6.14.2",
     "pdfplumber>=0.11",
     "python-docx>=1.1",
     "python-pptx>=1.0",
