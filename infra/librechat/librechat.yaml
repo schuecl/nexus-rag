@@ -20,36 +20,58 @@ endpoints:
       apiKey: "${LITELLM_MASTER_KEY}"
       baseURL: "http://litellm:4000/v1"
       models:
-        default: ["${GENERATION_MODEL}"]
+        # LibreChat only resolves ${ENV_VAR} substitution in apiKey/baseURL/
+        # headers, not inside models.default -- so this has to be the literal
+        # model_name from infra/litellm/config.yaml, not GENERATION_MODEL.
+        # Keep the two in sync by hand if either changes.
+        default: ["llama3.2:1b"]
         fetch: false
       titleConvo: true
+    # Testing-only escape hatch that bypasses litellm entirely -- lets you
+    # tell apart "Ollama itself is broken" from "the LiteLLM hop is broken"
+    # when debugging the generation path. Ollama's own OpenAI-compatible API
+    # (0.32.1 has it) needs no real credential, so apiKey is just a
+    # placeholder; fetch: true lists whatever's actually pulled rather than
+    # hardcoding a model name a second time.
+    - name: "Ollama-Direct"
+      apiKey: "ollama"
+      baseURL: "http://ollama:11434/v1"
+      models:
+        default: ["llama3.2:1b"]
+        fetch: true
+      titleConvo: false
 
 mcpServers:
   nexus-rag-search:
     type: streamable-http
     url: "http://orchestration-mcp:8002/mcp"
-    # Section 7.7: OBO token exchange is the recommended identity-propagation
-    # mode -- exchanges the user's LibreChat session token for one scoped to
-    # this MCP server's audience (the rag-app client) rather than forwarding
-    # the whole-session token via addUserJwtToken.
-    #
-    # obo.scopes is a single space-delimited string (standard OAuth2 scope
-    # parameter format, RFC 6749), not a JSON array -- confirmed against a
-    # real LibreChat 0.8.7 instance's Zod validation error, which rejected
-    # scopes: ["rag-query"] with "Expected string, received array" on every
-    # union branch that otherwise matched this streamable-http+obo shape.
-    obo:
-      scopes: "rag-query"
-    # orchestration-mcp's rag_search tool now reads the bearer token from the
+    # Section 7.7: OBO token exchange was the intended identity-propagation
+    # mode (exchanging the user's LibreChat session token for one scoped to
+    # this MCP server's audience, the rag-app client, rather than forwarding
+    # the whole-session token) -- but a real end-to-end run (bob-query,
+    # 2026-07-26) showed LibreChat's actual OboTokenService calls Keycloak's
+    # token endpoint with grant_type=urn:ietf:params:oauth:grant-type:
+    # jwt-bearer (RFC 7523), not grant_type=token-exchange (RFC 8693) as the
+    # realm's standard.token.exchange.enabled attribute (on the librechat
+    # client) was configured for and had been manually verified against.
+    # Keycloak 26.7's RFC 7523 support ("JWT Authorization Grant", new in
+    # 26.5) is built for external-IdP identity chaining -- it needs an
+    # Identity Provider registered and linked on the client, and it's
+    # undocumented/unverified whether a same-realm self-issued token (our
+    # case) is even a supported source for it. Rather than chase that,
+    # switched to addUserJwtToken: forwards the raw LibreChat session token
+    # instead of exchanging it. This still passes orchestration-mcp's
+    # audience check: Keycloak's nexus-rag-claims client scope (shared by
+    # both librechat and rag-app) stamps aud=rag-app onto every
+    # librechat-issued token via its audience mapper regardless of azp, and
+    # rag_search (services/orchestration-mcp/app/rag_search.py via
+    # common.claims.parse_claims) only checks aud, not azp. Trade-off: the
+    # MCP server now sees the user's full librechat-scoped token rather than
+    # one narrowed to the rag-app audience by an actual exchange -- revisit
+    # if/when Keycloak's same-realm JWT Authorization Grant story is clearer.
+    addUserJwtToken: true
+    # orchestration-mcp's rag_search tool reads the bearer token from the
     # forwarded Authorization header on this connection (verified against the
-    # real MCP client SDK, see services/orchestration-mcp/app/server.py), so
-    # whatever LibreChat puts on that header -- an OBO-exchanged token per the
-    # obo.scopes above, or a raw addUserJwtToken-forwarded one -- reaches it
-    # correctly. The underlying exchange is now confirmed live end to end
-    # (issue #75, see docs/dev-setup.md's Keycloak OBO bullet) -- no admin-
-    # console permission needed, contrary to what this comment used to say;
-    # the actual bug was standard.token.exchange.enabled sitting on the wrong
-    # client (see infra/keycloak/realm-export/nexus-rag-realm.json). Still
-    # unconfirmed: LibreChat's own code performing this exchange when a real
-    # chat message triggers the tool (see the openidJwt "invalid algorithm"
-    # note in docs/dev-setup.md).
+    # real MCP client SDK, see services/orchestration-mcp/app/server.py) --
+    # whatever LibreChat puts there per addUserJwtToken above reaches it
+    # correctly.

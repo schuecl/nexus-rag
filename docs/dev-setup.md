@@ -19,13 +19,20 @@ the NFR-11 bullet below) along the way. **LibreChat's own OIDC login is now conf
 working end to end (issue #75)** — several real LibreChat config bugs were found and fixed
 chasing it (see the `ALLOW_SOCIAL_LOGIN`/`OPENID_SCOPE`/MCP-allowlist bullets below), and the
 actual root cause (`openid-client` refusing a plain-HTTP issuer) needed a real HTTPS setup,
-not just config — see "One-time host setup" below. The OBO token-exchange mechanism is also
-confirmed live: a scripted exchange (replicating exactly what LibreChat's backend does)
-returns a correctly claims-filtered `rag_search` result. Still open: LibreChat's *own* code
-performing that exchange when a real chat message triggers the tool — driving that specific
-path hit a separate LibreChat bug (its `openidJwt` reused-token strategy rejects its own
-freshly-issued token with "invalid algorithm"), tracked as a follow-up. See
-"What's stubbed vs working" below for the complete, current list.
+not just config — see "One-time host setup" below. **The `obo.scopes` OBO token-exchange
+config is currently unused** (2026-07-26): a real chat message from `bob-query` driving
+`rag_search` showed LibreChat's actual `OboTokenService` calls Keycloak with
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` (RFC 7523), not
+`grant_type=token-exchange` (RFC 8693) as the realm's `standard.token.exchange.enabled`
+attribute was configured and manually verified for — the earlier scripted exchange
+replicated the wrong grant type, not LibreChat's real one. Keycloak 26.7's RFC 7523 support
+("JWT Authorization Grant") is built for external-IdP identity chaining and it's
+unverified whether a same-realm self-issued token even qualifies. Rather than chase that,
+`infra/librechat/librechat.yaml`'s `nexus-rag-search` server now uses `addUserJwtToken: true`
+instead — forwards the raw LibreChat session token rather than an audience-exchanged one,
+which still passes `orchestration-mcp`'s `aud=rag-app` check (see the Keycloak OBO bullet
+below for why). Revisit the RFC 7523 path if Keycloak's same-realm story becomes clearer.
+See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
 `bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
@@ -637,8 +644,14 @@ the docs, not a silent "it works" — flag it if you find one.
   testing item below.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
-- **Keycloak OBO/token-exchange — confirmed live end to end (issue #75), and the assumed
-  "manual admin-console step" turned out not to apply at all.** That belief traced to a
+- **Keycloak RFC 8693 token-exchange (`grant_type=token-exchange`) — verified live via a
+  scripted exchange, but turned out not to be the grant type LibreChat's real OBO code
+  path actually uses (see the opening summary and the `librechat.yaml` bullet below);
+  `standard.token.exchange.enabled` on `librechat` is currently dead config, left in place
+  in case Keycloak's RFC 7523 story clarifies enough to revisit OBO.** The manual-verification
+  work below is still accurate for what it tested, just not for what LibreChat calls at
+  runtime. The assumed "manual admin-console step" turned out not to apply at all — that
+  belief traced to a
   misreading of Keycloak's docs: the fine-grained admin permission is only required for the
   deprecated/preview *legacy* token exchange. Standard Token Exchange V2 (RFC 8693, what
   `standard.token.exchange.enabled` actually configures, confirmed via
@@ -664,18 +677,21 @@ the docs, not a silent "it works" — flag it if you find one.
   importer uses strict JSON deserialization and refuses the whole realm over one unrecognized
   property, confirmed live: `ERROR: Unrecognized field "_comment"`.)
 - `infra/librechat/librechat.yaml`'s `mcpServers` shape was checked against a real running
-  LibreChat 0.8.7 instance and found one real error: `obo.scopes` was a JSON array
-  (`["rag-query"]`), but LibreChat's actual Zod config schema wants a single space-delimited
-  string (standard OAuth2 scope-parameter format, RFC 6749) — LibreChat refused to start at
-  all (`Exiting due to invalid configuration`) until fixed. The Zod error's discriminated
-  union also confirms the rest of this shape is right: `type: streamable-http` plus an
-  `obo` object are valid together, `obo.scopes` was the only field flagged once the other
-  union branches (`stdio`, `websocket`, `sse` — which don't apply here) are excluded. The
-  underlying token-exchange mechanism this config points at is now confirmed live end to end
-  (see the Keycloak OBO bullet above) — what's still unconfirmed is LibreChat's *own* code
-  performing that exchange via this exact `librechat.yaml` config when a real chat message
-  triggers the tool (blocked on the separate `openidJwt` "invalid algorithm" bug noted in
-  this doc's opening summary).
+  LibreChat 0.8.7 instance and found one real error along the way: `obo.scopes` was a JSON
+  array (`["rag-query"]`), but LibreChat's actual Zod config schema wants a single
+  space-delimited string (standard OAuth2 scope-parameter format, RFC 6749) — LibreChat
+  refused to start at all (`Exiting due to invalid configuration`) until fixed. That fix
+  got LibreChat running and the `obo` config accepted, but a real chat message actually
+  triggering `rag_search` (2026-07-26, `bob-query`) surfaced the deeper problem above:
+  LibreChat's `OboTokenService` calls Keycloak with `grant_type=jwt-bearer`, which Keycloak
+  rejected outright (`JWT Authorization Grant is not supported for the requested client`) —
+  a hard config mismatch, not the previously-suspected `openidJwt` "invalid algorithm" bug
+  (that one either doesn't apply to this code path or was already fixed by an earlier commit;
+  the failure now happens Keycloak-side, meaning LibreChat's request reached the token
+  endpoint fine). Switched `nexus-rag-search` to `addUserJwtToken: true` instead of `obo` —
+  see the opening summary for why that still passes claims validation. The `obo` config
+  block itself was removed from `librechat.yaml`; the Zod-shape fact above (single
+  space-delimited string, not an array) still applies if OBO is revisited later.
 - **LibreChat also needs its own `JWT_SECRET`/`JWT_REFRESH_SECRET`/`CREDS_KEY`/`CREDS_IV`,
   independent of the `librechat.yaml`/OIDC config above** — found via the same live
   `docker compose up` run, one error at a time: after the `obo.scopes` fix, LibreChat's next

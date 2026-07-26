@@ -39,6 +39,9 @@ services:
       KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak_app}
       KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:-keycloak}
+      LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm_app}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm_app}
+      LITELLM_DB_NAME: ${LITELLM_DB_NAME:-litellm}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init-app-roles.sh:/docker-entrypoint-initdb.d/init-app-roles.sh:ro
@@ -445,16 +448,26 @@ services:
     # the current release at pin time, not exhaustively verified to pull
     # cleanly (this is C7's "entirely LibreChat's own pipeline, not this
     # project's concern" territory, so lower scrutiny than Keycloak above).
-    image: ghcr.io/berriai/litellm:v1.93.0
+    # -database variant (same tag as the plain image) bundles the Prisma
+    # toolchain needed to run migrations against DATABASE_URL below --
+    # the plain litellm image has no DB support and just logs "Not
+    # connected to a DB" instead of persisting virtual keys/spend.
+    image: ghcr.io/berriai/litellm-database:v1.93.0
     volumes:
       - ./infra/litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-dev-litellm-master-key}
+      # NFR-3: own non-superuser role and database, isolated from the app's
+      # and Keycloak's -- see infra/postgres/init-app-roles.sh.
+      DATABASE_URL: postgresql://${LITELLM_DB_USER:-litellm_app}:${LITELLM_DB_PASSWORD:-litellm_app}@postgres:5432/${LITELLM_DB_NAME:-litellm}
     ports:
       - "4000:4000"
     depends_on:
-      - ollama-model-init
+      ollama-model-init:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   librechat:
     # NFR-16: pinned, up from :latest -- deliberately held at v0.8.7 rather

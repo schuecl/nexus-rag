@@ -6,9 +6,10 @@
 # data directory only -- never again on restart) -- see docker-compose.yml's
 # postgres service for the env vars this reads.
 #
-# Creates two non-superuser roles distinct from the bootstrap POSTGRES_USER
+# Creates three non-superuser roles distinct from the bootstrap POSTGRES_USER
 # (which stays superuser, used only for this script and the harden-audit-log
-# one-shot service below -- never for day-to-day app or Keycloak traffic):
+# one-shot service below -- never for day-to-day app, Keycloak, or LiteLLM
+# traffic):
 #   - APP_DB_USER: what ingestion-api/orchestration-mcp's DATABASE_URL uses.
 #     Granted full privileges on the existing POSTGRES_DB database (it still
 #     owns whatever tables SQLModel's create_all() creates under it -- see
@@ -17,6 +18,9 @@
 #   - KEYCLOAK_DB_USER: owns its own separate KEYCLOAK_DB_NAME database,
 #     entirely distinct from POSTGRES_DB -- Keycloak never touches app
 #     tables, and the app never touches Keycloak's.
+#   - LITELLM_DB_USER: owns its own separate LITELLM_DB_NAME database, same
+#     reasoning -- LiteLLM's Prisma migrations (virtual keys, spend tracking)
+#     stay isolated from both the app's and Keycloak's tables.
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
@@ -25,6 +29,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
 
     CREATE ROLE "$KEYCLOAK_DB_USER" WITH LOGIN PASSWORD '$KEYCLOAK_DB_PASSWORD';
     CREATE DATABASE "$KEYCLOAK_DB_NAME" OWNER "$KEYCLOAK_DB_USER";
+
+    CREATE ROLE "$LITELLM_DB_USER" WITH LOGIN PASSWORD '$LITELLM_DB_PASSWORD';
+    CREATE DATABASE "$LITELLM_DB_NAME" OWNER "$LITELLM_DB_USER";
 EOSQL
 
 # Postgres 15+ restricts CREATE on the public schema to the database owner by
