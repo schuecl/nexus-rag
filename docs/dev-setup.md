@@ -45,8 +45,13 @@ why, plus a second, separate bug this uncovered once run as an Agent). **`GENERA
 is now `qwen2.5:7b-instruct`, not `llama3.2:1b`** — the latter's tool-calling was unreliable
 enough (roughly 1-in-3-to-5 correctly-formed tool calls against `rag_search`'s real schema,
 confirmed by repeated direct LiteLLM calls) to make MCP testing non-viable; the swap got a
-clean run every time in the same test. See the `qwen2.5:7b-instruct` bullet below for the
-full before/after evidence and everywhere the model name had to change.
+clean run every time in that isolated test. **A real browser run then showed even
+`qwen2.5:7b-instruct` failing against the actual MCP-served schema** (long docstring +
+LibreChat's namespaced function name, not the short hand-written schema used in the
+isolated test) — root-caused via a live `tcpdump` capture and fixed by shortening both the
+tool's docstring and the MCP server's config key (see the two `qwen2.5:7b-instruct`/tool-
+naming bullets below for the full before/after evidence, everywhere the model name had to
+change, and the A/B numbers behind the naming fix).
 See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
@@ -779,9 +784,39 @@ the docs, not a silent "it works" — flag it if you find one.
   Needs `ollama pull qwen2.5:7b-instruct` (~4.7GB, done automatically by
   `ollama-model-init` on a fresh `docker compose up`) and noticeably more RAM/CPU time per
   request than `llama3.2:1b` -- worth it here since unreliable tool-calling made MCP
-  testing non-viable at the smaller size. Still not click-tested end-to-end in the actual
-  browser UI with a real document corpus behind it -- confirmed via direct LiteLLM calls
-  with `rag_search`'s real schema, not a full `bob-query` browser round trip yet.
+  testing non-viable at the smaller size.
+- **Even after the `qwen2.5:7b-instruct` swap, a real Agent run in the browser still didn't
+  call the tool** — caught live (2026-07-26) via a `bob-query` browser session, not a
+  synthetic test: the isolated single-message LiteLLM tests above used a short hand-written
+  tool schema, not the real one `orchestration-mcp` actually serves over MCP (long
+  multi-paragraph docstring, Pydantic-generated `anyOf` types, and LibreChat's namespaced
+  function name `rag_search_mcp_nexus-rag-search`). Captured the real request LibreChat
+  sends with `tcpdump` (a throwaway container sharing `ollama`'s network namespace, since
+  this host has no passwordless sudo for a host-level capture) and replayed it verbatim
+  against a second, disposable Ollama instance (same model volume, different port, so as
+  not to disturb the live stack) with `OLLAMA_DEBUG_LOG_REQUESTS=1` for exact reproduction.
+  Root cause, isolated by a controlled A/B (8 tries per variant, same real message history):
+  the long docstring and the long namespaced function name *both* independently hurt
+  reliability -- long name + long desc: 2/8; long name + short desc: 5/8; short name
+  (`rag_search`) + short desc: 8/8, holding at 8/8 even with the exact real (slightly
+  malformed, duplicate-message) conversation history captured from the browser. This is
+  the same class of problem as the `llama3.2:1b` finding above (structured tool-call
+  generation degrading under more complex/longer prompts), just showing up at a smaller
+  scale on a bigger model instead of disappearing entirely.
+
+  **Fixed two ways**, since both factors independently mattered: (1) shortened
+  `rag_search`'s docstring in `services/orchestration-mcp/app/server.py` -- FastMCP uses
+  the function's docstring verbatim as the LLM-facing tool description, so the multi-
+  paragraph version (FR references, issue numbers, security rationale) was shipped to the
+  model on every single call; moved that context to a regular code comment above the
+  function (the security notice specifically is redundant to remove from there anyway --
+  every real response already carries its own `security_notice` field per
+  `app/rag_search.py`, so nothing is lost by not repeating it in the schema). (2) Renamed
+  `infra/librechat/librechat.yaml`'s `mcpServers` key from `nexus-rag-search` to `rag` --
+  LibreChat namespaces every MCP tool as `{tool}_mcp_{this key}` in the schema sent to the
+  model, so this shortens the model-facing name from `rag_search_mcp_nexus-rag-search` to
+  `rag_search_mcp_rag`. Re-verified against the real LiteLLM endpoint with the actual
+  (now-shortened) schema: 5/5 clean tool calls.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This

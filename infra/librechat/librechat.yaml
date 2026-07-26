@@ -44,7 +44,15 @@ endpoints:
       titleConvo: false
 
 mcpServers:
-  nexus-rag-search:
+  # Short key deliberately: LibreChat namespaces every MCP tool as
+  # "{tool}_mcp_{this key}" in the schema it sends to the model (e.g.
+  # "rag_search_mcp_nexus-rag-search" when this was the longer original
+  # name) -- confirmed live (issue #99 follow-up, 2026-07-26) that the
+  # longer composite name measurably hurt small local models' tool-call
+  # reliability, on top of the docstring-length effect documented in
+  # app/server.py. Renaming to "rag" shortens the model-facing name to
+  # "rag_search_mcp_rag".
+  rag:
     type: streamable-http
     url: "http://orchestration-mcp:8002/mcp"
     # Section 7.7: OBO token exchange was the intended identity-propagation
