@@ -50,6 +50,42 @@ QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "bm25"
 
+# Issue #122: which embedding model produced a chunk's dense vector, stamped
+# into every point's payload at write time (ingestion-worker) and read back at
+# query time (orchestration-mcp) to detect a model change.
+#
+# Qdrant has no collection-level metadata to hang this on, so provenance lives
+# per-point and the collection's model is read by sampling one. That is
+# sufficient because every point in a collection is written by the same
+# ingestion path -- a mixed collection is precisely the state this is meant to
+# make visible.
+EMBEDDING_MODEL_KEY = "embedding_model"
+
+
+def collection_embedding_model(client: QdrantClient) -> str | None:
+    """The embedding model recorded on this collection's points, or None.
+
+    None means "cannot tell", not "no mismatch", and has two distinct causes
+    the caller must treat as non-fatal:
+
+    - the collection doesn't exist yet (created lazily on first ingestion), or
+      is empty;
+    - the points predate this stamp (written before #122), so nothing recorded
+      which model produced them.
+
+    Hard-failing on either would break every existing deployment on upgrade
+    and every fresh stack before its first document. The check only fails
+    closed on a *positive* mismatch -- see rag_search's use of it.
+    """
+    if not client.collection_exists(QDRANT_COLLECTION):
+        return None
+    points, _ = client.scroll(
+        collection_name=QDRANT_COLLECTION, limit=1, with_payload=True, with_vectors=False
+    )
+    if not points:
+        return None
+    return (points[0].payload or {}).get(EMBEDDING_MODEL_KEY)
+
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:

@@ -26,13 +26,19 @@ from qdrant_client.models import PointStruct
 from sqlmodel import Session
 
 from app.chunking import chunk_sections
-from app.embedding import EmbeddingError, embed_texts
+from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import ParsingError, parse_document
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
 from common.models import AuditLogEntry, Document
 from common.object_store import get_object_store
-from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
+from common.qdrant_store import (
+    EMBEDDING_MODEL_KEY,
+    chunk_vector,
+    ensure_collection,
+    get_qdrant_client,
+    upsert_chunks,
+)
 from common.sparse_embedding import embed_sparse
 
 logger = logging.getLogger("ingestion-worker")
@@ -146,6 +152,14 @@ async def process_document(document_id: uuid.UUID) -> bool:
                         # what kind of content they hold (e.g. prefer table
                         # chunks for a query asking about a specific value).
                         "content_type": chunk.content_type,
+                        # Issue #122: which model produced this vector, and
+                        # when. Without it a change to EMBEDDING_MODEL leaves
+                        # stored and query vectors in different embedding
+                        # spaces with nothing to detect it -- the dense leg
+                        # silently returns noise while BM25 and reranking keep
+                        # the results looking plausible.
+                        EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
+                        "embedded_at": _utcnow().isoformat(),
                         "filename": doc.filename,
                         "doc_type": doc.doc_type,
                         "source_originator": doc.source_originator,
