@@ -1,8 +1,10 @@
 # Security Policy
 
-Nexus RAG handles authentication, encrypted credentials (LibreChat
-API keys, SMTP passwords, webhook secrets), and an audit trail, and is
-often deployed in regulated or air-gapped environments. We take security
+Nexus RAG is a RAG pipeline for classification/releasability-marked
+documents: OIDC-authenticated ingestion and curation, and claims-based
+access-controlled retrieval enforced server-side before anything reaches
+the vector store. It maintains an append-only audit trail and is often
+deployed in regulated or air-gapped DoD environments. We take security
 reports seriously.
 
 ## Reporting a Vulnerability
@@ -36,12 +38,28 @@ public disclosure.
 
 Security-relevant areas include, but are not limited to:
 
-- Authentication and session handling (local auth and OIDC).
-- Authorization / access control (project ACLs, team membership,
-  API-key ownership).
-- Encryption and handling of secrets at rest and in transit.
-- The audit trail and its syslog/SIEM forwarding.
-- The isolated PDF rendering service.
+- **OIDC authentication and claims parsing** (`services/common/common/claims.py`) — how
+  `clearance`, `releasability`, `groups`, `org`, and role claims are verified and turned
+  into enforcement decisions, and the browser session/CSRF flow
+  (`services/ingestion-api/app/routes/auth.py`, double-submit cookie protection on
+  state-changing routes).
+- **The mandatory retrieval access filter** (`services/common/common/qdrant_filters.py`) —
+  the server-side, non-bypassable Qdrant payload filter (classification ceiling,
+  releasability match, access-scope match, approval status) built from verified claims,
+  never from anything client-supplied.
+- **Curator-authority scoping** (`services/ingestion-api/app/routes/curate.py`) — org-scoped
+  curate roles, and capping approval authority by the curator's own clearance and
+  releasability holdings, not just role membership.
+- **Credential separation** — the Qdrant read/write vs. read-only API key split between
+  services, separate non-superuser database roles for the application and Keycloak, and
+  object-store credentials kept independent of both.
+- **The append-only audit log** — the application's database role holds only
+  `SELECT`/`INSERT` on the audit table; row mutation or deletion requires the bootstrap
+  superuser, never day-to-day application traffic.
+- **The ingestion pipeline's handling of untrusted uploaded documents** — parsing of
+  attacker-supplied files (`services/ingestion-worker/app/parsing.py`, including malformed/
+  zip-bomb-shaped input) and the prompt-injection delimiting of retrieved document content
+  before it reaches a generation model (`services/orchestration-mcp/app/rag_search.py`).
 
 ## Supported Versions
 
