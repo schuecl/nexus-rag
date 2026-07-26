@@ -37,8 +37,11 @@ bug (`421 Invalid Host header`, `mcp` SDK's default DNS-rebinding protection rej
 `orchestration-mcp:8002` Compose-network hostname) was found and fixed after the OBO fix
 above, see the `transport_security`/`TransportSecuritySettings` bullet below. With that
 fixed, `bob-query` can connect to the `nexus-rag-search` MCP server and LibreChat lists
-`rag_search` as an available tool — **not yet confirmed**: whether a chat message actually
-gets the model to call it (see the `llama3.2:1b` tool-calling bullet below).
+`rag_search` as an available tool. **A bare chat via the `LiteLLM`/`Ollama-Direct` custom
+endpoints will never call it, though** — that's expected LibreChat behavior, not a bug: MCP
+tools only attach to the request via the Agents/ephemeral-agent path, never the plain
+`endpoints.custom` chat path (see the tool-calling bullet below for the source-level why
+and how to actually exercise it via the composer's tools icon or a real Agent).
 See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
@@ -741,14 +744,26 @@ the docs, not a silent "it works" — flag it if you find one.
   `OPENID_CALLBACK_URL`'s relative path to build the absolute callback URL used in the OIDC
   redirect, and leaving it unset risked a second, separate failure mode once the button
   itself was fixed.
-- **`llama3.2:1b` does not appear to invoke `rag_search` as a tool call** — noticed
-  (2026-07-26) once the MCP connection itself was working (previous bullet): LibreChat
-  connects to `orchestration-mcp` and lists `rag_search` correctly, but a chat message that
-  should trigger it doesn't produce a tool call. Not yet root-caused — candidates include
-  the 1B model's tool-calling capability/instruction-following at that size, LiteLLM's
-  tool-call translation for the `ollama_chat`/`ollama` provider route, and whether
-  LibreChat is even sending the tool schema to this particular endpoint config. Needs
-  investigation with a real chat transcript / LiteLLM request log, not guessing from docs.
+- **A plain chat with the `LiteLLM`/`Ollama-Direct` custom endpoints never calls
+  `rag_search`, even though the MCP connection works and `llama3.2:1b` itself can tool-call
+  fine.** Root-caused (2026-07-26): confirmed directly against LiteLLM
+  (`POST /v1/chat/completions` with a `tools` array and `tool_choice: auto`) that
+  `ollama/llama3.2:1b` returns a proper `finish_reason: tool_calls` response -- the model
+  and the LiteLLM/Ollama hop are not the problem. The actual cause is architectural, found
+  by reading LibreChat's own source in the running container: MCP tools (and the
+  `ephemeralAgent` tool-attachment mechanism behind the composer's tools/wrench icon) are
+  only wired into `api/server/controllers/agents/client.js` (`isAgentsEndpoint`/
+  `loadAgentTools` in `api/server/services/Endpoints/agents/initialize.js`) -- the plain
+  `endpoints.custom` chat path (what a bare "LiteLLM"/"Ollama-Direct" conversation uses)
+  never attaches tools to the completion request at all, regardless of what's registered
+  under `mcpServers`. Registering an MCP server in `librechat.yaml` only makes it
+  *available* to attach; nothing calls it automatically. To actually exercise `rag_search`
+  end to end, either (a) attach it via the message composer's tools icon for a one-off
+  ephemeral-agent turn, or (b) create a real Agent (Agent Builder, any provider --
+  `allowedProviders` has no default restriction) with `llama3.2:1b` as the model and
+  `rag_search` attached as a tool, then chat through that Agent instead of the raw custom
+  endpoint. Not yet exercised in the actual browser UI -- this is confirmed from source
+  and the direct LiteLLM tool-call test, not a live click-through.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This
