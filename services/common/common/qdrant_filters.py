@@ -10,7 +10,7 @@ from __future__ import annotations
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from .claims import UserClaims
-from .metadata import ALL_AUTHENTICATED_ACCESS_SCOPE
+from .metadata import ALL_AUTHENTICATED_ACCESS_SCOPE, NO_RELEASABILITY_RESTRICTION
 
 
 def build_access_filter(
@@ -35,7 +35,8 @@ def build_access_filter(
                 key="classification", match=MatchAny(any=allowed_classifications)
             ),
             FieldCondition(
-                key="releasability", match=MatchAny(any=claims.releasability)
+                key="releasability",
+                match=MatchAny(any=[NO_RELEASABILITY_RESTRICTION, *claims.releasability]),
             ),
             FieldCondition(key="access_scope", match=MatchAny(any=scope_values)),
         ]

@@ -69,7 +69,7 @@ These apply to every component in this project, not just the ones explicitly nam
 - FR-17: Metadata fields are structured and validated (controlled vocabularies / dropdowns for Classification and Releasability), not free text, to prevent tagging drift.
 - FR-18: The Classification and Releasability values offered to a user at upload are constrained to what their authenticated OIDC claims authorize — a user cannot select, and the UI should not even display, a value above their own cleared level. This is a UI-level guardrail; FR-26/6.1 covers the non-bypassable enforcement.
 - FR-19: Identity-linked fields (Owner/POC, uploading organization) auto-populate from the authenticated user's OIDC claims rather than free-text entry, and are not editable by the uploader.
-- FR-20: Every document carries exactly one Classification value and one Releasability value, each chosen from the admin-configurable controlled lists in Section 6.3 — all of a document's chunks inherit that single pair; there is no mixed-sensitivity or chunk-level override.
+- FR-20: Every document carries exactly one Classification value and one or more Releasability values, each chosen from the admin-configurable controlled lists in Section 6.3 — all of a document's chunks inherit that same Classification/Releasability; there is no mixed-sensitivity or chunk-level override. A document is retrievable to a user if any one of its Releasability values is either the reserved NONE (not-set) value or a value that user holds.
 - FR-21: Metadata must be visible to end users in retrieval results (e.g., a citation shows source, classification, and releasability alongside the answer).
 - FR-22: Support document-level access scoping by Organization, Group, and individual User, independent of and in addition to Classification/Releasability (see Section 6.3's Access scope field) — a document can be restricted to one or more orgs/groups/users, not just gated by classification.
 - FR-23: Provide a reserved `ALL_AUTHENTICATED` access-scope value that makes a document visible to every authenticated user regardless of Org/Group/User membership, without bypassing Classification/Releasability filtering. (Named `ALL_AUTHENTICATED`, not `PUBLIC`, precisely so it can't be misread as "publicly releasable" — see Section 11's Adopted list.)
@@ -125,7 +125,7 @@ Starting point for discussion. Keycloak can issue any of these as custom claims 
 | Claim | Purpose | Example value |
 |---|---|---|
 | `clearance` (or equivalent) | Max Classification level the user is cleared for; caps the tagging dropdown (FR-18), the curator's approval authority (FR-14), and the query-time filter (FR-26) | `SECRET` |
-| `releasability` | Releasability caveats the user is authorized for | `REL TO USA/FVEY` |
+| `releasability` | Releasability caveats the user is authorized for | `["FVEY", "NATO"]` |
 | `groups` (or equivalent) | Org/group memberships used for document-level access scoping (FR-22/FR-23) — a user's query filter includes any document scoped to a group they belong to, their own user ID, or `ALL_AUTHENTICATED` | `["USAREUR-AF", "Signal-Corps"]` |
 | `rag_roles` | Function roles (`rag-ingest`, `rag-query`) plus org-scoped curator grants, encoded as `rag-curate:<org>` entries — see below | `["rag-ingest", "rag-query", "rag-curate:USAREUR-AF"]` |
 | `org`/`unit` | Auto-populates Owner/POC and supports Program/community filtering (FR-19) | `USAREUR-AF` |
@@ -136,12 +136,12 @@ Starting point for discussion. Keycloak can issue any of these as custom claims 
 Keycloak resolves the technical question of *whether* these claims can exist. What's still open is *who maintains the values* day to day — i.e., who in Keycloak's admin console keeps each user's `clearance`, `releasability`, `groups`, and per-org curator role attributes current as people's assignments change (see Section 8).
 
 ### 6.3 Proposed Metadata Schema (for ingestion tagging)
-This is a starting point for discussion, modeled on standard DoD document marking practice (CAPCO-style banner fields) — not a final schema. Classification and Releasability are each a **single value per document** (no multi-select, no chunk-level override), chosen from lists an admin maintains, not hardcoded into the application:
+This is a starting point for discussion, modeled on standard DoD document marking practice (CAPCO-style banner fields) — not a final schema. Classification is a **single value per document**; Releasability is **one or more values per document** (comma-delimited when rendered, e.g. "REL TO NATO, FVEY") — neither has a chunk-level override — chosen from lists an admin maintains, not hardcoded into the application:
 
 | Field | Example values | Required |
 |---|---|---|
-| Classification | Single value from an admin-configurable, ranked list — e.g., UNCLASSIFIED < CUI < CONFIDENTIAL < SECRET < TOP SECRET *(configure to the actual network's accreditation level; the rank ordering is what lets FR-18/FR-26 compare "at or below the user's cleared level")* | Yes |
-| Releasability | Single value from an admin-configurable list — e.g., NOFORN, REL TO USA/FVEY, REL TO NATO | Yes |
+| Classification | Single value from an admin-configurable, ranked list — e.g., UNCLASSIFIED < CUI < SECRET *(configure to the actual network's accreditation level; the rank ordering is what lets FR-18/FR-26 compare "at or below the user's cleared level")* | Yes |
+| Releasability | One or more values from an admin-configurable list — e.g., NONE (not set), NOFORN, NATO, FVEY — a document tagged with more than one is releasable to any of them | Yes |
 | Access scope | One or more of: specific Organization(s), Group(s), User(s), or the reserved value `ALL_AUTHENTICATED` (visible to every authenticated user, still subject to Classification/Releasability) | Yes |
 | Status | `pending_review`, `approved`, `rejected` — set by the system/curator, not the uploader (Section 4.2) | System-managed |
 | Caveats/SCI controls | Per local guidance | If applicable |
@@ -151,7 +151,7 @@ This is a starting point for discussion, modeled on standard DoD document markin
 | Effective date / review date | Date | Recommended |
 | Owner/POC | Uploading org or individual | Recommended |
 
-Access scope and Classification/Releasability are independent dimensions that both apply: a document must pass *both* checks to be retrievable — e.g., a SECRET/REL TO USA/FVEY document scoped to the "Signal Corps" group is only visible to Signal Corps users who are also cleared to that classification and releasability. `ALL_AUTHENTICATED` only removes the Org/Group/User restriction, never the Classification/Releasability one, and `approved` status is required regardless of scope (Section 4.2).
+Access scope and Classification/Releasability are independent dimensions that both apply: a document must pass *both* checks to be retrievable — e.g., a SECRET/REL TO NATO, FVEY document scoped to the "Signal Corps" group is only visible to Signal Corps users who are also cleared to that classification and hold at least one of its releasability values. `ALL_AUTHENTICATED` only removes the Org/Group/User restriction, never the Classification/Releasability one, and `approved` status is required regardless of scope (Section 4.2).
 
 An admin-facing configuration screen (or config table) should own the Classification and Releasability lists — adding a new value, retiring one, or changing the Classification rank order should not require a code change or redeploy.
 

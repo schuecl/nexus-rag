@@ -161,7 +161,7 @@ environment.**
 | `alice-ingest` | `rag-ingest` | CUI | USAREUR-AF | ingest-only |
 | `bob-query` | `rag-query` | SECRET | USAREUR-AF | query-only |
 | `carol-curator` | `rag-query`, `rag-curate:USAREUR-AF` | SECRET | USAREUR-AF | curator scoped to one org |
-| `dave-admin` | all roles + both curator orgs | TOP SECRET | USAREUR-AF | admin |
+| `dave-admin` | all roles + both curator orgs | SECRET | USAREUR-AF | admin |
 
 ## Getting a token for API testing (dev-only password grant)
 
@@ -201,7 +201,7 @@ automated or for testing with your own file.
      -H "Authorization: Bearer $TOKEN" \
      -F file=@/path/to/some.pdf \
      -F classification=CUI \
-     -F 'releasability=REL TO USA/FVEY' \
+     -F 'releasability=["FVEY"]' \
      -F 'access_scope=["USAREUR-AF"]' \
      -F source_originator="Test Org" \
      -F doc_type="SOP"

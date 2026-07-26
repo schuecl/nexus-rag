@@ -10,6 +10,7 @@ the other.
 
 from __future__ import annotations
 
+from .metadata import releasability_authorized
 from .models import Document
 
 
@@ -42,7 +43,7 @@ def validate_supersede_target(
         errors.append(
             "target document's classification is above the submitter's cleared level"
         )
-    if old_doc.releasability not in user_releasability:
-        errors.append("submitter does not hold the target document's releasability value")
+    if not releasability_authorized(old_doc.releasability, user_releasability):
+        errors.append("submitter does not hold one or more of the target document's releasability values")
     if errors:
         raise SupersedeValidationError(errors)

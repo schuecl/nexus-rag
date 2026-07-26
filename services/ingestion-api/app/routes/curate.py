@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from app.deps import allowed_classifications, require_curator, verify_csrf
 from common.db import get_session
+from common.metadata import releasability_authorized
 from common.models import AuditLogEntry, Document, Notification
 from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -56,13 +57,13 @@ def _check_curator_authority(user, doc: Document, session: Session) -> None:
             "cannot approve a document above your own cleared level",
         )
     # FR-14.1: "by clearance/releasability, same as FR-18" -- a curator who
-    # doesn't hold the document's releasability value can't publish it,
-    # mirroring validate_against_claims' uploader-side check exactly.
-    if doc.releasability not in user.releasability:
+    # doesn't hold one of the document's releasability values can't publish
+    # it, mirroring validate_against_claims' uploader-side check exactly.
+    if not releasability_authorized(doc.releasability, user.releasability):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            f"cannot approve a document with releasability value '{doc.releasability}' "
-            "you do not hold",
+            f"cannot approve a document with releasability values {doc.releasability}, "
+            "one or more of which you do not hold",
         )
 
 
@@ -114,7 +115,7 @@ def _execute_supersede(user, old_doc: Document, new_doc: Document, session: Sess
 
 class Corrections(BaseModel):
     classification: str | None = None
-    releasability: str | None = None  # FR-20/Section 6.3: single value
+    releasability: list[str] | None = None  # FR-20/Section 6.3: one or more values
     access_scope: list[str] | None = None
 
 

@@ -13,6 +13,19 @@ from pydantic import BaseModel, Field, field_validator
 # group/user membership.
 ALL_AUTHENTICATED_ACCESS_SCOPE = "ALL_AUTHENTICATED"
 
+# FR-20/Section 6.3: the "not set" Releasability choice -- most documents carry
+# no coalition-releasability caveat at all, and that's a distinct, explicit
+# state from actually holding a caveat like NOFORN/NATO/FVEY. Modeled as a
+# regular admin-configurable ReleasabilityValue (see main.py's
+# DEFAULT_RELEASABILITY) rather than a nullable/empty-list column so the "one
+# or more Releasability values per document" invariant never has to
+# special-case NULL/empty. Every uploader may assign it regardless of their
+# own held releasability claims (see releasability_authorized below), and
+# every querying user can see it regardless of their own claims (see
+# qdrant_filters.build_access_filter) -- unlike NOFORN/NATO/FVEY, it isn't a
+# caveat that gates on coalition membership.
+NO_RELEASABILITY_RESTRICTION = "NONE"
+
 
 class DocumentMetadataIn(BaseModel):
     """What an uploader submits at ingest time (FR-2). Classification/Releasability
@@ -20,9 +33,10 @@ class DocumentMetadataIn(BaseModel):
     below -- this model alone does not enforce that, since it has no claims context."""
 
     classification: str
-    # FR-20/Section 6.3: exactly one Releasability value per document (no
-    # multi-select) -- unlike access_scope below, which is "one or more".
-    releasability: str = Field(min_length=1)
+    # FR-20/Section 6.3: one or more Releasability values per document, same
+    # "one or more" cardinality as access_scope below -- e.g. ["NATO", "FVEY"]
+    # for a document releasable to either coalition.
+    releasability: list[str] = Field(min_length=1)
     access_scope: list[str] = Field(min_length=1)
     source_originator: str
     doc_type: str
@@ -49,6 +63,16 @@ class MetadataValidationError(Exception):
         super().__init__("; ".join(errors))
 
 
+def releasability_authorized(values: list[str], held: list[str]) -> bool:
+    """True iff every Releasability value in `values` is either
+    NO_RELEASABILITY_RESTRICTION or one `held` actually holds -- shared by
+    upload-time (validate_against_claims), curator-approval-time
+    (app/routes/curate.py's _check_curator_authority), and supersede-target
+    (versioning.validate_supersede_target) checks, so a multi-value
+    Releasability is authorized the same way everywhere."""
+    return all(value == NO_RELEASABILITY_RESTRICTION or value in held for value in values)
+
+
 def validate_against_claims(
     metadata: DocumentMetadataIn,
     *,
@@ -56,7 +80,7 @@ def validate_against_claims(
     user_releasability: list[str],
 ) -> None:
     """Server-side enforcement of FR-18: an uploader may only assign a
-    Classification at or below their clearance, and a Releasability value they
+    Classification at or below their clearance, and Releasability values they
     themselves hold -- never just hidden in the UI, always re-checked here."""
     errors = []
     if metadata.classification not in allowed_classifications:
@@ -64,9 +88,10 @@ def validate_against_claims(
             f"classification '{metadata.classification}' is above the submitter's "
             "cleared level"
         )
-    if metadata.releasability not in user_releasability:
+    if not releasability_authorized(metadata.releasability, user_releasability):
         errors.append(
-            f"releasability value '{metadata.releasability}' is not held by the submitter"
+            f"releasability values {metadata.releasability} include one or more "
+            "not held by the submitter"
         )
     if errors:
         raise MetadataValidationError(errors)

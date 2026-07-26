@@ -51,10 +51,13 @@ class Document(SQLModel, table=True):
     owner_org: str
 
     classification: str
-    # FR-20/Section 6.3: exactly one Releasability value per document (no
-    # multi-select, no chunk-level override) -- not a list, unlike
-    # access_scope below, which is explicitly "one or more" per Section 6.3.
-    releasability: str
+    # FR-20/Section 6.3: one or more Releasability values per document (no
+    # chunk-level override) -- e.g. ["NATO", "FVEY"] renders as "REL TO NATO,
+    # FVEY". A document is visible to a querying user if any one of these
+    # values is either NO_RELEASABILITY_RESTRICTION or held by that user (see
+    # qdrant_filters.build_access_filter) -- same "any element in common"
+    # semantics as access_scope below, just a different vocabulary.
+    releasability: list[str] = Field(sa_column=Column(JSON))
     access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "ALL_AUTHENTICATED"
     source_originator: str
     doc_type: str

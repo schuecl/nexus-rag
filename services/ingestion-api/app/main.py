@@ -7,6 +7,7 @@ from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
 from common.job_queue import ensure_stream, get_nats_connection
+from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -16,11 +17,13 @@ from sqlmodel import Session, select
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),
     ("CUI", 1),
-    ("CONFIDENTIAL", 2),
-    ("SECRET", 3),
-    ("TOP SECRET", 4),
+    ("SECRET", 2),
 ]
-DEFAULT_RELEASABILITY = ["NOFORN", "REL TO USA/FVEY", "REL TO NATO"]
+# NO_RELEASABILITY_RESTRICTION (common/metadata.py) must stay first in this
+# controlled vocabulary so it's the default-selected <option> on the upload
+# form -- the un-set state, not a coalition caveat, is what most documents
+# should carry.
+DEFAULT_RELEASABILITY = [NO_RELEASABILITY_RESTRICTION, "NOFORN", "NATO", "FVEY"]
 
 
 def _seed_defaults() -> None:
@@ -87,6 +90,7 @@ def _live_controlled_vocab(session: Session) -> dict:
     return {
         "classifications": [(c.value, c.rank) for c in classifications],
         "releasability": [r.value for r in releasability],
+        "no_releasability_restriction": NO_RELEASABILITY_RESTRICTION,
     }
 
 

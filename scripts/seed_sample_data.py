@@ -46,7 +46,7 @@ def submit(
     text: str,
     *,
     classification: str,
-    releasability: str,
+    releasability: list[str],
     access_scope: list[str],
     doc_type: str = "SOP",
     source_originator: str = "Sample Data",
@@ -54,7 +54,7 @@ def submit(
 ) -> dict:
     data = {
         "classification": classification,
-        "releasability": releasability,
+        "releasability": json.dumps(releasability),
         "access_scope": json.dumps(access_scope),
         "source_originator": source_originator,
         "doc_type": doc_type,
@@ -125,7 +125,7 @@ def main() -> None:
 
     alice = get_token("alice-ingest")  # rag-ingest, CUI
     carol = get_token("carol-curator")  # rag-query + rag-curate:USAREUR-AF, SECRET
-    dave = get_token("dave-admin")  # all roles, TOP SECRET
+    dave = get_token("dave-admin")  # all roles, SECRET
 
     seeded: list[tuple[str, str, str]] = []
 
@@ -136,12 +136,12 @@ def main() -> None:
         "starting next month. Alternate dining options will be posted on "
         "the intranet.",
         classification="UNCLASSIFIED",
-        releasability="REL TO USA/FVEY",
+        releasability=["NONE"],
         access_scope=["ALL_AUTHENTICATED"],
         doc_type="Notice",
     )
     approve(carol, d["id"])
-    seeded.append(("public-notice.md", "approved", "UNCLASSIFIED / ALL_AUTHENTICATED"))
+    seeded.append(("public-notice.md", "approved", "UNCLASSIFIED / NONE / ALL_AUTHENTICATED"))
 
     d = submit(
         alice,
@@ -150,7 +150,7 @@ def main() -> None:
         "contain a mix of uppercase, lowercase, and numeric characters. "
         "Reused passwords from the last 12 rotations are rejected.",
         classification="CUI",
-        releasability="REL TO USA/FVEY",
+        releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
     approve(carol, d["id"])
@@ -162,7 +162,7 @@ def main() -> None:
         "# Draft Travel Policy\n\nThis document is still under review and "
         "covers TDY reimbursement procedures for temporary duty travel.",
         classification="CUI",
-        releasability="REL TO USA/FVEY",
+        releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
     seeded.append(("draft-travel-policy.md", "pending_review (left unreviewed)", "CUI / USAREUR-AF"))
@@ -173,7 +173,7 @@ def main() -> None:
         "# VPN Setup Guide (Draft)\n\nThis guide references a VPN client "
         "that has since been deprecated and should not be used.",
         classification="CUI",
-        releasability="REL TO USA/FVEY",
+        releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
     reject(carol, d["id"], "References a deprecated VPN client; needs rewrite before publication.")
@@ -186,11 +186,11 @@ def main() -> None:
         "the Signal Corps duty officer must be notified within 15 minutes "
         "and the affected segment isolated.",
         classification="SECRET",
-        releasability="REL TO USA/FVEY",
+        releasability=["NATO", "FVEY"],  # demonstrates a multi-value Releasability
         access_scope=["Signal-Corps"],
     )
     approve(carol, d["id"])
-    seeded.append(("incident-response-plan.md", "approved", "SECRET / Signal-Corps"))
+    seeded.append(("incident-response-plan.md", "approved", "SECRET / NATO+FVEY / Signal-Corps"))
 
     d_v1 = submit(
         alice,
@@ -198,7 +198,7 @@ def main() -> None:
         "# Network Access SOP (v1)\n\nVPN access requires a hardware token "
         "and manager approval.",
         classification="CUI",
-        releasability="REL TO USA/FVEY",
+        releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
     approve(carol, d_v1["id"])
@@ -209,7 +209,7 @@ def main() -> None:
         "manager approval, and completion of the annual security awareness "
         "course.",
         classification="CUI",
-        releasability="REL TO USA/FVEY",
+        releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
         supersedes=d_v1["id"],
     )

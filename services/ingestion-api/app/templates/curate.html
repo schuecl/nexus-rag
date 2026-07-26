@@ -30,6 +30,15 @@ function options(values, selected) {
   return all.map(v => `<option value="${v}"${v === selected ? ' selected' : ''}>${v}</option>`).join('');
 }
 
+function multiOptions(values, selectedValues) {
+  // Same retired-value guard as options() above, but for a <select multiple>
+  // whose current value is a list (Releasability, FR-20/Section 6.3) rather
+  // than a single string.
+  const missing = selectedValues.filter(v => !values.includes(v));
+  const all = [...values, ...missing];
+  return all.map(v => `<option value="${v}"${selectedValues.includes(v) ? ' selected' : ''}>${v}</option>`).join('');
+}
+
 async function loadQueue() {
   const res = await fetch('/curate/queue', { headers: authHeaders() });
   const queueEl = document.getElementById('queue');
@@ -56,8 +65,8 @@ async function loadQueue() {
           <label>Classification
             <select id="classification-${doc.id}">${options(CLASSIFICATIONS, doc.classification)}</select>
           </label>
-          <label>Releasability
-            <select id="releasability-${doc.id}">${options(RELEASABILITY, doc.releasability)}</select>
+          <label>Releasability <span class="hint">(ctrl/cmd-click for more than one)</span>
+            <select id="releasability-${doc.id}" multiple>${multiOptions(RELEASABILITY, doc.releasability)}</select>
           </label>
           <label>Access scope <span class="hint">(comma-separated)</span>
             <input type="text" id="access_scope-${doc.id}" value="${doc.access_scope.join(', ')}" />
@@ -77,12 +86,13 @@ function readCorrections(id, doc) {
   // uploader originally submitted -- keeps the audit log (FR-16) meaningful
   // (null when the curator approved as-is, not a no-op "correction" every time).
   const classification = document.getElementById(`classification-${id}`).value;
-  const releasability = document.getElementById(`releasability-${id}`).value;
+  const releasability = Array.from(document.getElementById(`releasability-${id}`).selectedOptions)
+    .map(o => o.value);
   const accessScope = document.getElementById(`access_scope-${id}`).value
     .split(',').map(s => s.trim()).filter(Boolean);
   const corrections = {};
   if (classification !== doc.classification) corrections.classification = classification;
-  if (releasability !== doc.releasability) corrections.releasability = releasability;
+  if (JSON.stringify(releasability) !== JSON.stringify(doc.releasability)) corrections.releasability = releasability;
   if (JSON.stringify(accessScope) !== JSON.stringify(doc.access_scope)) corrections.access_scope = accessScope;
   return Object.keys(corrections).length ? corrections : null;
 }

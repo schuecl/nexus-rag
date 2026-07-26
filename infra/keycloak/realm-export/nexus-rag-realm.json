@@ -248,7 +248,7 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["CUI"],
-        "releasability": ["REL TO USA/FVEY"],
+        "releasability": ["FVEY"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
@@ -264,7 +264,7 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["SECRET"],
-        "releasability": ["REL TO USA/FVEY", "REL TO NATO"],
+        "releasability": ["FVEY", "NATO"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
@@ -280,7 +280,7 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["SECRET"],
-        "releasability": ["REL TO USA/FVEY", "REL TO NATO"],
+        "releasability": ["FVEY", "NATO"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
@@ -295,8 +295,8 @@
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
-        "clearance": ["TOP SECRET"],
-        "releasability": ["REL TO USA/FVEY", "REL TO NATO", "NOFORN"],
+        "clearance": ["SECRET"],
+        "releasability": ["FVEY", "NATO", "NOFORN"],
         "groups": ["USAREUR-AF", "Signal-Corps"],
         "org": ["USAREUR-AF"]
       },
