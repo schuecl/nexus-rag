@@ -13,6 +13,21 @@ cache: true
 mcpSettings:
   allowedDomains:
     - "http://orchestration-mcp:8002"
+    # Issue #99 follow-up (2026-07-26): separately needed for the rag MCP
+    # server's OAuth login (below) -- LibreChat refused to redirect to
+    # Keycloak at all ("OAuth authorization_url resolves to a private IP
+    # address"), because `keycloak` resolves to a private Docker-network IP
+    # from this container's own DNS, even though the *browser* can reach it
+    # fine via the /etc/hosts alias from issue #75. Tried `allowedAddresses`
+    # first (host:port pairs, meant as exactly this kind of private-IP SSRF
+    # exemption per packages/data-provider/src/config.ts's
+    # allowedAddressesSchema) -- didn't work. Read packages/api's actual
+    # isOAuthUrlAllowed(): once `allowedDomains` is non-empty (it already is,
+    # for the entry above), it becomes the sole authority for the OAuth check
+    # and `allowedAddresses` is ignored outright ("letting it short-circuit
+    # here would broaden a strict admin-configured OAuth scope", per that
+    # function's own comment) -- has to go in allowedDomains instead.
+    - "https://keycloak:8443"
 
 endpoints:
   custom:
@@ -55,33 +70,77 @@ mcpServers:
   rag:
     type: streamable-http
     url: "http://orchestration-mcp:8002/mcp"
-    # Section 7.7: OBO token exchange was the intended identity-propagation
-    # mode (exchanging the user's LibreChat session token for one scoped to
-    # this MCP server's audience, the rag-app client, rather than forwarding
-    # the whole-session token) -- but a real end-to-end run (bob-query,
-    # 2026-07-26) showed LibreChat's actual OboTokenService calls Keycloak's
-    # token endpoint with grant_type=urn:ietf:params:oauth:grant-type:
-    # jwt-bearer (RFC 7523), not grant_type=token-exchange (RFC 8693) as the
-    # realm's standard.token.exchange.enabled attribute (on the librechat
-    # client) was configured for and had been manually verified against.
-    # Keycloak 26.7's RFC 7523 support ("JWT Authorization Grant", new in
-    # 26.5) is built for external-IdP identity chaining -- it needs an
-    # Identity Provider registered and linked on the client, and it's
-    # undocumented/unverified whether a same-realm self-issued token (our
-    # case) is even a supported source for it. Rather than chase that,
-    # switched to addUserJwtToken: forwards the raw LibreChat session token
-    # instead of exchanging it. This still passes orchestration-mcp's
-    # audience check: Keycloak's nexus-rag-claims client scope (shared by
-    # both librechat and rag-app) stamps aud=rag-app onto every
-    # librechat-issued token via its audience mapper regardless of azp, and
-    # rag_search (services/orchestration-mcp/app/rag_search.py via
-    # common.claims.parse_claims) only checks aud, not azp. Trade-off: the
-    # MCP server now sees the user's full librechat-scoped token rather than
-    # one narrowed to the rag-app audience by an actual exchange -- revisit
-    # if/when Keycloak's same-realm JWT Authorization Grant story is clearer.
-    addUserJwtToken: true
-    # orchestration-mcp's rag_search tool reads the bearer token from the
-    # forwarded Authorization header on this connection (verified against the
-    # real MCP client SDK, see services/orchestration-mcp/app/server.py) --
-    # whatever LibreChat puts there per addUserJwtToken above reaches it
-    # correctly.
+    # Per-user OAuth login for this MCP server specifically (RFC 6749
+    # authorization_code -- LibreChat prompts a "Connect" step and redirects
+    # through a real Keycloak login the first time a user invokes the tool,
+    # then stores/refreshes the resulting token per user), not LibreChat's
+    # own OIDC login above and not OBO. Two things were tried and ruled out
+    # first (issue #99 follow-up, 2026-07-26):
+    #
+    # 1. `addUserJwtToken: true` (forward the user's raw LibreChat session
+    #    token as-is): looked like it worked from reading the code, but a
+    #    live capture (tcpdump on orchestration-mcp's own port, inspecting
+    #    the actual POST /mcp request LibreChat sent) showed no Authorization
+    #    header at all. Grepped the installed LibreChat build's actual
+    #    StreamableHTTPOptionsSchema (packages/data-provider) and confirmed
+    #    `addUserJwtToken` isn't a recognized field in this version at all --
+    #    Zod silently drops unknown keys, so this had been a no-op the whole
+    #    time, not a working mechanism that broke later.
+    # 2. `obo` (RFC 7523 jwt-bearer exchange): LibreChat's OboTokenService
+    #    does call grant_type=jwt-bearer for real (confirmed via an actual
+    #    failing request), but Keycloak 26.7's implementation requires the
+    #    assertion's issuer to be a registered, linked external Identity
+    #    Provider, and the assertion's `aud` to equal Keycloak's own issuer/
+    #    token-endpoint URL -- neither fits librechat and rag-app being two
+    #    clients in the same realm on the same Keycloak instance (confirmed
+    #    against Keycloak's own docs, not assumption). Making this fit would
+    #    mean a self-referential Identity-Provider setup plus reworking the
+    #    audience scheme the existing claims check depends on -- not a small
+    #    tweak, and swapping to a different self-hosted IdP (checked
+    #    Authentik, Ory Hydra, Zitadel) doesn't sidestep it either, since the
+    #    grant_type LibreChat sends is fixed regardless of which IdP is
+    #    behind it.
+    #
+    # OAuth login sidesteps both: it's a normal authorization_code flow
+    # against Keycloak (which is what Keycloak is for), so the resulting
+    # token is issued exactly like any other Keycloak token and passes
+    # orchestration-mcp's existing signature/audience check
+    # (common.claims.parse_claims) unmodified. Reuses the existing rag-app
+    # client rather than provisioning a new one -- already confidential,
+    # already carries the nexus-rag-claims scope the access filter needs.
+    #
+    # startup: false is required, not optional, here: an OAuth-gated server
+    # is inherently per-user, so it can't be part of LibreChat's shared
+    # app-level startup connection pool the way the old token-forwarding
+    # config could be.
+    startup: false
+    # requiresOAuth defaults to auto-detection, which failed here: confirmed
+    # live that LibreChat connected to orchestration-mcp with no OAuth
+    # handshake attempted at all ("OAuth Required: false" logged, then
+    # "Connection successfully established" with no redirect). Root cause --
+    # our MCP server doesn't enforce auth at the transport level (no 401/
+    # WWW-Authenticate challenge on connect; the Authorization check only
+    # happens inside the rag_search tool call itself, see app/server.py), so
+    # auto-detection never sees a signal that OAuth is needed and just
+    # proceeds unauthenticated. Forcing it explicitly bypasses that
+    # detection instead of fixing the server to challenge on connect.
+    requiresOAuth: true
+    oauth:
+      # Browser-facing: matches OPENID_ISSUER's host/port below (the
+      # /etc/hosts alias + trusted dev cert from issue #75 already cover
+      # this hostname for the browser).
+      authorization_url: "https://keycloak:8443/realms/nexus-rag/protocol/openid-connect/auth"
+      # Backend-to-backend (LibreChat's Node server calls this directly,
+      # not the browser) -- same trusted host as above.
+      token_url: "https://keycloak:8443/realms/nexus-rag/protocol/openid-connect/token"
+      client_id: rag-app
+      # ${VAR} substitution is NOT supported for oauth.client_secret --
+      # confirmed from the bundled data-provider schema: only
+      # authorization_url/token_url/redirect_uri/revocation_endpoint get
+      # extractEnvVariable(); client_id/client_secret/scope don't. Has to be
+      # a literal value -- matches the same dev-only secret already
+      # hardcoded for this client in infra/keycloak/realm-export and
+      # docker-compose.yml's own default (never a real secret past
+      # throwaway local dev).
+      client_secret: dev-rag-app-secret
+      scope: "openid profile email"
