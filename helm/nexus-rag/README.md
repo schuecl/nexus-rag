@@ -69,6 +69,42 @@ doesn't render cleanly as a bug to fix, not a surprise.
   `.secretKey`, containing a token both `ingestion-api` (publisher) and
   `ingestion-worker` (consumer) authenticate to NATS with (NFR-11)
 
+## Network policy (issue #110)
+
+`networkPolicy.enabled` defaults to **true**. Qdrant, NATS, the embedding
+service, and reranker-service then accept traffic only from the components
+that legitimately call them.
+
+This matters more than the usual defence-in-depth argument. `orchestration-mcp`
+is the only place FR-26 is enforced — it derives the access filter from the
+caller's claims and hands it to Qdrant, which has no notion of clearance and
+applies whatever filter it is given. Chunk payloads also hold the source text
+in cleartext, so anything that can reach Qdrant reads the whole corpus at every
+classification level without inverting an embedding. `reranker-service` is
+sharper still: it takes no credential at all and receives full chunk text, so
+reachability *is* authorization for it today.
+
+**Two values must be set or things will not work**, deliberately left empty
+rather than guessed:
+
+| Value | Consequence if unset |
+|---|---|
+| `networkPolicy.ingressControllerSelectors` | `ingestion-api` denies **all** ingress — the UI is unreachable |
+| `networkPolicy.mcpClients` | LibreChat's MCP calls are dropped; the ingestion UI's own `/search` page still works, so this can look healthy when it is not |
+
+A plausible-but-wrong default (say, assuming `ingress-nginx`) would silently
+grant access to the wrong namespace while appearing configured, which is worse
+than an obvious outage. `helm install` prints both warnings.
+
+`networkPolicy.denyEgressByDefault` is **off** by default: every custom service
+needs the external Postgres and Keycloak, and two also need the external object
+store, none of whose addresses this chart knows. Turning it on without
+populating `networkPolicy.egressAllow` will break the deployment.
+
+Finally: a NetworkPolicy is inert unless the cluster's CNI enforces it
+(Calico, Cilium, and Antrea do; some managed CNIs silently do not). Kubernetes
+reports no error either way — verify rather than assume.
+
 ## Install
 
 ```bash
