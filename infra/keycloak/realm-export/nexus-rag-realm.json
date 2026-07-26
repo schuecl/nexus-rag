@@ -54,7 +54,7 @@
     {
       "name": "nexus-rag-claims",
       "protocol": "openid-connect",
-      "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, releasability, groups, org, rag_roles",
+      "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, groups, org, rag_roles. Releasability isn't its own mapper -- it's derived app-side (common/claims.py) from rag-releasability:<value> entries in rag_roles below, the same client-role pattern as rag-curate:<org>.",
       "protocolMappers": [
         {
           "name": "clearance",
@@ -68,20 +68,6 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true",
             "multivalued": "false"
-          }
-        },
-        {
-          "name": "releasability",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-attribute-mapper",
-          "config": {
-            "user.attribute": "releasability",
-            "claim.name": "releasability",
-            "jsonType.label": "String",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "userinfo.token.claim": "true",
-            "multivalued": "true"
           }
         },
         {
@@ -233,7 +219,11 @@
         { "name": "rag-query", "description": "Can query the RAG pipeline (FR-24..FR-29)" },
         { "name": "rag-admin", "description": "Can maintain Classification/Releasability lists (C9)" },
         { "name": "rag-curate:USAREUR-AF", "description": "Curator authority for org USAREUR-AF (FR-12/FR-14)" },
-        { "name": "rag-curate:Signal-Corps", "description": "Curator authority for org Signal-Corps (FR-12/FR-14)" }
+        { "name": "rag-curate:Signal-Corps", "description": "Curator authority for org Signal-Corps (FR-12/FR-14)" },
+        { "name": "rag-releasability:NOFORN", "description": "Holds the NOFORN Releasability caveat (FR-18/FR-20)" },
+        { "name": "rag-releasability:USA", "description": "Holds the USA Releasability caveat (FR-18/FR-20)" },
+        { "name": "rag-releasability:NATO", "description": "Holds the NATO Releasability caveat (FR-18/FR-20)" },
+        { "name": "rag-releasability:FVEY", "description": "Holds the FVEY Releasability caveat (FR-18/FR-20)" }
       ]
     }
   },
@@ -248,11 +238,10 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["CUI"],
-        "releasability": ["FVEY"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
-      "clientRoles": { "rag-app": ["rag-ingest"] }
+      "clientRoles": { "rag-app": ["rag-ingest", "rag-releasability:FVEY"] }
     },
     {
       "username": "bob-query",
@@ -264,11 +253,10 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["SECRET"],
-        "releasability": ["FVEY", "NATO"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
-      "clientRoles": { "rag-app": ["rag-query"] }
+      "clientRoles": { "rag-app": ["rag-query", "rag-releasability:FVEY", "rag-releasability:NATO"] }
     },
     {
       "username": "carol-curator",
@@ -280,11 +268,17 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["SECRET"],
-        "releasability": ["FVEY", "NATO"],
         "groups": ["USAREUR-AF"],
         "org": ["USAREUR-AF"]
       },
-      "clientRoles": { "rag-app": ["rag-query", "rag-curate:USAREUR-AF"] }
+      "clientRoles": {
+        "rag-app": [
+          "rag-query",
+          "rag-curate:USAREUR-AF",
+          "rag-releasability:FVEY",
+          "rag-releasability:NATO"
+        ]
+      }
     },
     {
       "username": "dave-admin",
@@ -296,7 +290,6 @@
       "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
       "attributes": {
         "clearance": ["SECRET"],
-        "releasability": ["FVEY", "NATO", "NOFORN"],
         "groups": ["USAREUR-AF", "Signal-Corps"],
         "org": ["USAREUR-AF"]
       },
@@ -306,7 +299,11 @@
           "rag-query",
           "rag-admin",
           "rag-curate:USAREUR-AF",
-          "rag-curate:Signal-Corps"
+          "rag-curate:Signal-Corps",
+          "rag-releasability:NOFORN",
+          "rag-releasability:USA",
+          "rag-releasability:NATO",
+          "rag-releasability:FVEY"
         ]
       }
     }

@@ -156,12 +156,15 @@ once everything above is healthy.
 All dev-only, password `devpass123` for every account — **never reuse these in a real
 environment.**
 
-| Username | Roles | Clearance | Org | Purpose |
-|---|---|---|---|---|
-| `alice-ingest` | `rag-ingest` | CUI | USAREUR-AF | ingest-only |
-| `bob-query` | `rag-query` | SECRET | USAREUR-AF | query-only |
-| `carol-curator` | `rag-query`, `rag-curate:USAREUR-AF` | SECRET | USAREUR-AF | curator scoped to one org |
-| `dave-admin` | all roles + both curator orgs | SECRET | USAREUR-AF | admin |
+| Username | Roles | Clearance | Releasability | Org | Purpose |
+|---|---|---|---|---|---|
+| `alice-ingest` | `rag-ingest` | CUI | FVEY | USAREUR-AF | ingest-only |
+| `bob-query` | `rag-query` | SECRET | FVEY, NATO | USAREUR-AF | query-only |
+| `carol-curator` | `rag-query`, `rag-curate:USAREUR-AF` | SECRET | FVEY, NATO | USAREUR-AF | curator scoped to one org |
+| `dave-admin` | all roles + both curator orgs | SECRET | NOFORN, USA, NATO, FVEY | USAREUR-AF | admin |
+
+Releasability is granted via `rag-releasability:<value>` client roles (same convention as
+`rag-curate:<org>`), not a user attribute — see REQUIREMENTS.md Section 6.2.
 
 ## Getting a token for API testing (dev-only password grant)
 

@@ -15,6 +15,7 @@ from jwt import PyJWKClient
 from pydantic import BaseModel, Field
 
 RAG_CURATE_PREFIX = "rag-curate:"
+RAG_RELEASABILITY_PREFIX = "rag-releasability:"
 
 # Comma-separated list of `iss` claim values to accept. Not a hypothetical: in the
 # dev Compose stack, the same Keycloak instance is reachable -- and issues tokens
@@ -48,7 +49,6 @@ class UserClaims(BaseModel):
     sub: str
     preferred_username: str
     clearance: str
-    releasability: list[str] = Field(default_factory=list)
     groups: list[str] = Field(default_factory=list)
     org: str | None = None
     rag_roles: list[str] = Field(default_factory=list)
@@ -60,6 +60,22 @@ class UserClaims(BaseModel):
     @property
     def can_query(self) -> bool:
         return "rag-query" in self.rag_roles
+
+    @property
+    def releasability(self) -> list[str]:
+        # FR-18/FR-20: which Releasability values this user holds, derived from
+        # rag-releasability:<value> client roles -- the same rag_roles-prefix
+        # pattern curatable_orgs below uses for rag-curate:<org> -- rather than
+        # a free-text user attribute. Granting/revoking a caveat is then a
+        # discoverable, admin-console role assignment (mirroring how curator
+        # authority already works), not an attribute value a typo could
+        # silently get wrong with no validation against the admin-configurable
+        # ReleasabilityValue list (common/models.py).
+        return [
+            role[len(RAG_RELEASABILITY_PREFIX) :]
+            for role in self.rag_roles
+            if role.startswith(RAG_RELEASABILITY_PREFIX)
+        ]
 
     @property
     def curatable_orgs(self) -> list[str]:
@@ -100,7 +116,6 @@ def parse_claims(bearer_token: str) -> UserClaims:
         sub=payload["sub"],
         preferred_username=payload.get("preferred_username", payload["sub"]),
         clearance=payload.get("clearance", ""),
-        releasability=payload.get("releasability", []),
         groups=payload.get("groups", []),
         org=payload.get("org"),
         rag_roles=payload.get("rag_roles", []),
