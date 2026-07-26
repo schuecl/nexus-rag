@@ -20,14 +20,22 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app.deps import allowed_classifications, get_current_user, require_ingest, verify_csrf
+from app.deps import (
+    allowed_classifications,
+    get_current_user,
+    require_ingest,
+    require_purge,
+    verify_csrf,
+)
 from common.db import get_session
 from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
 from common.object_store import document_object_key, get_object_store
+from common.purge import PurgeError, purge_document
 from common.versioning import SupersedeValidationError, validate_supersede_target
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
@@ -224,3 +232,48 @@ def get_document(
     if doc is None or doc.uploader_sub != user.sub:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
     return doc
+
+
+class PurgeRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+@router.delete("/{doc_id}")
+def purge(
+    doc_id: uuid.UUID,
+    body: PurgeRequest,
+    user=Depends(require_purge),
+    session: Session = Depends(get_session),
+    _csrf=Depends(verify_csrf),
+):
+    """Issue #123: destroy a document's content in every store that holds it.
+
+    The remediation path for classification spillage. Until this existed a
+    mis-tagged document could be made unretrievable -- flip its status and the
+    FR-26 filter stops matching it -- but never destroyed: the original stayed
+    in the object store and the chunks stayed in Qdrant with their text in
+    cleartext.
+
+    Irreversible, and deliberately not scoped by ownership or org the way the
+    read routes are: a spill is usually discovered by someone other than the
+    uploader, and requiring the uploader's cooperation to remediate would be
+    the wrong control. Authority comes from the dedicated rag-purge role
+    instead (see deps.require_purge for why it is not rag-admin).
+
+    Returns the tombstone: the id and purged status survive so prior audit
+    entries still resolve, but every content-bearing field is scrubbed.
+    """
+    try:
+        return purge_document(
+            session,
+            doc_id,
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            reason=body.reason,
+        )
+    except PurgeError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        # A store failed mid-purge. The document is already non-retrievable and
+        # the operation is idempotent, so the actionable answer is "retry".
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

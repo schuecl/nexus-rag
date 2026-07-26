@@ -227,6 +227,26 @@ def require_admin(user: UserClaims = Depends(get_current_user)) -> UserClaims:
     return user
 
 
+def require_purge(user: UserClaims = Depends(get_current_user)) -> UserClaims:
+    """Issue #123: authority to destroy a document's content everywhere.
+
+    A dedicated role rather than reusing rag-admin, deliberately. rag-admin
+    today gates only the Classification/Releasability vocabulary routes and
+    grants no access to documents or queries at all -- a boundary this project
+    draws on purpose and that docs/governance.md states explicitly. Hanging
+    irreversible destruction off it would quietly widen the most privileged
+    role in the system into a data-touching one.
+
+    Separating it also means the two authorities can be held by different
+    people, which is the usual expectation for a destruction procedure: the
+    person who manages the tagging vocabulary is not automatically the person
+    who may erase evidence.
+    """
+    if "rag-purge" not in user.rag_roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-purge role")
+    return user
+
+
 def allowed_classifications(session: Session, clearance: str) -> list[str]:
     """Every Classification value at or below the user's clearance rank (FR-18)."""
     return _allowed_classifications(session, clearance)

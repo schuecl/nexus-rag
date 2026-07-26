@@ -5,17 +5,105 @@
   "registrationAllowed": false,
   "accessTokenLifespan": 900,
   "requiredActions": [
-    { "alias": "CONFIGURE_TOTP", "name": "Configure OTP", "providerId": "CONFIGURE_TOTP", "enabled": true, "defaultAction": false, "priority": 10, "config": {} },
-    { "alias": "TERMS_AND_CONDITIONS", "name": "Terms and Conditions", "providerId": "TERMS_AND_CONDITIONS", "enabled": false, "defaultAction": false, "priority": 20, "config": {} },
-    { "alias": "UPDATE_PASSWORD", "name": "Update Password", "providerId": "UPDATE_PASSWORD", "enabled": true, "defaultAction": false, "priority": 30, "config": {} },
-    { "alias": "UPDATE_PROFILE", "name": "Update Profile", "providerId": "UPDATE_PROFILE", "enabled": true, "defaultAction": false, "priority": 40, "config": {} },
-    { "alias": "VERIFY_EMAIL", "name": "Verify Email", "providerId": "VERIFY_EMAIL", "enabled": true, "defaultAction": false, "priority": 50, "config": {} },
-    { "alias": "delete_account", "name": "Delete Account", "providerId": "delete_account", "enabled": false, "defaultAction": false, "priority": 60, "config": {} },
-    { "alias": "webauthn-register", "name": "Webauthn Register", "providerId": "webauthn-register", "enabled": true, "defaultAction": false, "priority": 70, "config": {} },
-    { "alias": "webauthn-register-passwordless", "name": "Webauthn Register Passwordless", "providerId": "webauthn-register-passwordless", "enabled": true, "defaultAction": false, "priority": 80, "config": {} },
-    { "alias": "VERIFY_PROFILE", "name": "Verify Profile", "providerId": "VERIFY_PROFILE", "enabled": true, "defaultAction": false, "priority": 90, "config": {} },
-    { "alias": "delete_credential", "name": "Delete Credential", "providerId": "delete_credential", "enabled": true, "defaultAction": false, "priority": 100, "config": {} },
-    { "alias": "update_user_locale", "name": "Update User Locale", "providerId": "update_user_locale", "enabled": true, "defaultAction": false, "priority": 1000, "config": {} }
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 10,
+      "config": {}
+    },
+    {
+      "alias": "TERMS_AND_CONDITIONS",
+      "name": "Terms and Conditions",
+      "providerId": "TERMS_AND_CONDITIONS",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 20,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 30,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "providerId": "UPDATE_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 40,
+      "config": {}
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 50,
+      "config": {}
+    },
+    {
+      "alias": "delete_account",
+      "name": "Delete Account",
+      "providerId": "delete_account",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 60,
+      "config": {}
+    },
+    {
+      "alias": "webauthn-register",
+      "name": "Webauthn Register",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 70,
+      "config": {}
+    },
+    {
+      "alias": "webauthn-register-passwordless",
+      "name": "Webauthn Register Passwordless",
+      "providerId": "webauthn-register-passwordless",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 80,
+      "config": {}
+    },
+    {
+      "alias": "VERIFY_PROFILE",
+      "name": "Verify Profile",
+      "providerId": "VERIFY_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 90,
+      "config": {}
+    },
+    {
+      "alias": "delete_credential",
+      "name": "Delete Credential",
+      "providerId": "delete_credential",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 100,
+      "config": {}
+    },
+    {
+      "alias": "update_user_locale",
+      "name": "Update User Locale",
+      "providerId": "update_user_locale",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 1000,
+      "config": {}
+    }
   ],
   "clientScopes": [
     {
@@ -175,9 +263,18 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,
-      "redirectUris": ["*"],
-      "webOrigins": ["*"],
-      "defaultClientScopes": ["basic", "nexus-rag-claims", "profile", "email"]
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "nexus-rag-claims",
+        "profile",
+        "email"
+      ]
     },
     {
       "clientId": "librechat",
@@ -188,9 +285,18 @@
       "protocol": "openid-connect",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
-      "redirectUris": ["https://localhost:3080/oauth/openid/callback"],
-      "webOrigins": ["https://localhost:3080"],
-      "defaultClientScopes": ["basic", "nexus-rag-claims", "profile", "email"],
+      "redirectUris": [
+        "https://localhost:3080/oauth/openid/callback"
+      ],
+      "webOrigins": [
+        "https://localhost:3080"
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "nexus-rag-claims",
+        "profile",
+        "email"
+      ],
       "attributes": {
         "access.token.lifespan": "900",
         "use.refresh.tokens": "true",
@@ -201,18 +307,58 @@
   "roles": {
     "client": {
       "rag-app": [
-        { "name": "rag-ingest", "description": "Can submit documents (FR-1..FR-9)" },
-        { "name": "rag-query", "description": "Can query the RAG pipeline (FR-24..FR-29)" },
-        { "name": "rag-admin", "description": "Can maintain Classification/Releasability lists (C9)" },
-        { "name": "rag-curate:USAREUR-AF", "description": "Curator authority for org USAREUR-AF (FR-12/FR-14)" },
-        { "name": "rag-curate:Signal-Corps", "description": "Curator authority for org Signal-Corps (FR-12/FR-14)" },
-        { "name": "rag-clearance:UNCLASSIFIED", "description": "Cleared to Classification level UNCLASSIFIED (FR-18/FR-26)" },
-        { "name": "rag-clearance:CUI", "description": "Cleared to Classification level CUI (FR-18/FR-26)" },
-        { "name": "rag-clearance:SECRET", "description": "Cleared to Classification level SECRET (FR-18/FR-26)" },
-        { "name": "rag-releasability:NOFORN", "description": "Holds the NOFORN Releasability caveat (FR-18/FR-20)" },
-        { "name": "rag-releasability:USA", "description": "Holds the USA Releasability caveat (FR-18/FR-20)" },
-        { "name": "rag-releasability:NATO", "description": "Holds the NATO Releasability caveat (FR-18/FR-20)" },
-        { "name": "rag-releasability:FVEY", "description": "Holds the FVEY Releasability caveat (FR-18/FR-20)" }
+        {
+          "name": "rag-ingest",
+          "description": "Can submit documents (FR-1..FR-9)"
+        },
+        {
+          "name": "rag-query",
+          "description": "Can query the RAG pipeline (FR-24..FR-29)"
+        },
+        {
+          "name": "rag-admin",
+          "description": "Can maintain Classification/Releasability lists (C9)"
+        },
+        {
+          "name": "rag-curate:USAREUR-AF",
+          "description": "Curator authority for org USAREUR-AF (FR-12/FR-14)"
+        },
+        {
+          "name": "rag-curate:Signal-Corps",
+          "description": "Curator authority for org Signal-Corps (FR-12/FR-14)"
+        },
+        {
+          "name": "rag-clearance:UNCLASSIFIED",
+          "description": "Cleared to Classification level UNCLASSIFIED (FR-18/FR-26)"
+        },
+        {
+          "name": "rag-clearance:CUI",
+          "description": "Cleared to Classification level CUI (FR-18/FR-26)"
+        },
+        {
+          "name": "rag-clearance:SECRET",
+          "description": "Cleared to Classification level SECRET (FR-18/FR-26)"
+        },
+        {
+          "name": "rag-releasability:NOFORN",
+          "description": "Holds the NOFORN Releasability caveat (FR-18/FR-20)"
+        },
+        {
+          "name": "rag-releasability:USA",
+          "description": "Holds the USA Releasability caveat (FR-18/FR-20)"
+        },
+        {
+          "name": "rag-releasability:NATO",
+          "description": "Holds the NATO Releasability caveat (FR-18/FR-20)"
+        },
+        {
+          "name": "rag-releasability:FVEY",
+          "description": "Holds the FVEY Releasability caveat (FR-18/FR-20)"
+        },
+        {
+          "name": "rag-purge",
+          "description": "Issue #123: destroy a document's content in every store (Qdrant chunks, object-store original, Postgres row). Separate from rag-admin, which grants no data access."
+        }
       ]
     }
   },
@@ -224,12 +370,28 @@
       "lastName": "Ingest",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass123",
+          "temporary": false
+        }
+      ],
       "attributes": {
-        "groups": ["USAREUR-AF"],
-        "org": ["USAREUR-AF"]
+        "groups": [
+          "USAREUR-AF"
+        ],
+        "org": [
+          "USAREUR-AF"
+        ]
       },
-      "clientRoles": { "rag-app": ["rag-ingest", "rag-clearance:CUI", "rag-releasability:FVEY"] }
+      "clientRoles": {
+        "rag-app": [
+          "rag-ingest",
+          "rag-clearance:CUI",
+          "rag-releasability:FVEY"
+        ]
+      }
     },
     {
       "username": "bob-query",
@@ -238,10 +400,20 @@
       "lastName": "Query",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass123",
+          "temporary": false
+        }
+      ],
       "attributes": {
-        "groups": ["USAREUR-AF"],
-        "org": ["USAREUR-AF"]
+        "groups": [
+          "USAREUR-AF"
+        ],
+        "org": [
+          "USAREUR-AF"
+        ]
       },
       "clientRoles": {
         "rag-app": [
@@ -259,10 +431,20 @@
       "lastName": "Curator",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass123",
+          "temporary": false
+        }
+      ],
       "attributes": {
-        "groups": ["USAREUR-AF"],
-        "org": ["USAREUR-AF"]
+        "groups": [
+          "USAREUR-AF"
+        ],
+        "org": [
+          "USAREUR-AF"
+        ]
       },
       "clientRoles": {
         "rag-app": [
@@ -281,10 +463,21 @@
       "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "devpass123", "temporary": false }],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass123",
+          "temporary": false
+        }
+      ],
       "attributes": {
-        "groups": ["USAREUR-AF", "Signal-Corps"],
-        "org": ["USAREUR-AF"]
+        "groups": [
+          "USAREUR-AF",
+          "Signal-Corps"
+        ],
+        "org": [
+          "USAREUR-AF"
+        ]
       },
       "clientRoles": {
         "rag-app": [
@@ -297,7 +490,8 @@
           "rag-releasability:NOFORN",
           "rag-releasability:USA",
           "rag-releasability:NATO",
-          "rag-releasability:FVEY"
+          "rag-releasability:FVEY",
+          "rag-purge"
         ]
       }
     }
