@@ -133,8 +133,13 @@ implemented/mocked/live-verified convention described there.
   space-delimited string, not a JSON array; see `docs/dev-setup.md`). LibreChat now starts
   cleanly with this config, but the OBO token exchange itself still hasn't been exercised
   end to end (Keycloak's admin-console step above is still outstanding).
-- **Helm/production wiring for browser login** — the new OIDC client-secret/redirect-URI/
-  cookie-security env vars are dev Compose-only so far; see `docs/dev-setup.md`'s
+- **Helm/production wiring for browser login exists but is unrendered/unverified** — the
+  chart does wire `externalKeycloak.clientId`/`.clientSecret` and
+  `ingestionApi.oidcRedirectUri`/`.cookieSecure` through to the same OIDC login flow the
+  dev Compose stack uses (see `ARCHITECTURE.md` Section 4.4, `helm/nexus-rag/README.md`) —
+  it isn't dev-Compose-only. What's actually missing is verification: like the rest of the
+  hand-written chart, this specific wiring has never been run through `helm lint`/
+  `helm template --debug` against a real values override; see `docs/dev-setup.md`'s
   "Stubbed / TODO" list.
 - **A concrete PyKMIP integration for encryption at rest (NFR-6)** — REQUIREMENTS.md names
   it only as a candidate, with no integration point, key rotation policy, or scope
