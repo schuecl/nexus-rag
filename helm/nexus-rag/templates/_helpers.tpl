@@ -65,12 +65,12 @@ Pass a dict with "global" (the top-level .Values.global) and "image" (a componen
 {{- end -}}
 
 {{/*
-Pod-level securityContext for the three custom-built services (ingestion-api,
-orchestration-mcp, reranker-service). UID/GID 10001 is the fixed non-root
-user baked into services/*/Dockerfile -- not runtime-injected, so it has to
-match exactly. Not used by qdrant or embeddingService, which run upstream
-images (qdrant/qdrant, ollama/ollama) whose own user conventions this chart
-doesn't override.
+Pod-level securityContext for the four custom-built services (ingestion-api,
+ingestion-worker, orchestration-mcp, reranker-service). UID/GID 10001 is the
+fixed non-root user baked into each service's own Dockerfile -- not
+runtime-injected, so it has to match exactly. Not used by qdrant,
+embeddingService, or nats, which run upstream images (qdrant/qdrant,
+ollama/ollama, nats) whose own user conventions this chart doesn't override.
 */}}
 {{- define "nexus-rag.podSecurityContext" -}}
 runAsNonRoot: true

@@ -1,11 +1,12 @@
 # Default values for nexus-rag.
 #
 # Scope (NFR-10): this chart deploys only the *new* components this project
-# adds -- ingestion-api, orchestration-mcp, reranker-service, a dedicated
-# embedding-serving Ollama instance, and Qdrant. It assumes LibreChat,
-# LiteLLM, Keycloak, and the cluster's existing generation-serving vLLM/Ollama
-# (C7) are already deployed and managed separately, and integrates with them
-# via the config below rather than deploying or bundling them.
+# adds -- ingestion-api, ingestion-worker, orchestration-mcp, reranker-service,
+# a dedicated embedding-serving Ollama instance, Qdrant, and NATS (JetStream,
+# NFR-11's durable ingestion queue). It assumes LibreChat, LiteLLM, Keycloak,
+# and the cluster's existing generation-serving vLLM/Ollama (C7) are already
+# deployed and managed separately, and integrates with them via the config
+# below rather than deploying or bundling them.
 #
 # Assumption called out explicitly (REQUIREMENTS.md doesn't name Postgres
 # among NFR-10's scoped components, unlike Qdrant): a Postgres instance is
