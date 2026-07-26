@@ -1,9 +1,9 @@
 # REQUIREMENTS.md — MPNexus RAG Pipeline
 
 **Project:** Enterprise Retrieval-Augmented Generation (RAG) capability for MPNexus
-**Status:** Draft — requirements gathering
+**Status:** Adopted — FR-1 through FR-32 implemented; see README.md for current build status
 **Owner:** [Corey / MPNexus platform]
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-26
 
 ---
 
@@ -254,7 +254,7 @@ Prerequisites for OBO to work, confirmed against LibreChat 0.8.7 and Keycloak:
 - Who owns keeping each user's `clearance`, `releasability`, and `groups` attributes current in Keycloak day to day — is there an authoritative source system to sync from, or is this manual admin-console maintenance? (Section 6.2 — Keycloak itself is no longer the open question, just the attribute-maintenance process.)
 - Target end-to-end query latency budget (retrieval + rerank + generation) — compute headroom is confirmed (NFR-8) but no target has been set yet.
 - Expected corpus size and ingestion rate (affects Qdrant sharding/collection strategy and multi-tenancy design).
-- With Onyx Enterprise Edition ruled out by budget, and Dify identified as the strongest metadata/filtering primitive to build on: is extending Dify with a custom permission layer preferable to a fully custom ingestion UI, or is a clean-sheet build still preferred for consistency with how PING/MPNexus's other custom pieces were built?
+- ~~With Onyx Enterprise Edition ruled out by budget, and Dify identified as the strongest metadata/filtering primitive to build on: is extending Dify with a custom permission layer preferable to a fully custom ingestion UI, or is a clean-sheet build still preferred for consistency with how PING/MPNexus's other custom pieces were built?~~ **Resolved:** clean-sheet, no Dify dependency — `services/ingestion-api` implements FR-1..FR-23 directly, consistent with C7's decision that this project owns only the MCP/retrieval protocol boundary and doesn't couple to any specific frontend or CMS.
 
 ## 9. Architecture Overview
 
