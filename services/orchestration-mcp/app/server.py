@@ -24,10 +24,25 @@ from __future__ import annotations
 
 from app.rag_search import run_rag_search
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-mcp_server = FastMCP("nexus-rag-orchestration")
+# FastMCP's default DNS-rebinding protection only allows Host headers of
+# 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),
+# because it assumes the server binds to a loopback address. This service is
+# reached over the docker-compose network as "orchestration-mcp:8002" (that's
+# the Host header LibreChat's requests carry), which the default allowlist
+# rejects with a 421. Extend the allowlist to include that hostname instead
+# of disabling DNS-rebinding protection outright.
+mcp_server = FastMCP(
+    "nexus-rag-orchestration",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "orchestration-mcp:*"],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    ),
+)
 
 
 @mcp_server.tool()

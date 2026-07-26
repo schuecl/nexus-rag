@@ -32,6 +32,13 @@ unverified whether a same-realm self-issued token even qualifies. Rather than ch
 instead — forwards the raw LibreChat session token rather than an audience-exchanged one,
 which still passes `orchestration-mcp`'s `aud=rag-app` check (see the Keycloak OBO bullet
 below for why). Revisit the RFC 7523 path if Keycloak's same-realm story becomes clearer.
+**The MCP connection itself is now confirmed working end to end (2026-07-26)** — a separate
+bug (`421 Invalid Host header`, `mcp` SDK's default DNS-rebinding protection rejecting the
+`orchestration-mcp:8002` Compose-network hostname) was found and fixed after the OBO fix
+above, see the `transport_security`/`TransportSecuritySettings` bullet below. With that
+fixed, `bob-query` can connect to the `nexus-rag-search` MCP server and LibreChat lists
+`rag_search` as an available tool — **not yet confirmed**: whether a chat message actually
+gets the model to call it (see the `llama3.2:1b` tool-calling bullet below).
 See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
@@ -692,6 +699,23 @@ the docs, not a silent "it works" — flag it if you find one.
   see the opening summary for why that still passes claims validation. The `obo` config
   block itself was removed from `librechat.yaml`; the Zod-shape fact above (single
   space-delimited string, not an array) still applies if OBO is revisited later.
+- **`orchestration-mcp`'s MCP endpoint rejected every LibreChat request with `421
+  Invalid Host header`, even after the `addUserJwtToken` fix above got the OBO/auth layer
+  itself working.** Confirmed live (2026-07-26): `docker logs` on both sides showed
+  LibreChat's transport erroring `Streamable HTTP error: Error POSTing to endpoint:
+  Invalid Host header` while `orchestration-mcp` logged `Invalid Host header:
+  orchestration-mcp:8002` and a `421 Misdirected Request`, before the request ever reached
+  `rag_search`'s own auth check. Root cause: `mcp` SDK's `FastMCP` auto-enables DNS-rebinding
+  protection (`mcp.server.transport_security.TransportSecuritySettings`) whenever it's
+  constructed with the default `host="127.0.0.1"`, allowlisting only `127.0.0.1`/`localhost`/
+  `::1` Host headers — it assumes a loopback bind and has no way to know the container will
+  actually be reached over the Compose network as `orchestration-mcp:8002`, which is exactly
+  the Host header LibreChat's requests carry. Fixed in `services/orchestration-mcp/app/
+  server.py` by passing an explicit `TransportSecuritySettings` that extends
+  `allowed_hosts` with `orchestration-mcp:*` instead of disabling DNS-rebinding protection
+  outright. After the fix, LibreChat's MCP log shows a clean `Tools: rag_search` /
+  `Initialized in: Nms` on startup and `orchestration-mcp`'s own log shows `200`/`202` on
+  `POST /mcp` instead of `421`.
 - **LibreChat also needs its own `JWT_SECRET`/`JWT_REFRESH_SECRET`/`CREDS_KEY`/`CREDS_IV`,
   independent of the `librechat.yaml`/OIDC config above** — found via the same live
   `docker compose up` run, one error at a time: after the `obo.scopes` fix, LibreChat's next
@@ -717,6 +741,14 @@ the docs, not a silent "it works" — flag it if you find one.
   `OPENID_CALLBACK_URL`'s relative path to build the absolute callback URL used in the OIDC
   redirect, and leaving it unset risked a second, separate failure mode once the button
   itself was fixed.
+- **`llama3.2:1b` does not appear to invoke `rag_search` as a tool call** — noticed
+  (2026-07-26) once the MCP connection itself was working (previous bullet): LibreChat
+  connects to `orchestration-mcp` and lists `rag_search` correctly, but a chat message that
+  should trigger it doesn't produce a tool call. Not yet root-caused — candidates include
+  the 1B model's tool-calling capability/instruction-following at that size, LiteLLM's
+  tool-call translation for the `ollama_chat`/`ollama` provider route, and whether
+  LibreChat is even sending the tool schema to this particular endpoint config. Needs
+  investigation with a real chat transcript / LiteLLM request log, not guessing from docs.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This
