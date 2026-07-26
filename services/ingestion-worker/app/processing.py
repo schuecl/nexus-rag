@@ -14,8 +14,11 @@ un-acked.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.chunking import chunk_sections
 from app.embedding import EmbeddingError, embed_texts
@@ -41,6 +44,65 @@ ACK_WAIT_SECONDS = 300.0
 DURABLE_CONSUMER_NAME = "ingestion-worker"
 FETCH_BATCH_SIZE = 1
 FETCH_TIMEOUT_SECONDS = 5.0
+
+# Bound on redelivery of a message this worker keeps failing to process.
+# Without it, a JetStream consumer redelivers forever: a permanent failure
+# that doesn't happen to surface as ParsingError/EmbeddingError (the clearest
+# case being an object-store key that can't be read) would be retried
+# indefinitely, and with FETCH_BATCH_SIZE = 1 that means the worker never
+# advances past it -- every attempt also re-running `doc.status = "processing"`
+# + commit(), so it's a write loop against Postgres, not just a spin.
+MAX_DELIVERY_ATTEMPTS = 5
+# Delay applied when handing a message back for redelivery. `nak()` with no
+# delay redelivers immediately, which turns a persistently-failing message
+# into a hot loop; this spaces the retries out enough for a genuinely
+# transient dependency (Qdrant, Postgres, Ollama) to come back.
+NAK_BACKOFF_SECONDS = 30.0
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@dataclass
+class ConsumerStatus:
+    """What /health reports about the consumer loop (app/main.py).
+
+    `running` is the load-bearing field, and it is deliberately derived from
+    "has consume_forever exited", not from a heartbeat freshness check: a
+    single large document can legitimately occupy the loop for minutes (see
+    ACK_WAIT_SECONDS), so a staleness threshold tight enough to notice a dead
+    consumer quickly would also kill a healthy worker mid-document. The
+    timestamps and counters below are reported for humans and dashboards, and
+    nothing gates on them.
+    """
+
+    running: bool = False
+    started_at: datetime | None = None
+    last_poll_at: datetime | None = None
+    processed: int = 0
+    # Exception *type* only ("NoServersError"), never str(exc). This field is
+    # served by /health, which takes no authentication and is published to the
+    # host in the Compose stack (8004:8004), so a raw exception message would
+    # hand any caller internal broker hostnames, ports, and stream names. The
+    # type is enough to tell a human operator which way the consumer died;
+    # the full traceback goes to the logs (consume_forever, and main.py's
+    # done-callback), which are already an authenticated surface.
+    stopped_reason: str | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "running": self.running,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "last_poll_at": self.last_poll_at.isoformat() if self.last_poll_at else None,
+            "processed": self.processed,
+            "stopped_reason": self.stopped_reason,
+        }
+
+
+# Module-level so app/main.py's /health can read it without the consumer and
+# the HTTP app having to share anything else.
+STATUS = ConsumerStatus()
 
 
 async def process_document(document_id: uuid.UUID) -> bool:
@@ -120,6 +182,28 @@ async def process_document(document_id: uuid.UUID) -> bool:
             )
             session.commit()
             return True
+        except FileNotFoundError as exc:
+            # The original upload isn't in the object store. Retrying reads of
+            # a key that isn't there can't succeed, so treat it the same as
+            # unparseable input rather than letting it consume the redelivery
+            # budget. Covers FilesystemObjectStore (the dev backend); the S3
+            # backend surfaces a missing key as botocore's ClientError, which
+            # still falls through to the transient branch below and is bounded
+            # by MAX_DELIVERY_ATTEMPTS instead.
+            doc.status = "failed"
+            doc.processing_error = f"original file missing from object store: {exc}"
+            session.add(doc)
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.failed",
+                    target_id=str(doc.id),
+                    detail={"error": doc.processing_error},
+                )
+            )
+            session.commit()
+            return True
         except (ParsingError, EmbeddingError) as exc:
             # Permanent failures -- corrupt/unsupported input, or the
             # embedding service rejecting this exact request outright.
@@ -153,27 +237,123 @@ async def process_document(document_id: uuid.UUID) -> bool:
             return False
 
 
-async def consume_forever() -> None:
-    nc = await get_nats_connection()
-    js = nc.jetstream()
-    await ensure_stream(js)
-    psub = await js.pull_subscribe(
-        INGESTION_SUBJECT,
-        durable=DURABLE_CONSUMER_NAME,
-        config=ConsumerConfig(ack_wait=ACK_WAIT_SECONDS),
+def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
+    """Land a document that exhausted its redelivery budget in `failed`, so
+    the uploader gets the FR-8 status they'd otherwise never see -- without
+    this, a message dropped after MAX_DELIVERY_ATTEMPTS leaves the row stuck
+    at `processing` with nothing to explain it."""
+    try:
+        with Session(get_engine()) as session:
+            doc = session.get(Document, document_id)
+            if doc is None:
+                return
+            doc.status = "failed"
+            doc.processing_error = (
+                f"processing failed after {attempts} delivery attempts; "
+                "see ingestion-worker logs"
+            )
+            session.add(doc)
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.failed",
+                    target_id=str(doc.id),
+                    detail={"error": doc.processing_error, "delivery_attempts": attempts},
+                )
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001 -- best effort; the message is dropped either way
+        logger.exception(
+            "could not mark document %s failed after exhausting redelivery", document_id
+        )
+
+
+async def _handle_message(msg) -> None:
+    """One message, start to finish. Every failure mode here is contained:
+    nothing raised while handling a single message may unwind consume_forever
+    and take the whole consumer down with it."""
+    raw = msg.data.decode(errors="replace")
+    try:
+        document_id = uuid.UUID(raw)
+    except ValueError:
+        # Not retryable -- redelivering the same unparseable payload can only
+        # produce the same result. Previously this raised straight out of the
+        # loop and killed the consumer.
+        logger.error("dropping message with unparseable document id %r", raw)
+        await msg.term()
+        return
+
+    terminal = await process_document(document_id)
+    if terminal:
+        await msg.ack()
+        STATUS.processed += 1
+        return
+
+    # Transient: hand it back for redelivery, but bounded. num_delivered
+    # counts this attempt, so `>=` is the last-attempt test.
+    attempts = msg.metadata.num_delivered
+    if attempts >= MAX_DELIVERY_ATTEMPTS:
+        logger.error(
+            "document %s failed %d delivery attempts, giving up and marking it failed",
+            document_id,
+            attempts,
+        )
+        _mark_undeliverable(document_id, attempts)
+        await msg.term()
+        return
+
+    logger.warning(
+        "document %s failed attempt %d/%d, redelivering in %ss",
+        document_id,
+        attempts,
+        MAX_DELIVERY_ATTEMPTS,
+        NAK_BACKOFF_SECONDS,
     )
+    await msg.nak(delay=NAK_BACKOFF_SECONDS)
 
-    logger.info("ingestion-worker: subscribed, waiting for jobs")
-    while True:
-        try:
-            msgs = await psub.fetch(FETCH_BATCH_SIZE, timeout=FETCH_TIMEOUT_SECONDS)
-        except NatsTimeoutError:
-            continue  # no jobs waiting -- normal, just poll again
 
-        for msg in msgs:
-            document_id = uuid.UUID(msg.data.decode())
-            terminal = await process_document(document_id)
-            if terminal:
-                await msg.ack()
-            else:
-                await msg.nak()
+async def consume_forever() -> None:
+    try:
+        nc = await get_nats_connection()
+        js = nc.jetstream()
+        await ensure_stream(js)
+        psub = await js.pull_subscribe(
+            INGESTION_SUBJECT,
+            durable=DURABLE_CONSUMER_NAME,
+            config=ConsumerConfig(
+                ack_wait=ACK_WAIT_SECONDS, max_deliver=MAX_DELIVERY_ATTEMPTS
+            ),
+        )
+
+        logger.info("ingestion-worker: subscribed, waiting for jobs")
+        STATUS.running = True
+        STATUS.started_at = _utcnow()
+
+        while True:
+            STATUS.last_poll_at = _utcnow()
+            try:
+                msgs = await psub.fetch(FETCH_BATCH_SIZE, timeout=FETCH_TIMEOUT_SECONDS)
+            except NatsTimeoutError:
+                continue  # no jobs waiting -- normal, just poll again
+
+            for msg in msgs:
+                try:
+                    await _handle_message(msg)
+                except Exception:  # noqa: BLE001 -- one bad message must not stop the consumer
+                    logger.exception("unhandled error handling a message, continuing")
+    except asyncio.CancelledError:
+        # Normal shutdown -- app/main.py's lifespan cancels this task.
+        STATUS.stopped_reason = "cancelled"
+        raise
+    except BaseException as exc:
+        # Anything else means the consumer is gone and ingestion has silently
+        # stopped. Record it so /health can fail instead of reporting "ok"
+        # from an HTTP app that outlives its only real workload. Type only --
+        # see ConsumerStatus.stopped_reason for why the message stays in the
+        # logs and out of the response body.
+        STATUS.stopped_reason = type(exc).__name__
+        logger.exception("ingestion-worker consumer exited unexpectedly")
+        raise
+    finally:
+        STATUS.running = False
