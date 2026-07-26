@@ -22,9 +22,12 @@ the commit message for what was checked and how.
 
 from __future__ import annotations
 
-from app.rag_search import run_rag_search
+from typing import Annotated
+
+from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -67,7 +70,12 @@ mcp_server = FastMCP(
 async def rag_search(
     query: str,
     ctx: Context,
-    top_k: int = 5,
+    # Bounded rather than a plain `int`: top_k drives the retrieval fan-out
+    # (rag_search.py's hybrid_limit) and, through it, how many candidates the
+    # cross-encoder scores in one reranker-service call. Expressed as an
+    # Annotated Field so the constraint lands in the MCP tool schema the
+    # calling model sees, not just in a server-side check it can't anticipate.
+    top_k: Annotated[int, Field(ge=1, le=MAX_TOP_K)] = DEFAULT_TOP_K,
     content_type_boosts: dict[str, float] | None = None,
 ) -> dict:
     """Search the approved, access-filtered document corpus.
@@ -96,7 +104,21 @@ async def debug_rag_search(request: Request) -> JSONResponse:
     query = request.query_params.get("query")
     if not query:
         return JSONResponse({"detail": "missing query parameter"}, status_code=400)
-    top_k = int(request.query_params.get("top_k", 5))
+    # Unlike the MCP tool above, nothing validates a raw query-string value for
+    # us here -- a bare int() raised ValueError out of the route (a 500) on any
+    # non-numeric input, and accepted arbitrarily large values on numeric ones.
+    raw_top_k = request.query_params.get("top_k", str(DEFAULT_TOP_K))
+    try:
+        top_k = int(raw_top_k)
+    except ValueError:
+        return JSONResponse(
+            {"detail": f"top_k must be an integer, got {raw_top_k!r}"}, status_code=400
+        )
+    if not 1 <= top_k <= MAX_TOP_K:
+        return JSONResponse(
+            {"detail": f"top_k must be between 1 and {MAX_TOP_K}, got {top_k}"},
+            status_code=400,
+        )
     result = await run_rag_search(authorization, query, top_k)
     return JSONResponse(result)
 
