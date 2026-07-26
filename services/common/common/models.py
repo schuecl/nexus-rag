@@ -71,6 +71,15 @@ class Document(SQLModel, table=True):
     # see app/routes/upload.py.
     original_object_key: str | None = None
 
+    # Issue #138 (Phase 1): advisory, curator-facing marking-mismatch findings
+    # computed by the ingestion worker (common/marking_detection.py) -- e.g.
+    # "the document's own banner says SECRET but it was tagged CUI". Purely
+    # advisory: it is NOT one of the authoritative human-set tags above and is
+    # never used to gate retrieval or auto-change classification; the curator
+    # confirms or overrides it (FR-13). Null until the worker evaluates it, and
+    # left null if detection errors -- ingestion never depends on it.
+    tagging_advisory: dict | None = Field(default=None, sa_column=Column(JSON))
+
     status: str = Field(default="queued")
     # FR-8 progress states, in order: queued -> processing -> embedded ->
     # pending_review -> approved | rejected | superseded (FR-7 -- set when a

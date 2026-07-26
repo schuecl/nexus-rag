@@ -78,6 +78,30 @@ MIN_HYBRID_CANDIDATES = 20
 MAX_TOP_K = 50
 DEFAULT_TOP_K = 5
 
+
+def _audit_query_detail(query: str, **extra) -> dict:
+    """The FR-31 detail payload for a retrieval attempt.
+
+    Issue #125: deliberately does NOT carry the query text. FR-31 exists to
+    answer "did the access filter apply, to whom, and what did it permit" --
+    actor, timestamp, outcome, filter, and result count answer all of that,
+    and none of them need the content of the question.
+
+    Storing the text does not stay inside the boundary the application draws
+    everywhere else. `rag-admin` grants no data access, no route reads the
+    audit log, and document access is ownership-scoped -- but audit_log lives
+    in Postgres, and NFR-2's hardening makes that table append-only without
+    restricting *reads*, so any holder of APP_DB_USER could recover every
+    user's query history. `query.denied` rows are the sharpest case: they
+    record what someone tried to reach and was refused.
+
+    `query_chars` is kept because length is useful for the anomaly detection
+    #127 wants (membership-inference probing is high-volume and
+    structurally repetitive) and discloses essentially nothing on its own.
+    """
+    return {"query_chars": len(query), **extra}
+
+
 # P1: see the module docstring. Delimits retrieved chunk text from anything
 # else in the tool response, so an instruction-shaped sentence inside a
 # document reads as quoted data, not a directive -- the same "wrap untrusted
@@ -146,7 +170,7 @@ async def run_rag_search(
         return {"error": f"invalid token: {exc}"}
 
     if not claims.can_query:
-        _audit(claims, "query.denied", {"query": query, "reason": "missing rag-query role"})
+        _audit(claims, "query.denied", _audit_query_detail(query, reason="missing rag-query role"))
         return {"error": "missing rag-query role"}
 
     with next(get_session()) as session:
@@ -197,13 +221,13 @@ async def run_rag_search(
         _audit(
             claims,
             "query",
-            {
-                "query": query,
-                "top_k": top_k,
-                "applied_filter": filter_summary,
-                "result_count": 0,
-                "note": result["note"],
-            },
+            _audit_query_detail(
+                query,
+                top_k=top_k,
+                applied_filter=filter_summary,
+                result_count=0,
+                note=result["note"],
+            ),
         )
         return result
 
@@ -219,13 +243,13 @@ async def run_rag_search(
         _audit(
             claims,
             "query",
-            {
-                "query": query,
-                "top_k": top_k,
-                "applied_filter": filter_summary,
-                "result_count": 0,
-                "note": result["note"],
-            },
+            _audit_query_detail(
+                query,
+                top_k=top_k,
+                applied_filter=filter_summary,
+                result_count=0,
+                note=result["note"],
+            ),
         )
         return result
 
@@ -238,9 +262,19 @@ async def run_rag_search(
     # cross-encoder needs the raw text to score against the query, not text
     # padded with marker tags. Copy each result rather than mutating the dicts
     # rerank() returned, since those still hold the raw text pulled from Qdrant.
+    # Issue #127: the response carries id + payload, and deliberately NOT the
+    # similarity score. OWASP's RAG guidance is explicit that scores must not
+    # be returned to users or agents, because the score gradient is the signal
+    # document-level membership inference needs: an authorized caller can
+    # probe with crafted queries and learn whether a document exists in the
+    # corpus, including documents their own filter excludes -- the *absence*
+    # of an expected score is informative too. Nothing downstream needs it;
+    # the calling model consumes rank order, which the list order already
+    # carries, and rerank() scores against the reranker's own output rather
+    # than this field.
     result["results"] = [
         {
-            **r,
+            "id": r["id"],
             "payload": {
                 **r["payload"],
                 "text": _delimit_untrusted_text(r["payload"].get("text", "")),
@@ -253,13 +287,13 @@ async def run_rag_search(
     _audit(
         claims,
         "query",
-        {
-            "query": query,
-            "top_k": top_k,
-            "applied_filter": filter_summary,
-            "result_count": len(reranked),
-            "result_document_ids": [r["payload"].get("document_id") for r in reranked],
-        },
+        _audit_query_detail(
+            query,
+            top_k=top_k,
+            applied_filter=filter_summary,
+            result_count=len(reranked),
+            result_document_ids=[r["payload"].get("document_id") for r in reranked],
+        ),
     )
 
     return result
