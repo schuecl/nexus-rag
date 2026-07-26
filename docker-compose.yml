@@ -184,7 +184,7 @@ services:
     environment:
       OLLAMA_HOST: ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
-      GENERATION_MODEL: ${GENERATION_MODEL:-llama3.2:1b}
+      GENERATION_MODEL: ${GENERATION_MODEL:-qwen2.5:7b-instruct}
     entrypoint: ["sh", "-c"]
     command:
       - |

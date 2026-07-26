@@ -40,8 +40,13 @@ fixed, `bob-query` can connect to the `nexus-rag-search` MCP server and LibreCha
 `rag_search` as an available tool. **A bare chat via the `LiteLLM`/`Ollama-Direct` custom
 endpoints will never call it, though** — that's expected LibreChat behavior, not a bug: MCP
 tools only attach to the request via the Agents/ephemeral-agent path, never the plain
-`endpoints.custom` chat path (see the tool-calling bullet below for the source-level why
-and how to actually exercise it via the composer's tools icon or a real Agent).
+`endpoints.custom` chat path (see the two tool-calling bullets below for the source-level
+why, plus a second, separate bug this uncovered once run as an Agent). **`GENERATION_MODEL`
+is now `qwen2.5:7b-instruct`, not `llama3.2:1b`** — the latter's tool-calling was unreliable
+enough (roughly 1-in-3-to-5 correctly-formed tool calls against `rag_search`'s real schema,
+confirmed by repeated direct LiteLLM calls) to make MCP testing non-viable; the swap got a
+clean run every time in the same test. See the `qwen2.5:7b-instruct` bullet below for the
+full before/after evidence and everywhere the model name had to change.
 See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
@@ -745,25 +750,38 @@ the docs, not a silent "it works" — flag it if you find one.
   redirect, and leaving it unset risked a second, separate failure mode once the button
   itself was fixed.
 - **A plain chat with the `LiteLLM`/`Ollama-Direct` custom endpoints never calls
-  `rag_search`, even though the MCP connection works and `llama3.2:1b` itself can tool-call
-  fine.** Root-caused (2026-07-26): confirmed directly against LiteLLM
-  (`POST /v1/chat/completions` with a `tools` array and `tool_choice: auto`) that
-  `ollama/llama3.2:1b` returns a proper `finish_reason: tool_calls` response -- the model
-  and the LiteLLM/Ollama hop are not the problem. The actual cause is architectural, found
-  by reading LibreChat's own source in the running container: MCP tools (and the
-  `ephemeralAgent` tool-attachment mechanism behind the composer's tools/wrench icon) are
-  only wired into `api/server/controllers/agents/client.js` (`isAgentsEndpoint`/
-  `loadAgentTools` in `api/server/services/Endpoints/agents/initialize.js`) -- the plain
-  `endpoints.custom` chat path (what a bare "LiteLLM"/"Ollama-Direct" conversation uses)
-  never attaches tools to the completion request at all, regardless of what's registered
-  under `mcpServers`. Registering an MCP server in `librechat.yaml` only makes it
-  *available* to attach; nothing calls it automatically. To actually exercise `rag_search`
-  end to end, either (a) attach it via the message composer's tools icon for a one-off
-  ephemeral-agent turn, or (b) create a real Agent (Agent Builder, any provider --
-  `allowedProviders` has no default restriction) with `llama3.2:1b` as the model and
-  `rag_search` attached as a tool, then chat through that Agent instead of the raw custom
-  endpoint. Not yet exercised in the actual browser UI -- this is confirmed from source
-  and the direct LiteLLM tool-call test, not a live click-through.
+  `rag_search`.** Root-caused (2026-07-26) by reading LibreChat's own source in the running
+  container: MCP tools (and the `ephemeralAgent` tool-attachment mechanism behind the
+  composer's tools/wrench icon) are only wired into
+  `api/server/controllers/agents/client.js` (`isAgentsEndpoint`/`loadAgentTools` in
+  `api/server/services/Endpoints/agents/initialize.js`) -- the plain `endpoints.custom`
+  chat path (what a bare "LiteLLM"/"Ollama-Direct" conversation uses) never attaches tools
+  to the completion request at all, regardless of what's registered under `mcpServers`.
+  Registering an MCP server in `librechat.yaml` only makes it *available* to attach;
+  nothing calls it automatically. **Confirmed live**: running as an Agent (Agent Builder,
+  `rag_search` attached) does trigger the tool call, matching this analysis.
+- **Running as an Agent surfaced a second, separate bug: `llama3.2:1b`'s tool calls came
+  back malformed** (`Received tool input did not match expected schema`, LibreChat's error
+  showing garbled parameter names like a stray `message` key not in `rag_search`'s schema
+  at all). Not a schema bug in `orchestration-mcp` -- reproduced directly against LiteLLM
+  outside LibreChat entirely (`POST /v1/chat/completions` with the real `rag_search` tool
+  schema, run repeatedly): `ollama/llama3.2:1b` only returned a correctly-formed
+  `tool_calls` response on roughly 1 in 3-5 tries, sometimes echoing the whole tool schema
+  back as prose instead of calling it, sometimes inventing a function name that didn't
+  exist even on a schema simplified to one required string field. This is a capability
+  limit of the 1B model against Ollama's tool-calling template, not something fixable by
+  adjusting the tool's parameter schema. **Fixed by swapping `GENERATION_MODEL` to
+  `qwen2.5:7b-instruct`** (`.env`/`.env.example`, `infra/litellm/config.yaml`,
+  `infra/librechat/librechat.yaml`'s two `models.default` entries, and
+  `docker-compose.yml`'s `ollama-model-init` default) --
+  the same repeated direct-LiteLLM test got 5/5 (then a further 3/3 against the exact
+  `rag_search` schema) correctly-formed tool calls, zero malformed/hallucinated responses.
+  Needs `ollama pull qwen2.5:7b-instruct` (~4.7GB, done automatically by
+  `ollama-model-init` on a fresh `docker compose up`) and noticeably more RAM/CPU time per
+  request than `llama3.2:1b` -- worth it here since unreliable tool-calling made MCP
+  testing non-viable at the smaller size. Still not click-tested end-to-end in the actual
+  browser UI with a real document corpus behind it -- confirmed via direct LiteLLM calls
+  with `rag_search`'s real schema, not a full `bob-query` browser round trip yet.
 - **Helm chart changes are hand-written, unverified by `helm lint`/`helm template`** — no
   network access to install the `helm` CLI in this environment (see
   `helm/nexus-rag/README.md`'s note at the top, unchanged from earlier chart work). This

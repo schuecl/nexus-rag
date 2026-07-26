@@ -23,8 +23,10 @@ endpoints:
         # LibreChat only resolves ${ENV_VAR} substitution in apiKey/baseURL/
         # headers, not inside models.default -- so this has to be the literal
         # model_name from infra/litellm/config.yaml, not GENERATION_MODEL.
-        # Keep the two in sync by hand if either changes.
-        default: ["llama3.2:1b"]
+        # Keep the two in sync by hand if either changes. qwen2.5:7b-instruct,
+        # not llama3.2:1b -- see infra/litellm/config.yaml's comment (issue
+        # #99 follow-up: llama3.2:1b's tool-calling was unreliable).
+        default: ["qwen2.5:7b-instruct"]
         fetch: false
       titleConvo: true
     # Testing-only escape hatch that bypasses litellm entirely -- lets you
@@ -37,7 +39,7 @@ endpoints:
       apiKey: "ollama"
       baseURL: "http://ollama:11434/v1"
       models:
-        default: ["llama3.2:1b"]
+        default: ["qwen2.5:7b-instruct"]
         fetch: true
       titleConvo: false
 

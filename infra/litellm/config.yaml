@@ -1,10 +1,17 @@
 # Throwaway dev LiteLLM config (NFR-9) -- routes a single small Ollama model
 # so the LibreChat -> LiteLLM -> Ollama generation path can be exercised
 # end to end locally. Not a production model selection.
+#
+# qwen2.5:7b-instruct, not llama3.2:1b (issue #99 follow-up, 2026-07-26): confirmed live
+# that llama3.2:1b's tool-calling is unreliable (~1-in-5 success rate against rag_search's
+# actual schema, sometimes inventing a nonexistent function name), which makes MCP tool
+# testing through LibreChat non-viable. qwen2.5:7b-instruct got 5/5 clean tool calls in the
+# same test. Keep this model_name in sync by hand with GENERATION_MODEL (.env.example) and
+# librechat.yaml's models.default (see that file's comment for why it can't be templated).
 model_list:
-  - model_name: llama3.2:1b
+  - model_name: qwen2.5:7b-instruct
     litellm_params:
-      model: ollama/llama3.2:1b
+      model: ollama/qwen2.5:7b-instruct
       api_base: http://ollama:11434
 
 general_settings:
