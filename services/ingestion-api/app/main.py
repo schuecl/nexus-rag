@@ -23,7 +23,7 @@ DEFAULT_CLASSIFICATIONS = [
 # controlled vocabulary so it's the default-selected <option> on the upload
 # form -- the un-set state, not a coalition caveat, is what most documents
 # should carry.
-DEFAULT_RELEASABILITY = [NO_RELEASABILITY_RESTRICTION, "NOFORN", "NATO", "FVEY"]
+DEFAULT_RELEASABILITY = [NO_RELEASABILITY_RESTRICTION, "NOFORN", "USA", "NATO", "FVEY"]
 
 
 def _seed_defaults() -> None:

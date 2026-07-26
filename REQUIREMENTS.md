@@ -141,7 +141,7 @@ This is a starting point for discussion, modeled on standard DoD document markin
 | Field | Example values | Required |
 |---|---|---|
 | Classification | Single value from an admin-configurable, ranked list — e.g., UNCLASSIFIED < CUI < SECRET *(configure to the actual network's accreditation level; the rank ordering is what lets FR-18/FR-26 compare "at or below the user's cleared level")* | Yes |
-| Releasability | One or more values from an admin-configurable list — e.g., NONE (not set), NOFORN, NATO, FVEY — a document tagged with more than one is releasable to any of them | Yes |
+| Releasability | One or more values from an admin-configurable list — e.g., NONE (not set), NOFORN, USA, NATO, FVEY — a document tagged with more than one is releasable to any of them | Yes |
 | Access scope | One or more of: specific Organization(s), Group(s), User(s), or the reserved value `ALL_AUTHENTICATED` (visible to every authenticated user, still subject to Classification/Releasability) | Yes |
 | Status | `pending_review`, `approved`, `rejected` — set by the system/curator, not the uploader (Section 4.2) | System-managed |
 | Caveats/SCI controls | Per local guidance | If applicable |
