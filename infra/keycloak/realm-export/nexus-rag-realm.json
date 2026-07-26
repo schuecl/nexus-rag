@@ -54,7 +54,7 @@
     {
       "name": "nexus-rag-claims",
       "protocol": "openid-connect",
-      "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, groups, org, rag_roles. Releasability isn't its own mapper -- it's derived app-side (common/claims.py) from rag-releasability:<value> entries in rag_roles below, the same client-role pattern as rag-curate:<org>.",
+      "description": "Claims schema from REQUIREMENTS.md Section 6.2: clearance, groups, org, rag_roles. Releasability is derived app-side from rag-releasability:<value> entries in rag_roles, not its own mapper.",
       "protocolMappers": [
         {
           "name": "clearance",
