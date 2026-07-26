@@ -34,7 +34,53 @@ router = APIRouter(prefix="/documents", tags=["ingestion"])
 # FR-9/NFR-7: "a configurable size limit" -- was a hardcoded constant despite
 # the comment's own claim; now actually reads from the environment, default
 # unchanged (50MB).
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+
+# How much to pull off the upload at a time in _read_bounded below. Only
+# matters as the overshoot allowance on the memory ceiling: peak usage is
+# MAX_UPLOAD_BYTES + this, not the size of whatever was sent.
+_READ_CHUNK_BYTES = 1024 * 1024
+
+
+async def _read_bounded(file: UploadFile, limit: int) -> bytes:
+    """Read at most `limit` bytes, raising 413 the moment that's exceeded.
+
+    This replaces a single `await file.read()` followed by a `len()` check,
+    which had to materialise the whole upload in one `bytes` object before it
+    could decide the upload was too big -- so a body well over the pod's
+    memory limit was an OOM kill of ingestion-api rather than a 413, taking
+    the API down for every other user rather than just refusing one request.
+
+    What this does *not* fix, and can't from here: by the time any handler
+    runs, Starlette's multipart parser has already consumed the full request
+    body, spooling past 1MB (`MultiPartParser.spool_max_size`) into a temp
+    file on disk. So this bounds ingestion-api's *memory*, not the bytes
+    transferred or written to the container's filesystem. Capping those needs
+    a limit at the edge -- see the ingress annotation in
+    helm/nexus-rag/values.yaml, and the note in docs/dev-setup.md for the
+    Compose stack, which has no proxy in front of this service.
+    """
+    # The parser has already counted the body, so in practice this is the
+    # branch that fires and nothing large is ever copied. The loop below is
+    # the guard for the case where size isn't populated.
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
+        )
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
@@ -53,9 +99,7 @@ async def submit_document(
     session: Session = Depends(get_session),
     _csrf=Depends(verify_csrf),
 ):
-    contents = await file.read()
-    if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit")
+    contents = await _read_bounded(file, MAX_UPLOAD_BYTES)
     if not contents:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
 

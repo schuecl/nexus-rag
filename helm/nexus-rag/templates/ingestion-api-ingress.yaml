@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "nexus-rag.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-api
+  {{- with .Values.ingestionApi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- with .Values.ingestionApi.ingress.className }}
   ingressClassName: {{ . }}

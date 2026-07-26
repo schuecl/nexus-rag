@@ -240,6 +240,18 @@ ingestionApi:
     className: ""
     host: "rag-ingest.example.mil"
     tls: []
+    # Issue #107: the only layer that bounds what an oversized upload costs
+    # *before* it reaches a Python process. ingestion-api's own
+    # MAX_UPLOAD_BYTES check (app/routes/upload.py) can only run after
+    # Starlette has already consumed and spooled the whole request body, so
+    # it bounds that service's memory, not bytes transferred or written to
+    # disk. Rendered as annotations rather than a typed field because the key
+    # is ingress-controller specific -- the default below is nginx's; for
+    # Traefik or HAProxy, replace it with that controller's equivalent.
+    # Keep the value at or above ingestionApi.maxUploadBytes, or the edge
+    # will reject uploads the application would have accepted.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
   # Browser OIDC login callback URL (ARCHITECTURE.md Section 4.4), passed
   # through as OIDC_REDIRECT_URI. Empty (default) derives it from
   # ingress.host above -- https if ingress.tls is set, http otherwise (see
