@@ -61,6 +61,22 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 HYBRID_CANDIDATE_MULTIPLIER = 4
 MIN_HYBRID_CANDIDATES = 20
 
+# Ceiling on the caller-supplied top_k. Both of this service's entry points
+# (app/server.py's MCP tool and /debug/rag_search) reject anything above this
+# before calling in, so the clamp below is defence in depth for whatever
+# transport gets added next -- not a branch either current caller can reach.
+#
+# 50 is chosen off the fan-out it implies rather than off what a caller might
+# plausibly want to read: top_k=50 asks Qdrant for 200 candidates per prefetch
+# leg and hands up to 200 chunks to reranker-service, which cross-encodes
+# every (query, chunk) pair in one synchronous call on CPU. That is already
+# the expensive end of a reasonable request; unbounded, the same arithmetic
+# turns a single call into an availability problem for every other user
+# (reranker-service holds one shared CrossEncoder and has no concurrency
+# limit of its own).
+MAX_TOP_K = 50
+DEFAULT_TOP_K = 5
+
 # P1: see the module docstring. Delimits retrieved chunk text from anything
 # else in the tool response, so an instruction-shaped sentence inside a
 # document reads as quoted data, not a directive -- the same "wrap untrusted
@@ -107,7 +123,7 @@ def _audit(claims: UserClaims, action: str, detail: dict) -> None:
 async def run_rag_search(
     bearer_token: str,
     query: str,
-    top_k: int = 5,
+    top_k: int = DEFAULT_TOP_K,
     *,
     content_type_boosts: dict[str, float] | None = None,
 ) -> dict:
@@ -118,6 +134,9 @@ async def run_rag_search(
     deployment-wide CONTENT_TYPE_BOOSTS default (no boost by default). See
     reranking.py's module docstring for why this is scoped down from full
     modality-aware retrieval."""
+    # See MAX_TOP_K: both current callers validate before reaching this, so a
+    # value outside the range means a new transport skipped that check.
+    top_k = max(1, min(top_k, MAX_TOP_K))
     try:
         claims = parse_claims(bearer_token)
     except jwt.PyJWTError as exc:
