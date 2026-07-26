@@ -102,9 +102,10 @@ jobs:
           cache: pip
       - name: Install test toolchain and the service's dependencies
         run: |
-          # respx backs the reranker HTTP stubs; mcp is orchestration-mcp's
-          # own runtime dep, imported transitively via app/server.py.
-          pip install pytest pytest-asyncio pytest-cov respx "mcp>=1.6"
+          # respx backs the reranker HTTP stubs; mcp and prometheus-client are
+          # orchestration-mcp's own runtime deps, imported transitively via
+          # app/server.py (mcp) and app/metrics.py (prometheus-client, #72).
+          pip install pytest pytest-asyncio pytest-cov respx "mcp>=1.6" "prometheus-client>=0.20"
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
             "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \

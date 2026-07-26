@@ -38,12 +38,14 @@ from __future__ import annotations
 
 import logging
 import os
+from time import perf_counter
 
 import httpx
 import jwt
 from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import Fusion, FusionQuery, Prefetch
 
+from app import metrics
 from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
@@ -193,6 +195,27 @@ async def _embed_query(query: str) -> list[float]:
         return resp.json()["embedding"]
 
 
+def _timings_ms(timings: dict[str, float], started: float) -> dict[str, int]:
+    """Round per-stage durations to milliseconds for the audit entry, and feed
+    the same numbers to the scrape aggregates (issue #72).
+
+    Recorded in the audit log, never in the response: latency correlates with
+    how much the access filter matched and how many candidates were reranked,
+    so returning precise per-stage figures would hand membership inference a
+    cleaner timing signal than the wall-clock a caller can already observe
+    (see #127). Operators get the detail; callers do not.
+
+    Whole milliseconds, not floats: sub-millisecond precision is noise at this
+    scale, and a rounded value is a weaker side channel if these entries are
+    ever exported (#73).
+    """
+    total = perf_counter() - started
+    for stage, seconds in timings.items():
+        metrics.query_stage_seconds.labels(stage=stage).observe(seconds)
+    metrics.query_stage_seconds.labels(stage="total").observe(total)
+    return {**{k: round(v * 1000) for k, v in timings.items()}, "total": round(total * 1000)}
+
+
 def _audit(claims: UserClaims, action: str, detail: dict) -> None:
     with next(get_session()) as session:
         session.add(
@@ -231,6 +254,7 @@ async def run_rag_search(
         return {"error": f"invalid token: {exc}"}
 
     if not claims.can_query:
+        metrics.queries_total.labels(outcome="denied").inc()
         _audit(claims, "query.denied", _audit_query_detail(query, reason="missing rag-query role"))
         return {"error": "missing rag-query role"}
 
@@ -266,10 +290,14 @@ async def run_rag_search(
         return result
 
     hybrid_limit = max(top_k * HYBRID_CANDIDATE_MULTIPLIER, MIN_HYBRID_CANDIDATES)
+    started = perf_counter()
+    timings: dict[str, float] = {}
 
     try:
         dense_vector = await _embed_query(query)
         sparse_vector = embed_sparse([query])[0]
+        timings["embed"] = perf_counter() - started
+        retrieval_started = perf_counter()
         hits = get_qdrant_client().query_points(
             collection_name=QDRANT_COLLECTION,
             prefetch=[
@@ -289,6 +317,7 @@ async def run_rag_search(
             query=FusionQuery(fusion=Fusion.RRF),
             limit=hybrid_limit,
         ).points
+        timings["retrieve"] = perf_counter() - retrieval_started
     except (UnexpectedResponse, httpx.HTTPError) as exc:
         result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
         result["reranking"] = "skipped, no candidates"
@@ -298,6 +327,7 @@ async def run_rag_search(
             "created lazily on first ingestion (common.qdrant_store.ensure_collection), "
             "so this is expected if no document has been submitted yet"
         )
+        metrics.queries_total.labels(outcome="unavailable").inc()
         _audit(
             claims,
             "query",
@@ -307,6 +337,7 @@ async def run_rag_search(
                 applied_filter=filter_summary,
                 result_count=0,
                 note=result["note"],
+                timings_ms=_timings_ms(timings, started),
             ),
         )
         return result
@@ -320,6 +351,8 @@ async def run_rag_search(
             "no chunks matched -- either nothing's been ingested/approved yet, "
             "or nothing in the corpus passes this user's access filter"
         )
+        metrics.queries_total.labels(outcome="empty").inc()
+        metrics.results_returned.observe(0)
         _audit(
             claims,
             "query",
@@ -329,15 +362,22 @@ async def run_rag_search(
                 applied_filter=filter_summary,
                 result_count=0,
                 note=result["note"],
+                timings_ms=_timings_ms(timings, started),
             ),
         )
         return result
 
     candidates = [{"id": str(h.id), "score": h.score, "payload": h.payload} for h in hits]
+    rerank_started = perf_counter()
     reranked, rerank_note = await rerank(
         query, candidates, top_k, content_type_boosts=content_type_boosts
     )
+    timings["rerank"] = perf_counter() - rerank_started
     result["reranking"] = rerank_note
+    # FR-25 degrades to fused order rather than failing when reranker-service
+    # is unreachable, which makes a quality drop invisible without this.
+    if "unavailable" in rerank_note:
+        metrics.reranker_fallback_total.inc()
     # P1: delimit chunk text *after* reranking, not before -- reranker-service's
     # cross-encoder needs the raw text to score against the query, not text
     # padded with marker tags. Copy each result rather than mutating the dicts
@@ -373,7 +413,10 @@ async def run_rag_search(
             applied_filter=filter_summary,
             result_count=len(reranked),
             result_document_ids=[r["payload"].get("document_id") for r in reranked],
+            timings_ms=_timings_ms(timings, started),
         ),
     )
+    metrics.queries_total.labels(outcome="ok").inc()
+    metrics.results_returned.observe(len(reranked))
 
     return result

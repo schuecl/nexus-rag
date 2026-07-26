@@ -28,8 +28,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
+from app import metrics
 from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
 
 # FastMCP's default DNS-rebinding protection only allows Host headers of
@@ -95,6 +96,27 @@ async def rag_search(
 @mcp_server.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
+
+
+@mcp_server.custom_route("/metrics", methods=["GET"])
+async def prometheus_metrics(_request: Request) -> Response:
+    """Issue #72: scrape surface for retrieval latency, outcome counts, and the
+    reranker fallback rate.
+
+    Unauthenticated, like /health, because a scrape target generally is -- and
+    because it carries no corpus content: stage names and outcome names only,
+    never a user, query, or document id (see app/metrics.py on why label
+    cardinality is kept content-free).
+
+    It is not *nothing*, though: aggregate query volume and result-count
+    distributions are operational signal. Reaching it should be restricted at
+    the network layer rather than left open to the namespace -- see the
+    NetworkPolicy work in #110, which currently allows only ingestion-api and
+    the configured MCP clients to reach this service, so a Prometheus scraper
+    needs adding there explicitly.
+    """
+    payload, content_type = metrics.render()
+    return Response(payload, media_type=content_type)
 
 
 @mcp_server.custom_route("/debug/rag_search", methods=["POST"])
