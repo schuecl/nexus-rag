@@ -32,6 +32,18 @@ OIDC_CLIENT_SECRET = os.environ.get("RAG_APP_KEYCLOAK_CLIENT_SECRET", "dev-rag-a
 # browser-facing one (routes/auth.py's OIDC_BROWSER_ISSUER).
 OIDC_TOKEN_ISSUER = OIDC_ISSUERS[0]
 
+# Absolute ceiling on one browser session, counted from login -- not a
+# sliding window. Lives here rather than in routes/auth.py (which sets it as
+# the session cookie's max_age) because it has to be enforced on every
+# request, and auth.py imports from this module, not the other way round.
+#
+# Issue #108: this used to bound only the cookie. The server-side row had no
+# absolute expiry at all, so _refresh_session below would keep minting fresh
+# access tokens for as long as Keycloak honoured the refresh token -- a
+# session id captured once outlived the 8 hours the constant implies, bounded
+# by Keycloak's refresh policy rather than by anything this app decided.
+SESSION_LIFETIME = timedelta(hours=8)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -43,6 +55,20 @@ def _as_aware_utc(dt: datetime) -> datetime:
     value read back from the DB as UTC rather than letting the `>` comparison
     below raise on offset-naive vs. offset-aware."""
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def session_expired(row: UserSession, *, now: datetime | None = None) -> bool:
+    """Has this session passed its absolute lifetime (SESSION_LIFETIME from
+    login)? Distinct from row.expires_at, which is the *access token's*
+    expiry and is what _refresh_session renews. Nothing renews this one --
+    that's the point."""
+    now = now or _utcnow()
+    return _as_aware_utc(row.created_at) + SESSION_LIFETIME <= now
+
+
+def _drop_session(db: Session, row: UserSession) -> None:
+    db.delete(row)
+    db.commit()
 
 
 def _refresh_session(db: Session, row: UserSession) -> UserClaims | None:
@@ -75,6 +101,11 @@ def _refresh_session(db: Session, row: UserSession) -> UserClaims | None:
 
 
 def _claims_from_session(db: Session, row: UserSession) -> UserClaims | None:
+    # Absolute lifetime first: a session past it must not be renewable, so
+    # this has to short-circuit before _refresh_session gets a chance.
+    if session_expired(row):
+        _drop_session(db, row)
+        return None
     if _as_aware_utc(row.expires_at) > _utcnow():
         try:
             return parse_claims("Bearer " + row.access_token)
@@ -125,6 +156,12 @@ def get_current_access_token(request: Request, db: Session = Depends(get_session
     session_id = request.cookies.get(SESSION_COOKIE)
     if session_id:
         row = db.get(UserSession, session_id)
+        # Same absolute-lifetime gate as _claims_from_session -- this path
+        # deliberately does not share that function (see the docstring
+        # above), so the check has to be repeated rather than inherited.
+        if row is not None and session_expired(row):
+            _drop_session(db, row)
+            row = None
         if row is not None:
             if _as_aware_utc(row.expires_at) > _utcnow():
                 return row.access_token

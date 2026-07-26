@@ -111,9 +111,14 @@ class OAuthState(SQLModel, table=True):
     """Short-lived, one-time-use row backing the ingestion UI's OIDC
     Authorization Code + PKCE login (ARCHITECTURE.md Section 4.4) -- id is the
     `state` value handed to Keycloak and echoed back at /auth/callback, bound
-    to the same browser via a cookie holding the identical value. Deleted
-    once consumed; an abandoned row is harmless (never redeemable without the
-    matching cookie) and low-volume enough not to need a cleanup job here."""
+    to the same browser via a cookie holding the identical value.
+
+    Deleted once consumed, and `created_at` is enforced as a TTL
+    (auth.OAUTH_STATE_TTL) at /callback -- an abandoned row stops being
+    redeemable rather than staying valid indefinitely. Issue #108: the
+    claim that abandoned rows were "low-volume enough not to need a cleanup
+    job" didn't hold, since /auth/login is unauthenticated and wrote one row
+    per call with nothing reaping them; auth._purge_expired now does."""
 
     __tablename__ = "oauth_states"
 
@@ -132,6 +137,11 @@ class UserSession(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     access_token: str
+    # Issue #108: `created_at` below is load-bearing, not just informational
+    # -- deps.session_expired() enforces an absolute SESSION_LIFETIME from
+    # it. Without that, _refresh_session would renew this row for as long as
+    # Keycloak honoured the refresh token, so a captured session id outlived
+    # the lifetime the cookie's max_age implied.
     refresh_token: str | None = None
     # Kept only for Keycloak RP-initiated logout's `id_token_hint` param
     # (app/routes/auth.py's logout()) -- never used for claims/auth checks,

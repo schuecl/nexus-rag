@@ -14,13 +14,21 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
-from app.deps import CSRF_COOKIE, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_TOKEN_ISSUER, SESSION_COOKIE
+from app.deps import (
+    CSRF_COOKIE,
+    OIDC_CLIENT_ID,
+    OIDC_CLIENT_SECRET,
+    OIDC_TOKEN_ISSUER,
+    SESSION_COOKIE,
+    SESSION_LIFETIME,
+    _as_aware_utc,
+)
 from common.claims import OIDC_ISSUERS
 from common.db import get_session
 from common.models import OAuthState, UserSession
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlmodel import Session
+from sqlmodel import Session, delete
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -37,11 +45,50 @@ OIDC_REDIRECT_URI = os.environ.get("OIDC_REDIRECT_URI", "http://localhost:8001/a
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() == "true"
 
 STATE_COOKIE = "nexus_rag_oauth_state"
-SESSION_LIFETIME = timedelta(hours=8)
+
+# Issue #108: how long a `state` row stays redeemable. Matches STATE_COOKIE's
+# max_age below -- past that the browser no longer sends the cookie the state
+# has to match, so a row older than this could never be redeemed anyway; it
+# was simply sitting in the table forever. /callback's "unknown or expired
+# OAuth state" message described this behaviour before anything implemented
+# it.
+OAUTH_STATE_TTL = timedelta(minutes=10)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _purge_expired(db: Session) -> None:
+    """Reap rows that can no longer be used, on the one unauthenticated write
+    path that creates them.
+
+    /auth/login is the only endpoint in this service that writes to the
+    database without a caller identity, and it inserted an oauth_states row
+    per call with nothing ever deleting the abandoned ones -- so a trivial
+    loop against it grew the table without bound, and because every service
+    shares one Postgres instance that degrades Keycloak and LiteLLM too, not
+    just ingestion.
+
+    Purging here rather than on a timer means the requests driving the growth
+    are the same ones paying to clean it up. It bounds the table at roughly
+    (login rate x TTL) rather than eliminating the flood outright -- a real
+    rate limit in front of /auth/login is a separate concern this doesn't
+    pretend to solve. user_sessions is swept on the same trigger since new
+    sessions are created here too.
+
+    This is housekeeping, never an enforcement point. The comparison below
+    happens in SQL, so _as_aware_utc can't normalise it and the exact
+    boundary depends on how the dialect compares a naive column against an
+    aware parameter. That's tolerable precisely because nothing trusts it:
+    whether a state or session is still usable is decided in Python on every
+    use (callback() below, and deps.session_expired), so a sweep that runs a
+    few hours late deletes a row that already stopped working.
+    """
+    now = _utcnow()
+    db.exec(delete(OAuthState).where(OAuthState.created_at < now - OAUTH_STATE_TTL))
+    db.exec(delete(UserSession).where(UserSession.created_at < now - SESSION_LIFETIME))
+    db.commit()
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -52,6 +99,7 @@ def _pkce_pair() -> tuple[str, str]:
 
 @router.get("/login")
 def login(db: Session = Depends(get_session)) -> RedirectResponse:
+    _purge_expired(db)
     state = secrets.token_urlsafe(32)
     verifier, challenge = _pkce_pair()
     db.add(OAuthState(id=state, code_verifier=verifier))
@@ -88,8 +136,14 @@ def callback(
     row = db.get(OAuthState, state)
     if row is None:
         raise HTTPException(400, "unknown or expired OAuth state")
+    # Consume the row before deciding whether it was still valid: an expired
+    # state is spent either way, so a caller can't retry against it.
+    expired = _as_aware_utc(row.created_at) + OAUTH_STATE_TTL <= _utcnow()
+    code_verifier = row.code_verifier
     db.delete(row)
     db.commit()
+    if expired:
+        raise HTTPException(400, "unknown or expired OAuth state")
 
     token_resp = httpx.post(
         f"{OIDC_TOKEN_ISSUER}/protocol/openid-connect/token",
@@ -99,7 +153,10 @@ def callback(
             "redirect_uri": OIDC_REDIRECT_URI,
             "client_id": OIDC_CLIENT_ID,
             "client_secret": OIDC_CLIENT_SECRET,
-            "code_verifier": row.code_verifier,
+            # The local, not row.code_verifier: the row is deleted and the
+            # transaction committed above, so the instance is expired and
+            # touching it here would re-query (or fail) for no reason.
+            "code_verifier": code_verifier,
         },
         timeout=10,
     )
