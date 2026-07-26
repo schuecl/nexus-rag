@@ -40,7 +40,9 @@ async def ensure_stream(js: JetStreamContext) -> None:
     try:
         await js.stream_info(INGESTION_STREAM)
     except nats.js.errors.NotFoundError:
-        await js.add_stream(config=StreamConfig(name=INGESTION_STREAM, subjects=[INGESTION_SUBJECT]))
+        await js.add_stream(
+            config=StreamConfig(name=INGESTION_STREAM, subjects=[INGESTION_SUBJECT])
+        )
 
 
 async def publish_ingestion_job(js: JetStreamContext, document_id: str) -> None:

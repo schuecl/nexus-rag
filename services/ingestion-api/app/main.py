@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from sqlmodel import Session, select
+
 from app.deps import get_current_user_optional
 from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
@@ -9,10 +14,6 @@ from common.db import get_engine, get_session, init_db
 from common.job_queue import ensure_stream, get_nats_connection
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, ReleasabilityValue
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, select
 
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),

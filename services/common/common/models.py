@@ -6,14 +6,14 @@ in REQUIREMENTS.md Section 6.3 and C9)."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
-from sqlalchemy import Column, JSON
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ClassificationLevel(SQLModel, table=True):
@@ -58,7 +58,8 @@ class Document(SQLModel, table=True):
     # qdrant_filters.build_access_filter) -- same "any element in common"
     # semantics as access_scope below, just a different vocabulary.
     releasability: list[str] = Field(sa_column=Column(JSON))
-    access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "ALL_AUTHENTICATED"
+    # orgs/groups/users, or "ALL_AUTHENTICATED"
+    access_scope: list[str] = Field(sa_column=Column(JSON))
     source_originator: str
     doc_type: str
     program_community: str | None = None

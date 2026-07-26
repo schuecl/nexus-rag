@@ -21,7 +21,6 @@ import sys
 import time
 
 import httpx
-
 from _keycloak import KEYCLOAK_URL, REALM, get_token, wait_until_up
 
 INGESTION_API_URL = os.environ.get("INGESTION_API_URL", "http://ingestion-api:8001")
@@ -165,7 +164,9 @@ def main() -> None:
         releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
-    seeded.append(("draft-travel-policy.md", "pending_review (left unreviewed)", "CUI / USAREUR-AF"))
+    seeded.append(
+        ("draft-travel-policy.md", "pending_review (left unreviewed)", "CUI / USAREUR-AF")
+    )
 
     d = submit(
         alice,
@@ -229,6 +230,6 @@ if __name__ == "__main__":
         print(f"FAILED: {exc.request.method} {exc.request.url} -> {exc.response.status_code} "
               f"{exc.response.text}", file=sys.stderr)
         sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         sys.exit(1)

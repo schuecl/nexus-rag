@@ -1,0 +1,15 @@
+# Coverage config for the unit-test gate (.github/workflows/ci.yml,
+# docs/testing.md). The enforced >=85% line+branch threshold applies to the
+# modules below; the omitted ones are deliberately excluded from the *unit*
+# gate because exercising them requires live infrastructure (Postgres,
+# Qdrant) or a model download (fastembed) -- they are covered instead by the
+# compose-level e2e job (e2e.yml), which runs the real stack.
+[run]
+omit =
+    services/common/common/db.py
+    services/common/common/qdrant_store.py
+    services/common/common/sparse_embedding.py
+
+[report]
+show_missing = true
+skip_covered = false

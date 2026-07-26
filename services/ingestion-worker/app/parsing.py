@@ -112,7 +112,7 @@ def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
             return _parse_xlsx(content)
     except ParsingError:
         raise
-    except Exception as exc:  # noqa: BLE001 - normalize any library-specific failure
+    except Exception as exc:
         raise ParsingError(f"failed to parse {ext or 'file'}: {exc}") from exc
 
     raise ParsingError(f"unsupported file type: {ext or filename}")
@@ -201,11 +201,10 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
     except PdfReadError as exc:
         raise ParsingError(f"corrupt PDF: {exc}") from exc
 
-    if reader.is_encrypted:
-        # Try an empty password (common for "restricted" rather than truly
-        # encrypted PDFs); anything else is reported as password-protected.
-        if reader.decrypt("") == 0:
-            raise ParsingError("password-protected PDF")
+    # Try an empty password (common for "restricted" rather than truly
+    # encrypted PDFs); anything else is reported as password-protected.
+    if reader.is_encrypted and reader.decrypt("") == 0:
+        raise ParsingError("password-protected PDF")
 
     import pdfplumber
 

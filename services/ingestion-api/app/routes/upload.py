@@ -19,6 +19,9 @@ import json
 import os
 import uuid
 
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from sqlmodel import Session, select
+
 from app.deps import allowed_classifications, get_current_user, require_ingest, verify_csrf
 from common.db import get_session
 from common.job_queue import publish_ingestion_job
@@ -26,8 +29,6 @@ from common.metadata import DocumentMetadataIn, MetadataValidationError, validat
 from common.models import AuditLogEntry, Document
 from common.object_store import document_object_key, get_object_store
 from common.versioning import SupersedeValidationError, validate_supersede_target
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from sqlmodel import Session, select
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
 

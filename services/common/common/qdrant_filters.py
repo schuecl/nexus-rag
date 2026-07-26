@@ -26,7 +26,6 @@ def build_access_filter(
     scope_values = {ALL_AUTHENTICATED_ACCESS_SCOPE, claims.sub, *claims.groups}
     if claims.org:
         scope_values.add(claims.org)
-    scope_values = list(scope_values)
 
     return Filter(
         must=[
@@ -38,6 +37,6 @@ def build_access_filter(
                 key="releasability",
                 match=MatchAny(any=[NO_RELEASABILITY_RESTRICTION, *claims.releasability]),
             ),
-            FieldCondition(key="access_scope", match=MatchAny(any=scope_values)),
+            FieldCondition(key="access_scope", match=MatchAny(any=sorted(scope_values))),
         ]
     )

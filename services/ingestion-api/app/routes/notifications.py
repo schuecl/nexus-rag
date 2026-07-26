@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+
 from app.deps import get_current_user, verify_csrf
 from common.db import get_session
 from common.models import Notification
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 

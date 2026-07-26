@@ -48,14 +48,14 @@ from app.parsing import ParsedSection
 # FR-4: "configurable target chunk size and overlap" -- these were hardcoded
 # constants with no way to change them short of editing code; now read from
 # the environment, with the same Section 2 starting-point values as defaults.
-DEFAULT_TARGET_WORDS = int(os.environ.get("CHUNK_TARGET_WORDS", 512))
-DEFAULT_OVERLAP_RATIO = float(os.environ.get("CHUNK_OVERLAP_RATIO", 0.15))
+DEFAULT_TARGET_WORDS = int(os.environ.get("CHUNK_TARGET_WORDS", "512"))
+DEFAULT_OVERLAP_RATIO = float(os.environ.get("CHUNK_OVERLAP_RATIO", "0.15"))
 # A table section is kept atomic up to this size -- much larger than
 # target_words, since a table is only split as a last resort. Default chosen
 # to stay well under a typical embedding backend's batch-size ceiling (e.g.
 # Ollama's default 2048-token physical batch) even accounting for
 # ID/number-heavy cell text tokenizing worse than the word-count approximation.
-DEFAULT_TABLE_MAX_WORDS = int(os.environ.get("CHUNK_TABLE_MAX_WORDS", 700))
+DEFAULT_TABLE_MAX_WORDS = int(os.environ.get("CHUNK_TABLE_MAX_WORDS", "700"))
 
 # A run of the same non-whitespace character repeated 4+ times in a row --
 # almost always a PDF dot-leader or similar visual filler, never real prose

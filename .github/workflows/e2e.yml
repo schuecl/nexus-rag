@@ -1,0 +1,165 @@
+# E2E: full-stack verification identical to a local run. Brings up the real
+# Compose stack (Postgres, Qdrant, NATS, Keycloak, Ollama + models, all four
+# custom services), lets seed-sample-data run the FR-1..FR-16 flow, then runs
+# the golden-query retrieval harness (FR-30/FR-32), which fails on any
+# recall miss against the golden set and on any forbidden (pending/rejected/
+# superseded) document leaking into results (FR-26 regression).
+#
+# Runs nightly and on PRs that touch anything the stack depends on. The
+# mutation job is nightly/manual-only and advisory until a baseline score is
+# established (see docs/testing.md).
+name: e2e
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "services/**"
+      - "scripts/**"
+      - "infra/**"
+      - "docker-compose.yml"
+      - ".github/workflows/e2e.yml"
+
+jobs:
+  golden-query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the dev TLS material Keycloak's HTTPS listener needs
+        # #98 gave Keycloak a real HTTPS listener
+        # (KC_HTTPS_CERTIFICATE_FILE -> /opt/keycloak/certs/dev.crt, mounted
+        # from infra/certs). Those files are generated, not committed, so
+        # without this step the container exits(1) on boot with
+        # "NoSuchFileException /opt/keycloak/certs/dev.crt" and every service
+        # depending on it fails to start. dev-setup.md documents the same
+        # script as a prerequisite for a local run.
+        #
+        # The chmod is CI-specific and deliberately not pushed down into the
+        # script, whose 0600 on the private keys is right for a developer's
+        # machine. Here the key is bind-mounted into the Keycloak container,
+        # which runs as UID 1000, while the runner writes it as UID 1001 --
+        # so 0600 reads back as AccessDeniedException inside the container.
+        # Only the leaf key Keycloak actually opens is relaxed (never ca.key),
+        # on an ephemeral runner, for a throwaway cert regenerated every run.
+        run: |
+          infra/certs/generate-dev-certs.sh
+          chmod 0644 infra/certs/dev.key
+      - name: Start the full stack and seed sample data
+        # Not `up --wait`: the stack's one-shot containers (ollama-model-init,
+        # seed-sample-data, harden-audit-log) exit 0 by design, and --wait
+        # treats an early exit as a failure on some compose versions. Wait
+        # explicitly on the long-running services' healthchecks, then on each
+        # one-shot's exit code.
+        env:
+          # This job evaluates *retrieval*: evaluate_retrieval.py calls
+          # orchestration-mcp's /debug/rag_search, which is dense embedding +
+          # BM25 + cross-encoder rerank. Nothing here generates text. Left at
+          # its default, ollama-model-init would still pull
+          # qwen2.5:7b-instruct (~4.7GB) on every run alongside
+          # nomic-embed-text (~275MB) -- minutes of wall clock for a model no
+          # assertion in this job touches. Pointing it at the embedding model
+          # makes that second `ollama pull` a cache hit.
+          #
+          # This costs no coverage: the generation path runs through
+          # LibreChat/LiteLLM, which this job never drives, and which is
+          # blocked upstream anyway (#96/#97). A job that does exercise
+          # generation must set this back to a real generation model.
+          GENERATION_MODEL: nomic-embed-text
+        run: |
+          set -e
+          docker compose up -d
+          # `up -d` is detached, so everything above prints within a second
+          # and the minutes that follow are spent in the silent wait below.
+          # Without these echoes the step is indistinguishable from a hang
+          # until it either finishes or times out 15 minutes later.
+          docker compose ps
+          echo "::group::Waiting for service healthchecks"
+          timeout 900 bash -c '
+            for svc in ingestion-api ingestion-worker orchestration-mcp reranker-service; do
+              waited=0
+              until [ "$(docker inspect --format "{{.State.Health.Status}}" "nexus-rag-$svc-1" 2>/dev/null)" = "healthy" ]; do
+                sleep 5
+                waited=$((waited + 5))
+                if [ $((waited % 30)) -eq 0 ]; then
+                  echo "  ... still waiting on $svc (${waited}s, state=$(docker inspect --format "{{.State.Health.Status}}" "nexus-rag-$svc-1" 2>/dev/null || echo absent))"
+                fi
+              done
+              echo "  [healthy] $svc after ${waited}s"
+            done'
+          echo "::endgroup::"
+          echo "Waiting on one-shot containers (model pull, seeding, audit-log hardening)..."
+          docker compose wait ollama-model-init seed-sample-data harden-audit-log || true
+          for svc in ollama-model-init seed-sample-data harden-audit-log; do
+            code=$(docker inspect --format '{{.State.ExitCode}}' "nexus-rag-$svc-1")
+            if [ "$code" != "0" ]; then
+              echo "::error::$svc exited with code $code"
+              exit 1
+            fi
+          done
+      - name: Run the golden-query retrieval evaluation
+        run: |
+          set -o pipefail
+          docker compose --profile eval run --rm eval-retrieval | tee retrieval-eval.txt
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-eval-report
+          path: retrieval-eval.txt
+          if-no-files-found: ignore
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  mutation:
+    # Advisory (continue-on-error) until a baseline mutation score exists;
+    # the goal is >=80% on services/common before this becomes a merge gate.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install mutmut, test toolchain, and dependencies
+        # Deliberately NO install of services/common itself: mutmut must
+        # resolve `common` from its own mutated copy, not from an installed
+        # package (see tests/conftest.py's MUTANT_UNDER_TEST guard).
+        run: |
+          pip install mutmut==3.6.0
+          pip install -r requirements-test.txt
+          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+      - name: Run mutation testing on services/common
+        # Runs from services/common so mutated module names match the test
+        # suite's `common.*` imports -- see pyproject.toml's [tool.mutmut].
+        # mutmut only auto-copies a tests/ dir inside its project root, so
+        # the repo-root tests/ tree is staged here first.
+        run: |
+          cd services/common
+          mkdir -p tests/unit/common
+          cp ../../tests/conftest.py tests/
+          cp ../../tests/unit/common/*.py tests/unit/common/
+          mutmut run --max-children 4
+          mutmut results || true
+          rm -rf tests
+      - name: Export HTML report
+        if: always()
+        run: cd services/common && mutmut html || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: |
+            services/common/mutants/
+            services/common/html/
+          if-no-files-found: ignore

@@ -3,12 +3,13 @@ reorder without a code change or redeploy."""
 
 from __future__ import annotations
 
-from app.deps import require_admin, verify_csrf
-from common.db import get_session
-from common.models import ClassificationLevel, ReleasabilityValue
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
+
+from app.deps import require_admin, verify_csrf
+from common.db import get_session
+from common.models import ClassificationLevel, ReleasabilityValue
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

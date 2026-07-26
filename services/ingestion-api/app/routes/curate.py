@@ -7,16 +7,17 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.deps import allowed_classifications, require_curator, verify_csrf
 from common.db import get_session
 from common.metadata import releasability_authorized
 from common.models import AuditLogEntry, Document, Notification
 from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-from sqlmodel import Session, select
 
 logger = logging.getLogger("ingestion-api")
 
@@ -100,7 +101,7 @@ def _execute_supersede(user, old_doc: Document, new_doc: Document, session: Sess
     passed, so this is expected not to fail."""
     delete_document_chunks(get_qdrant_client(), str(old_doc.id))
     old_doc.status = "superseded"
-    old_doc.updated_at = datetime.now(timezone.utc)
+    old_doc.updated_at = datetime.now(UTC)
     session.add(old_doc)
     session.add(
         AuditLogEntry(
@@ -147,7 +148,7 @@ def approve(
 
     doc.status = "approved"
     doc.reviewed_by_sub = user.sub
-    doc.reviewed_at = datetime.now(timezone.utc)
+    doc.reviewed_at = datetime.now(UTC)
 
     qdrant_fields = {"status": doc.status}
     if corrections:
@@ -227,7 +228,7 @@ def reject(
     doc.status = "rejected"
     doc.rejection_reason = body.reason
     doc.reviewed_by_sub = user.sub
-    doc.reviewed_at = datetime.now(timezone.utc)
+    doc.reviewed_at = datetime.now(UTC)
     qdrant = get_qdrant_client()
     update_document_payload(qdrant, str(doc.id), {"status": doc.status})
     # NFR-13: same reasoning as approve() above -- revert the Qdrant write if

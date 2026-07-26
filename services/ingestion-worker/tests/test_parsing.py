@@ -20,6 +20,7 @@ doesn't need reportlab as a test dependency just to build them.
 from pathlib import Path
 
 import pytest
+
 from app.parsing import ParsingError, parse_document
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -31,7 +31,11 @@ _model: CrossEncoder | None = None
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _model
+    # The module-level singleton is deliberate: the model is loaded once at
+    # startup and read by both /health and /rerank, neither of which takes a
+    # Request, so app.state isn't reachable from them without changing both
+    # signatures. One process, one model, assigned exactly here.
+    global _model  # noqa: PLW0603
     _model = CrossEncoder(MODEL_NAME)
     yield
 
@@ -73,6 +77,6 @@ def rerank(body: RerankRequest):
     pairs = [(body.query, chunk.text) for chunk in body.chunks]
     scores = _model.predict(pairs)
     ranked = sorted(
-        zip(body.chunks, scores), key=lambda pair: pair[1], reverse=True
+        zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True
     )
     return [RerankedChunk(id=chunk.id, score=float(score)) for chunk, score in ranked]

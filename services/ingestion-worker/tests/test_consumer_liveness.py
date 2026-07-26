@@ -20,6 +20,7 @@ import asyncio
 import uuid
 
 import pytest
+
 from app import main as worker_main
 from app import processing
 

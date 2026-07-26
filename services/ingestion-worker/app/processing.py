@@ -18,7 +18,12 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from nats.errors import TimeoutError as NatsTimeoutError
+from nats.js.api import ConsumerConfig
+from qdrant_client.models import PointStruct
+from sqlmodel import Session
 
 from app.chunking import chunk_sections
 from app.embedding import EmbeddingError, embed_texts
@@ -29,10 +34,6 @@ from common.models import AuditLogEntry, Document
 from common.object_store import get_object_store
 from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
 from common.sparse_embedding import embed_sparse
-from nats.js.api import ConsumerConfig
-from nats.errors import TimeoutError as NatsTimeoutError
-from qdrant_client.models import PointStruct
-from sqlmodel import Session
 
 logger = logging.getLogger("ingestion-worker")
 
@@ -61,7 +62,7 @@ NAK_BACKOFF_SECONDS = 30.0
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -158,7 +159,9 @@ async def process_document(document_id: uuid.UUID) -> bool:
                         "status": "pending_review",
                     },
                 )
-                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
+                for chunk, dense, sparse in zip(
+                    chunks, dense_vectors, sparse_vectors, strict=True
+                )
             ]
             qdrant = get_qdrant_client()
             ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
@@ -224,7 +227,7 @@ async def process_document(document_id: uuid.UUID) -> bool:
             )
             session.commit()
             return True
-        except Exception:  # noqa: BLE001 -- NFR-7: never crash the worker
+        except Exception:
             # Unexpected/transient -- Qdrant or the DB unreachable, a bug,
             # etc. Roll back rather than commit doc.status = "processing" as
             # a dead end, and don't ack: JetStream redelivers this message
@@ -263,7 +266,7 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
                 )
             )
             session.commit()
-    except Exception:  # noqa: BLE001 -- best effort; the message is dropped either way
+    except Exception:
         logger.exception(
             "could not mark document %s failed after exhausting redelivery", document_id
         )
@@ -340,7 +343,7 @@ async def consume_forever() -> None:
             for msg in msgs:
                 try:
                     await _handle_message(msg)
-                except Exception:  # noqa: BLE001 -- one bad message must not stop the consumer
+                except Exception:
                     logger.exception("unhandled error handling a message, continuing")
     except asyncio.CancelledError:
         # Normal shutdown -- app/main.py's lifespan cancels this task.

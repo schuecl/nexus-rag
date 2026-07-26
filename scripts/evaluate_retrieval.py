@@ -26,11 +26,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-
 from _keycloak import get_token
 
 ORCHESTRATION_MCP_URL = os.environ.get("ORCHESTRATION_MCP_URL", "http://orchestration-mcp:8002")
@@ -85,7 +84,7 @@ def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
     total_leaks = sum(len(q["leaked_forbidden"]) for q in per_query)
 
     return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "persona": persona,
         "mean_recall_at_k": (sum(recalls) / len(recalls)) if recalls else None,
         "mean_precision_at_k": (sum(precisions) / len(precisions)) if precisions else None,

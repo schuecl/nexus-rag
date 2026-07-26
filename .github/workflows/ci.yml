@@ -1,0 +1,187 @@
+# CI: the PR gate. Every pull request and every push to main must pass
+# unit tests (with the coverage floor), the BDD security scenarios, ruff,
+# mypy on services/common, the NFR-16 image-pin check, and a full image
+# build. Heavier verification (full-stack golden-query e2e, mutation
+# testing, image scans) lives in e2e.yml / security.yml.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install test toolchain and service dependencies
+        run: |
+          pip install -r requirements-test.txt
+          # services/common's runtime deps, minus fastembed/psycopg which the
+          # unit layer never touches (see .coveragerc's omit rationale). The
+          # package itself needs no install: tests/conftest.py puts
+          # services/common on sys.path.
+          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+      # The repo-root tree covers services/common (which has no service
+      # directory of its own) plus the cross-cutting BDD scenarios. Per-service
+      # unit tests live next to their service and run in the service-tests job
+      # below -- see issue #113 and docs/testing.md for why they aren't merged
+      # into one invocation.
+      - name: Unit tests + BDD security scenarios (services/common)
+        run: >
+          pytest tests/unit/common tests/e2e
+          --cov=common --cov-branch --cov-fail-under=85
+          --cov-report=xml:coverage-common.xml --cov-report=term-missing -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: coverage-*.xml
+          if-no-files-found: error
+
+  service-tests:
+    # Per-service unit tests, which live next to the service they cover.
+    #
+    # Issue #113: these are not duplicates of the repo-root tests/ tree. They
+    # carry the regression coverage added alongside the features themselves
+    # (#88/#89/#90 table extraction and content_type, #114 oversized chunks,
+    # #106..#109), and pytest.ini's `testpaths = tests` deliberately does not
+    # reach them.
+    #
+    # Each service is its own pytest invocation, run from its own directory,
+    # and that is not incidental: every service ships a top-level package
+    # named `app`. A single process can only ever resolve one of them, so
+    # collecting two services together fails outright (`ModuleNotFoundError:
+    # No module named 'app.parsing'` once `app` has bound elsewhere). Running
+    # one service at a time is what keeps them isolated, and is why each
+    # service has its own tests/conftest.py sys.path insert.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # cov: the modules whose coverage is gated for this service, or
+          # empty to run the suite without a coverage floor. ingestion-api is
+          # ungated on purpose -- its FastAPI route layer needs the
+          # containerized integration layer to be meaningfully covered (see
+          # docs/testing.md's known-gaps list).
+          - service: ingestion-api
+            cov: ""
+          - service: ingestion-worker
+            cov: "--cov=app.chunking --cov=app.parsing"
+          - service: orchestration-mcp
+            cov: "--cov=app.reranking"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test toolchain and the service's dependencies
+        run: |
+          # respx backs the reranker HTTP stubs; mcp is orchestration-mcp's
+          # own runtime dep, imported transitively via app/server.py.
+          pip install pytest pytest-asyncio pytest-cov respx "mcp>=1.6"
+          pip install --no-deps -e services/common
+          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \
+            "fastapi>=0.115" "httpx>=0.27" "python-multipart>=0.0.9" "jinja2>=3.1"
+          # ingestion-worker's parsers; harmless (and cached) for the others.
+          pip install "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
+            "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
+      - name: pytest (services/${{ matrix.service }}/tests)
+        working-directory: services/${{ matrix.service }}
+        run: >
+          pytest tests -q
+          ${{ matrix.cov && format('{0} --cov-branch --cov-fail-under=85 --cov-report=term-missing', matrix.cov) || '' }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.16.0
+      - name: ruff check
+        run: ruff check --output-format=github services scripts tests
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install mypy and services/common dependencies
+        run: |
+          pip install mypy==2.3.0
+          pip install --no-deps -e services/common
+          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+      - name: mypy on services/common (enforced)
+        run: mypy services/common/common
+
+  types-apps:
+    # The app services predate the type gate; keep their mypy output visible
+    # but non-blocking until their annotations are tightened. Kept separate
+    # from the enforced services/common gate, and exits 0 by design so the
+    # report stays in the logs without putting a red X on every PR.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install mypy and services/common dependencies
+        run: |
+          pip install mypy==2.3.0
+          pip install --no-deps -e services/common
+          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+      - name: mypy on the four app services (report-only)
+        run: |
+          status=0
+          for svc in ingestion-api ingestion-worker orchestration-mcp reranker-service; do
+            (cd "services/$svc" && MYPYPATH=../common mypy app) || status=1
+          done
+          if [ "$status" -ne 0 ]; then
+            echo "::notice::app-service mypy findings (report-only; see docs/testing.md)"
+          fi
+          exit 0
+
+  pin-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: NFR-16 -- no floating image tags
+        run: python scripts/check_pinned_images.py
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all custom service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service

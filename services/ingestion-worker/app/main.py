@@ -20,6 +20,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
 # Imported as a module, not `from app.processing import STATUS`: STATUS is a
 # mutable module-level object, and a from-import would bind this module to
 # whichever instance existed at import time. Production only ever mutates it
@@ -28,8 +31,6 @@ from contextlib import asynccontextmanager
 from app import processing
 from app.processing import consume_forever
 from common.db import init_db
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 
 
 def _log_consumer_exit(task: asyncio.Task) -> None:

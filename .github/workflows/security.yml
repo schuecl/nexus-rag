@@ -1,0 +1,106 @@
+# Security: static analysis, dependency auditing, Helm validation, and
+# vulnerability scanning. Runs on every PR and weekly; image scans run
+# weekly/on-demand only (they build every image first, which is slow).
+name: security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install bandit==1.9.4
+      - name: bandit static analysis
+        # Excludes test suites: they are full of bare `assert`, which is
+        # exactly right in a test and is all B101 would report. Now that
+        # per-service tests live under services/*/tests (issue #113), not
+        # excluding them buries real findings under ~170 B101 lines.
+        run: bandit -r services scripts --exclude '*/tests/*'
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install all service dependencies
+        # Audits the dependency tree the services actually ship, not the
+        # test toolchain (requirements-test.txt is dev-only). setuptools is
+        # upgraded first -- the version pip's own bootstrap leaves behind
+        # flags PYSEC-2026-3447 and would fail the audit on a non-service
+        # package.
+        run: |
+          pip install pip-audit==2.10.1
+          pip install -U "setuptools>=83.0.0"
+          pip install --no-deps \
+            -e services/common -e services/ingestion-api \
+            -e services/ingestion-worker -e services/orchestration-mcp \
+            -e services/reranker-service
+          pip install \
+            "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" "sqlmodel>=0.0.21" \
+            "psycopg[binary]>=3.1" "qdrant-client>=1.10" "fastembed>=0.6" \
+            "boto3>=1.34" "nats-py>=2.7" \
+            "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" \
+            "pypdf>=6.14.2" "python-docx>=1.1" "python-pptx>=1.0" \
+            "openpyxl>=3.1" "beautifulsoup4>=4.12" \
+            "mcp>=1.6" "sentence-transformers>=3.0"
+      - name: Audit for known vulnerabilities
+        run: pip-audit --skip-editable
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: helm lint
+        run: helm lint helm/nexus-rag
+      - name: helm template renders
+        # oidcRedirectUri must be set explicitly when no ingress host is
+        # configured -- the chart fails closed on this by design.
+        run: >
+          helm template helm/nexus-rag --debug
+          --set ingestionApi.oidcRedirectUri=https://rag.ci.example/auth/callback
+          > /dev/null
+
+  trivy-fs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
+  trivy-image:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service
+      - name: Scan images (HIGH/CRITICAL)
+        run: |
+          for image in \
+            nexus-rag-ingestion-api \
+            nexus-rag-ingestion-worker \
+            nexus-rag-orchestration-mcp \
+            nexus-rag-reranker-service; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:latest image \
+              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
+          done

@@ -40,6 +40,9 @@ import os
 
 import httpx
 import jwt
+from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.models import Fusion, FusionQuery, Prefetch
+
 from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
@@ -48,8 +51,6 @@ from common.models import AuditLogEntry
 from common.qdrant_filters import build_access_filter
 from common.qdrant_store import DENSE_VECTOR, QDRANT_COLLECTION, SPARSE_VECTOR, get_qdrant_client
 from common.sparse_embedding import embed_sparse
-from qdrant_client.http.exceptions import UnexpectedResponse
-from qdrant_client.models import Fusion, FusionQuery, Prefetch
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
@@ -238,7 +239,13 @@ async def run_rag_search(
     # padded with marker tags. Copy each result rather than mutating the dicts
     # rerank() returned, since those still hold the raw text pulled from Qdrant.
     result["results"] = [
-        {**r, "payload": {**r["payload"], "text": _delimit_untrusted_text(r["payload"].get("text", ""))}}
+        {
+            **r,
+            "payload": {
+                **r["payload"],
+                "text": _delimit_untrusted_text(r["payload"].get("text", "")),
+            },
+        }
         for r in reranked
     ]
     result["security_notice"] = SECURITY_NOTICE

@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
 
 # FastMCP's default DNS-rebinding protection only allows Host headers of
 # 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),
