@@ -6,14 +6,14 @@ in REQUIREMENTS.md Section 6.3 and C9)."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
-from sqlalchemy import Column, JSON
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ClassificationLevel(SQLModel, table=True):
@@ -58,7 +58,8 @@ class Document(SQLModel, table=True):
     # qdrant_filters.build_access_filter) -- same "any element in common"
     # semantics as access_scope below, just a different vocabulary.
     releasability: list[str] = Field(sa_column=Column(JSON))
-    access_scope: list[str] = Field(sa_column=Column(JSON))  # orgs/groups/users or "ALL_AUTHENTICATED"
+    # orgs/groups/users, or "ALL_AUTHENTICATED"
+    access_scope: list[str] = Field(sa_column=Column(JSON))
     source_originator: str
     doc_type: str
     program_community: str | None = None
@@ -69,6 +70,15 @@ class Document(SQLModel, table=True):
     # chunk vectors. Set at submission time, before processing ever starts --
     # see app/routes/upload.py.
     original_object_key: str | None = None
+
+    # Issue #138 (Phase 1): advisory, curator-facing marking-mismatch findings
+    # computed by the ingestion worker (common/marking_detection.py) -- e.g.
+    # "the document's own banner says SECRET but it was tagged CUI". Purely
+    # advisory: it is NOT one of the authoritative human-set tags above and is
+    # never used to gate retrieval or auto-change classification; the curator
+    # confirms or overrides it (FR-13). Null until the worker evaluates it, and
+    # left null if detection errors -- ingestion never depends on it.
+    tagging_advisory: dict | None = Field(default=None, sa_column=Column(JSON))
 
     status: str = Field(default="queued")
     # FR-8 progress states, in order: queued -> processing -> embedded ->

@@ -1,249 +1,166 @@
 # nexus-rag
 
-Enterprise-grade Retrieval-Augmented Generation (RAG) pipeline for **MPNexus** — an
-air-gapped DoD Kubernetes environment already running LibreChat, LiteLLM, Keycloak, and
-vLLM/Ollama. This project adds document ingestion, mandatory classification/releasability
-tagging, curator review, and claims-based access-controlled retrieval on top of that
-existing stack, exposed to LibreChat as a custom MCP tool.
+Air-gapped Retrieval-Augmented Generation (RAG) pipeline for **MPNexus** — a DoD
+Kubernetes environment already running LibreChat, LiteLLM, Keycloak, and vLLM/Ollama.
+nexus-rag adds document ingestion, mandatory classification/releasability tagging, curator
+review, and claims-based access-controlled retrieval on top of that stack, exposed to
+LibreChat as a custom MCP tool.
 
-Full requirements, design constraints, and open questions: **[REQUIREMENTS.md](REQUIREMENTS.md)**.
-For how the pieces fit together — component diagram, data model, and sequence diagrams for
-every major flow — see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
-Everything below is a snapshot of what's actually built against that spec, not a plan.
+Every access decision — what a user may assign at upload, what a curator may approve, and
+what a user may see at query time — is derived server-side from the caller's verified OIDC
+claims through one shared library, never trusted from the client.
 
-## Status
+> **Documentation:** requirements and design constraints in
+> **[REQUIREMENTS.md](REQUIREMENTS.md)**; component diagram, data model, and per-flow
+> sequence diagrams in **[ARCHITECTURE.md](ARCHITECTURE.md)**; how the corpus itself is
+> governed — access control, curation as the data-quality gate, lineage, query
+> confidentiality, and the retention/destruction gaps — in
+> **[docs/governance.md](docs/governance.md)**. This README is a snapshot of what's built,
+> not a plan — see [Project status](#project-status) for how confidently each part has been
+> verified.
 
-The full ingest → tag → curate → retrieve flow works end to end against every functional
-requirement in `REQUIREMENTS.md` (FR-1 through FR-32), with claims-based access control
-enforced server-side at every stage — tagging, curation, and retrieval all check the same
-OIDC claims through one shared library, not three separate implementations. Most of this was
-built with no Docker daemon, live Keycloak/Qdrant/Ollama, or Hugging Face access available, so
-initial verification leaned on `TestClient`/`uvicorn`/MCP-client round trips, in-memory
-Postgres/Qdrant, and hand-crafted JWTs — rigorous, but not the same as a real cluster.
-**The full pipeline has since been validated against a real `docker compose up`**, including
-the P0 durability work: a document submitted as `alice-ingest` was durably queued (NATS
-JetStream), picked up and processed by `ingestion-worker` (`queued → processing →
-pending_review`, confirmed via `GET /documents/{id}` polling), curated and approved, and then
-found by a real claims-filtered query against `orchestration-mcp`'s `/debug/rag_search` with a
-`bob-query`-obtained Keycloak token. That live run also surfaced and fixed eight real bugs
-this sandbox's mocked verification couldn't have caught — a missing `mkdir` before a
-non-root `chown` (object-store write permissions), several LibreChat config gaps
-(`obo.scopes`'s array-vs-string schema mismatch, missing `JWT_SECRET`/`CREDS_KEY`/`CREDS_IV`,
-`ALLOW_SOCIAL_LOGIN` defaulting off, an MCP SSRF domain-allowlist blocking `orchestration-mcp`,
-and a missing `OPENID_SCOPE`), and a `depends_on` race against Keycloak's healthcheck — see
-`docs/dev-setup.md`'s live-debugging notes for each one. **LibreChat's own OIDC login now
-works, confirmed live end to end (issue #75)** — root cause was `openid-client` refusing a
-plain-HTTP issuer, fixed with a real (self-signed, dev-only) HTTPS cert for both Keycloak and
-a small nginx proxy in front of LibreChat (which has no HTTPS listener of its own). The OBO
-token-exchange mechanism itself is also confirmed live: two real Keycloak config bugs found
-and fixed (the Standard Token Exchange V2 switch was on the wrong client, and the exchanged
-token's HTTPS issuer wasn't in `orchestration-mcp`/`ingestion-api`'s issuer allowlist) — a
-scripted exchange now returns a correctly claims-filtered `rag_search` result. Still not
-confirmed: LibreChat's *own* code actually performing that exchange when a real chat message
-triggers the tool — driving that specific path hit a separate LibreChat auth quirk (its
-`openidJwt` reused-token strategy rejects its own token with "invalid algorithm"), tracked as
-a follow-up rather than chased down inline. See `docs/dev-setup.md`'s
-"What's stubbed vs working" section for the complete, current list, labeled per the
-implemented/mocked/live-verified convention described there.
+## What it does
 
-**What's working:**
-
-- **Ingestion (FR-1..FR-9):** upload UI for PDF/DOCX/PPTX/XLSX/TXT/MD/HTML, mandatory
-  Classification/Releasability/Access-scope tagging enforced server-side against the
-  uploader's OIDC claims (not just hidden in the UI), structure-aware parsing and chunking,
-  embedding via a self-hosted model, and durable async processing with real `queued →
-  processing → embedded → pending_review` progress: `ingestion-api` validates the request,
-  durably stores the original file, and returns immediately; a separate `ingestion-worker`
-  service does the actual parse/chunk/embed/store work off a durable NATS JetStream queue
-  (NFR-11), so a crash or restart mid-document doesn't strand it — and rejection/quarantine
-  of corrupt, password-protected, oversized, or zip-bomb-shaped files.
-- **Curation (FR-10..FR-16):** every submission is chunked and embedded immediately but
-  stays excluded from retrieval until a curator approves it, scoped to the org(s) they hold
-  curator authority for and capped by their own clearance *and* releasability. A curator
-  can approve, reject with a reason, or correct the tags before approving — all three
-  through the actual UI, not just the API. Every decision is audited and notifies the
-  uploader in-app.
-- **Metadata & tagging (FR-17..FR-23):** Classification and Releasability are each a
-  single value per document chosen from admin-configurable controlled lists (add/retire/
-  reorder without a code change), Access-scope is an independent org/group/user/`ALL_AUTHENTICATED`
-  dimension that a document must pass *in addition to* classification/releasability, and
-  identity-linked fields (uploader, owning org) auto-populate from claims rather than
-  free text.
+- **Ingestion (FR-1..FR-9):** upload UI for PDF/DOCX/PPTX/XLSX/TXT/MD/HTML with mandatory,
+  server-side-enforced Classification/Releasability/Access-scope tagging; structure-aware
+  parsing and chunking; embedding via a self-hosted model; and durable async processing
+  with real `queued → processing → embedded → pending_review` progress. Corrupt,
+  password-protected, oversized, and zip-bomb-shaped files are rejected.
+- **Curation (FR-10..FR-16):** every submission stays excluded from retrieval until a
+  curator approves it — scoped to the org(s) they hold curator authority for and capped by
+  their own clearance *and* releasability. Approve, reject-with-reason, or correct-the-tags,
+  all through the UI; every decision is audited and notifies the uploader.
+- **Metadata & tagging (FR-17..FR-23):** Classification and Releasability are single values
+  from admin-configurable controlled lists; Access-scope is an independent
+  org/group/user/`ALL_AUTHENTICATED` dimension checked *in addition to* them; identity
+  fields (uploader, owning org) auto-populate from claims.
 - **Retrieval & generation (FR-24..FR-29):** hybrid dense+BM25 retrieval fused with
   Reciprocal Rank Fusion, a cross-encoder reranking pass, and a mandatory, non-bypassable
-  access filter — built server-side from the caller's verified claims, applied to both
-  retrieval legs, never client-supplied — gating classification, releasability, access
-  scope, *and* approval status before anything reaches Qdrant. Exposed to LibreChat as a
-  real MCP server over streamable HTTP, reading the caller's identity from the forwarded
-  Authorization header (OBO-exchanged or raw-forwarded), verified against the actual MCP
-  client SDK end to end.
-- **Monitoring & evaluation (FR-30..FR-32):** every ingestion, curation, and retrieval
-  event is audit-logged keyed on the actor's OIDC identity, and a golden-query evaluation
-  harness reports recall@K/precision@K plus a dedicated regression check that
-  pending/rejected/superseded content never leaks into results regardless of the querying
-  persona's clearance.
-- **Dev and production packaging (NFR-9/NFR-10):** a one-command Docker Compose stack with
-  a pre-seeded Keycloak realm and sample documents across every status/classification/
-  access-scope combination, and a Helm chart scoped to just this project's new components
-  (ingestion-api, ingestion-worker, orchestration-mcp, reranker-service, a dedicated
-  embedding-service, Qdrant, NATS) that assumes the rest of MPNexus already exists.
-- **Browser login for the ingestion UI:** a real OIDC Authorization Code + PKCE flow
-  against Keycloak (`/auth/login` → `/auth/callback`) — tokens live server-side in a
-  Postgres-backed session, refreshed transparently, never in browser-reachable storage.
-  Replaces the earlier paste-a-token dev workaround. CSRF-protected (NFR-14): a
-  double-submit cookie, checked on every state-changing route, that only applies to
-  cookie-authenticated browser requests — bearer-token API/MCP callers are unaffected.
-  See `ARCHITECTURE.md` Section 4.4.
-- **Qdrant access control (NFR-15):** authenticated access required in every
-  environment — a full read/write API key for `ingestion-api` and `ingestion-worker`
-  (the two services that write to Qdrant), a read-only key for `orchestration-mcp`
-  (least-privilege split, since it never writes to Qdrant).
-- **Pinned image/model versions (NFR-16):** no more `:latest`/`main-latest`/bare-major-
-  version tags in Compose or the Helm chart's default values — every external image is a
-  specific recent release, researched at pin time (see `docs/dev-setup.md` for the exact
-  list and version-by-version reasoning, including why LibreChat is deliberately held at
-  the exact version its OBO integration recipe was verified against rather than bumped).
-- **Separate DB credentials + append-only audit log (NFR-2/NFR-3):** the app and Keycloak
-  no longer share a database or credentials in the dev stack, and the app's own DB role
-  has `SELECT`/`INSERT` only on the audit log — `UPDATE`/`DELETE` require the bootstrap
-  superuser, which day-to-day traffic never uses. Not yet run against a real environment —
-  see `docs/dev-setup.md`, this is the riskiest of the hardening-batch changes.
-- **Durable object storage for uploaded originals (NFR-12):** the raw file is written to a
-  dedicated store (filesystem in dev, any S3-compatible endpoint in production) and its key
-  recorded on the `Document` row before the upload request returns — durable independent of
-  Qdrant's chunk vectors. `ingestion-worker` reads the original back from this store rather
-  than taking it as a direct argument, so the file survives independently of whichever
-  process/pod happens to handle it.
-- **Durable, crash-resistant ingestion processing (NFR-11):** the parse/chunk/embed/store
-  pipeline no longer runs in-process via FastAPI `BackgroundTasks` — `ingestion-api`
-  publishes a job (just the document ID) to a NATS JetStream queue
-  (`common/job_queue.py`), and a separate `ingestion-worker` service durably consumes it.
-  A worker crash or restart mid-document doesn't silently strand it: the JetStream message
-  is only acked on a terminal outcome (success, or a permanent parse/embed failure that
-  lands the document in `failed`) — an unexpected/transient error is left un-acked, so
-  JetStream redelivers it to another attempt.
-- **Safe document supersession under partial failure (NFR-13):** re-ingestion/versioning
-  (FR-7) already ordered its Qdrant/Postgres writes to avoid a window where neither the old
-  nor the new version of a document is retrievable (confirmed by review, not just assumed).
-  What was added: `approve()`/`reject()` now revert their Qdrant status write if the paired
-  Postgres commit doesn't durably land, so a partial failure (a DB error, the old document's
-  Qdrant delete failing, etc.) can't leave Qdrant showing a document as `approved` while
-  Postgres and the curation queue both still call it `pending_review`.
+  access filter — built server-side from verified claims, applied to *both* retrieval legs —
+  gating classification, releasability, access scope, and approval status before anything
+  reaches Qdrant. Exposed to LibreChat as an MCP server over streamable HTTP.
+- **Monitoring & evaluation (FR-30..FR-32):** every ingestion, curation, and retrieval event
+  is audit-logged by OIDC identity, and a golden-query harness reports recall@K/precision@K
+  plus a regression check that pending/rejected/superseded content never leaks into results.
 
-**What's explicitly not done, and why:**
+**Operational & security hardening:**
 
-- **~~Keycloak's fine-grained token-exchange admin permission~~ — turned out not to apply.**
-  That permission only gates the deprecated/preview *legacy* token exchange; Standard Token
-  Exchange V2 (RFC 8693, what this project actually uses via
-  `standard.token.exchange.enabled`) needs no admin-console step at all, per Keycloak's own
-  docs. The real, previously-undiagnosed bug: that switch was set on `rag-app` (the
-  exchange's *target*) instead of `librechat` (the *requester*, which is what actually needs
-  it) — fixed in the realm export (issue #75).
-- **`infra/librechat/librechat.yaml`'s `mcpServers` shape has been checked against a real
-  LibreChat 0.8.7 instance** — one real error found and fixed (`obo.scopes` needs to be a
-  space-delimited string, not a JSON array; see `docs/dev-setup.md`). LibreChat now starts
-  cleanly with this config, and a direct token-exchange call (bypassing LibreChat's own code)
-  is confirmed live end to end: a correctly claims-filtered `rag_search` result for the
-  exchanged token's user. LibreChat's own code performing that exchange when a real chat
-  message triggers the tool is still unconfirmed — see `REQUIREMENTS.md`'s P1 list.
-- **Helm/production wiring for browser login exists but is unrendered/unverified** — the
-  chart does wire `externalKeycloak.clientId`/`.clientSecret` and
-  `ingestionApi.oidcRedirectUri`/`.cookieSecure` through to the same OIDC login flow the
-  dev Compose stack uses (see `ARCHITECTURE.md` Section 4.4, `helm/nexus-rag/README.md`) —
-  it isn't dev-Compose-only. What's actually missing is verification: like the rest of the
-  hand-written chart, this specific wiring has never been run through `helm lint`/
-  `helm template --debug` against a real values override; see `docs/dev-setup.md`'s
-  "Stubbed / TODO" list.
-- **A concrete PyKMIP integration for encryption at rest (NFR-6)** — REQUIREMENTS.md names
-  it only as a candidate, with no integration point, key rotation policy, or scope
-  specified; building against that would mean guessing at a requirement rather than
-  implementing one. What's actually addressable (pointing persistent volumes at an
-  encrypted `StorageClass`) is done and documented.
-- **NetworkPolicies, PodDisruptionBudgets, HorizontalPodAutoscalers** in the Helm chart —
-  not called for by REQUIREMENTS.md; add them if your cluster's baseline requires them.
-- **The Helm chart specifically has not been run against a real cluster or `helm lint`** —
-  see the "Status" paragraph above for what *has* been validated against a real
-  `docker compose up` (the whole ingest → curate → retrieve flow, including `ingestion-worker`
-  and NFR-11's durable queue). The chart itself is a separate, still-unverified deployment
-  path — run `helm lint`/`helm template --debug` against a real values override before
-  trusting it.
+- Durable, crash-resistant ingestion via a NATS JetStream queue and a separate
+  `ingestion-worker` (NFR-11); uploaded originals in dedicated object storage (NFR-12);
+  safe supersession under partial failure (NFR-13).
+- Browser login via a real OIDC Authorization Code + PKCE flow with server-side sessions and
+  CSRF protection (NFR-14) — no tokens in browser-reachable storage.
+- Authenticated Qdrant access with a least-privilege read/write vs read-only key split
+  (NFR-15); pinned image/model versions, no floating tags (NFR-16); separate DB credentials
+  and an append-only audit log (NFR-2/NFR-3).
+- One-command Docker Compose dev stack and a Helm chart scoped to this project's components
+  (NFR-9/NFR-10).
+
+## Quick start
+
+```bash
+docker compose up
+```
+
+See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, the seeded Keycloak users,
+a walkthrough of the full ingest → curate → retrieve flow, and what to expect. For the
+Kubernetes path, see **[helm/nexus-rag/README.md](helm/nexus-rag/README.md)**.
 
 ## Architecture
 
-**Ingestion:** a user uploads through `ingestion-api`'s web UI → mandatory tagging is
-validated against their OIDC claims → the original file is durably stored (NFR-12) and the
-document row lands in Postgres as `queued` → `ingestion-api` returns immediately and
-publishes a job to NATS JetStream (NFR-11) rather than doing any further work itself → a
-separate `ingestion-worker` service durably consumes that queue, parses, chunks, and embeds
-the document (via Ollama), and writes chunk vectors and metadata into Qdrant tagged
-`pending_review` → a curator with authority over that org/classification/releasability
-reviews it in `ingestion-api`'s UI and approves, rejects, or corrects it → approval flips
-the Qdrant chunks' status to `approved`, which is what actually makes them retrievable.
+**Ingestion:** upload through `ingestion-api`'s UI → tagging validated against OIDC claims →
+original durably stored (NFR-12), row lands in Postgres as `queued` → `ingestion-api`
+publishes a job to NATS JetStream (NFR-11) and returns → `ingestion-worker` consumes it,
+parses/chunks/embeds (via Ollama), writes chunk vectors to Qdrant tagged `pending_review` →
+a curator reviews and approves/rejects/corrects → approval flips the chunks to `approved`,
+which is what makes them retrievable.
 
-**Retrieval:** LibreChat calls `orchestration-mcp`'s `rag_search` MCP tool over streamable
-HTTP, forwarding the user's identity in the connection's Authorization header (an
-OBO-exchanged token, or a raw forwarded one) → the tool parses those claims and builds a
-mandatory access filter server-side → a dense (Ollama embedding) and BM25 sparse leg are
-queried against Qdrant in parallel with that same filter applied to both, fused via
-Reciprocal Rank Fusion → the fused candidates are reranked by `reranker-service` → results,
-with source/classification/releasability metadata attached, go back to LibreChat for
-generation.
+**Retrieval:** LibreChat calls `orchestration-mcp`'s `rag_search` tool over streamable HTTP,
+forwarding the user's identity in the Authorization header (OBO-exchanged or raw) → the tool
+parses claims and builds a mandatory access filter server-side → dense (Ollama) and BM25
+sparse legs query Qdrant in parallel with that filter on both, fused via RRF → the fused
+candidates are reranked by `reranker-service` → results with source/classification metadata
+go back to LibreChat for generation.
 
 Keycloak (OIDC) issues the claims (`clearance`, `releasability`, `groups`, `org`,
-`rag_roles`) that drive every one of those decisions, consumed identically by
-`ingestion-api` (tagging, curation) and `orchestration-mcp` (retrieval) through one shared
-claims-parsing/access-filter library (`services/common`), not two separate
-implementations.
+`rag_roles`) that drive every decision, consumed identically by `ingestion-api` and
+`orchestration-mcp` through one shared library (`services/common`).
 
 | Component | Role | FR/NFR coverage |
 |---|---|---|
-| `services/common` | Shared claims parsing, Section 6.3 metadata schema, Qdrant access-filter builder, DB models, object-store abstraction, NATS job-queue helpers | FR-18, FR-26, Section 6.1, NFR-11, NFR-12 |
-| `services/ingestion-api` | Upload UI + API, mandatory tagging, curation queue + UI, admin-configurable lists — validates and durably stages a submission, then hands the actual pipeline off to `ingestion-worker` | FR-1..FR-23, C9, NFR-11..NFR-13 |
+| `services/common` | Shared claims parsing, metadata schema, Qdrant access-filter builder, DB models, object-store + NATS helpers | FR-18, FR-26, §6.1, NFR-11, NFR-12 |
+| `services/ingestion-api` | Upload UI + API, mandatory tagging, curation queue + UI, admin-configurable lists | FR-1..FR-23, NFR-11..NFR-13 |
 | `services/ingestion-worker` | Durable NATS JetStream consumer: parsing/chunking/embedding, Qdrant writes | FR-3..FR-6, NFR-11 |
-| `services/orchestration-mcp` | FastMCP server exposing `rag_search` to LibreChat; hybrid retrieval, reranking, access enforcement, audit logging | FR-24..FR-31 |
-| `services/reranker-service` | Cross-encoder reranking over the fused hybrid candidate pool | FR-25 |
-| `infra/keycloak` | Seeded realm: claims schema, per-org curator client roles, test users | Section 6.2 |
-| `infra/librechat`, `infra/litellm` | Throwaway dev configs so the MCP/OBO connection and generation path can be exercised locally | Section 7.7, NFR-9 |
-| `scripts/` | Sample-data seeding and golden-query retrieval evaluation | NFR-9, FR-30/FR-32 |
-| `helm/nexus-rag` | Production Kubernetes packaging, scoped to this project's new components | NFR-10 |
+| `services/orchestration-mcp` | FastMCP server exposing `rag_search`; hybrid retrieval, reranking, access enforcement, audit logging | FR-24..FR-31 |
+| `services/reranker-service` | Cross-encoder reranking over the fused candidate pool | FR-25 |
+| `infra/keycloak` | Seeded realm: claims schema, per-org curator roles, test users | §6.2 |
+| `infra/librechat`, `infra/litellm` | Throwaway dev configs for the MCP/OBO + generation path | §7.7, NFR-9 |
+| `scripts/` | Sample-data seeding, golden-query retrieval evaluation | NFR-9, FR-30/FR-32 |
+| `helm/nexus-rag` | Production Kubernetes packaging, scoped to this project's components | NFR-10 |
 
-## Getting started
+## Security model
 
-- **Local dev:** `docker compose up` — see **[docs/dev-setup.md](docs/dev-setup.md)** for
-  prerequisites, seeded Keycloak users, a walkthrough of the full flow, and the exact
-  what's-stubbed-vs-working list.
-- **Production (Kubernetes):** `helm/nexus-rag/` — see
-  **[helm/nexus-rag/README.md](helm/nexus-rag/README.md)** for prerequisites, install
-  instructions, and what the chart deliberately does not do.
+Every Classification/Releasability/Access-scope decision is derived from the same OIDC
+claims (`clearance`, `releasability`, `groups`, `org`, `rag_roles`), evaluated server-side
+through one shared library, never trusted from client input. Qdrant's own RBAC is treated as
+coarse-grained only (§6.1); the real enforcement is a mandatory payload filter built from
+verified claims and injected into every query before it reaches Qdrant, applied identically
+to both the dense and sparse hybrid-retrieval legs so neither can bypass it.
 
 ## Repo layout
 
 ```
 nexus-rag/
-  REQUIREMENTS.md            # source of truth for scope; everything above traces back to it
+  REQUIREMENTS.md            # source of truth for scope
+  ARCHITECTURE.md            # diagrams, data model, per-flow sequences
   docker-compose.yml         # one-command dev stack (NFR-9), incl. NATS (NFR-11)
-  .env.example
   services/
     common/                  # shared claims/metadata/Qdrant-filter/object-store/job-queue library
     ingestion-api/           # upload + curation UI/API (FastAPI)
-    ingestion-worker/        # durable parse/chunk/embed/store pipeline, NATS JetStream consumer (NFR-11)
+    ingestion-worker/        # durable parse/chunk/embed/store pipeline (NATS JetStream consumer)
     orchestration-mcp/       # retrieval MCP server (FastMCP)
     reranker-service/        # cross-encoder reranking API
   infra/
     keycloak/realm-export/   # seeded dev realm
-    librechat/, litellm/     # throwaway dev configs for the MCP/OBO + generation path
+    librechat/, litellm/     # throwaway dev configs
   scripts/                   # sample-data seeding, retrieval evaluation harness
   helm/nexus-rag/            # production Helm chart (NFR-10)
-  docs/dev-setup.md          # dev environment guide
+  docs/                      # dev-setup.md, testing.md, governance.md
 ```
 
-## Security model, in one paragraph
+## Documentation
 
-Every Classification/Releasability/Access-scope decision — what a user may *assign* at
-upload, what a curator may *approve*, and what a user may *see* at query time — is derived
-from the same OIDC claims (`clearance`, `releasability`, `groups`, `org`, `rag_roles`),
-evaluated server-side through one shared library, never trusted from anything the client
-supplies. Qdrant's own RBAC is treated as coarse-grained only (Section 6.1); the actual
-enforcement is a mandatory payload filter built from verified claims and injected into
-every query before it reaches Qdrant, applied identically to both the dense and sparse
-hybrid-retrieval legs so neither can be used to bypass it.
+- **[REQUIREMENTS.md](REQUIREMENTS.md)** — scope, functional/non-functional requirements, open questions
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — component diagram, data model, per-flow sequences
+- **[docs/dev-setup.md](docs/dev-setup.md)** — local stack, seeded users, full walkthrough, and the honest what's-stubbed-vs-working list
+- **[docs/testing.md](docs/testing.md)** — the test pyramid, coverage/mutation policy, and known gaps
+- **[docs/governance.md](docs/governance.md)** — access control, curation, lineage, query confidentiality, and retention/destruction gaps
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — workflow, CI gates, and how to run the suites
+
+## Project status
+
+The full ingest → tag → curate → retrieve flow works end to end against every functional
+requirement (FR-1..FR-32), with claims-based access control enforced server-side at every
+stage through one shared library.
+
+Confidence is labeled honestly throughout the docs as *implemented*, *tested against mocks*,
+or *validated against a live environment* (see
+[docs/dev-setup.md](docs/dev-setup.md#whats-stubbed-vs-working)). Highlights:
+
+- **Validated against a real `docker compose up`:** the whole pipeline, including NFR-11's
+  durable queue and NFR-12's object storage. That run surfaced and fixed eight real bugs and
+  confirmed LibreChat OIDC login and the OBO token-exchange path live — the full history is
+  in [docs/dev-setup.md](docs/dev-setup.md#live-validation-history).
+- **Not yet verified live:** LibreChat's own code triggering the OBO exchange on a real chat
+  message; the Helm chart against a real cluster / `helm lint`; the NFR-2/NFR-3 DB-hardening
+  against a real environment; PyKMIP encryption-at-rest (NFR-6, unscoped in REQUIREMENTS.md).
+
+The full, current list — with per-item confidence labels and rationale — lives in
+[docs/dev-setup.md](docs/dev-setup.md#whats-stubbed-vs-working).
+
+## Contributing
+
+Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** for the workflow and
+CI gates, and the **[Code of Conduct](CODE_OF_CONDUCT.md)**. Licensed under
+**[Apache-2.0](LICENSE)**.

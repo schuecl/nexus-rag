@@ -21,7 +21,6 @@ import sys
 import time
 
 import httpx
-
 from _keycloak import KEYCLOAK_URL, REALM, get_token, wait_until_up
 
 INGESTION_API_URL = os.environ.get("INGESTION_API_URL", "http://ingestion-api:8001")
@@ -165,7 +164,9 @@ def main() -> None:
         releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
     )
-    seeded.append(("draft-travel-policy.md", "pending_review (left unreviewed)", "CUI / USAREUR-AF"))
+    seeded.append(
+        ("draft-travel-policy.md", "pending_review (left unreviewed)", "CUI / USAREUR-AF")
+    )
 
     d = submit(
         alice,
@@ -195,8 +196,7 @@ def main() -> None:
     d_v1 = submit(
         alice,
         "network-access-sop-v1.md",
-        "# Network Access SOP (v1)\n\nVPN access requires a hardware token "
-        "and manager approval.",
+        "# Network Access SOP (v1)\n\nVPN access requires a hardware token and manager approval.",
         classification="CUI",
         releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
@@ -226,9 +226,12 @@ if __name__ == "__main__":
     try:
         main()
     except httpx.HTTPStatusError as exc:
-        print(f"FAILED: {exc.request.method} {exc.request.url} -> {exc.response.status_code} "
-              f"{exc.response.text}", file=sys.stderr)
+        print(
+            f"FAILED: {exc.request.method} {exc.request.url} -> {exc.response.status_code} "
+            f"{exc.response.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         sys.exit(1)

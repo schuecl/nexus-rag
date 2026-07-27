@@ -27,7 +27,14 @@ on:
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only supersede in-progress runs on pull requests, where a newer push to the
+  # PR obsoletes the older analysis. On main (push) and on the weekly schedule
+  # the ref is always refs/heads/main, so those triggers share one group -- with
+  # cancel-in-progress: true a merge or a coincident scheduled run cancels the
+  # other (e.g. two merges seconds apart, or a schedule firing mid-merge), which
+  # loses per-commit analysis on the default branch for no benefit. Never cancel
+  # there; let each run finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
@@ -53,7 +60,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

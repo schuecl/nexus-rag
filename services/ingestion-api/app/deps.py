@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt
+from fastapi import Depends, HTTPException, Request, status
+from sqlmodel import Session
+
 from common.claims import OIDC_ISSUERS, UserClaims, parse_claims
 from common.classification import allowed_classifications as _allowed_classifications
 from common.db import get_session
 from common.models import UserSession
-from fastapi import Depends, HTTPException, Request, status
-from sqlmodel import Session
 
 SESSION_COOKIE = "nexus_rag_session"
 # NFR-14: double-submit CSRF cookie, set alongside SESSION_COOKIE at login
@@ -46,7 +47,7 @@ SESSION_LIFETIME = timedelta(hours=8)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_aware_utc(dt: datetime) -> datetime:
@@ -54,7 +55,7 @@ def _as_aware_utc(dt: datetime) -> datetime:
     always does; a plain, non-timezone(True) column can too) -- treat a naive
     value read back from the DB as UTC rather than letting the `>` comparison
     below raise on offset-naive vs. offset-aware."""
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def session_expired(row: UserSession, *, now: datetime | None = None) -> bool:
@@ -125,7 +126,9 @@ def get_current_user(request: Request, db: Session = Depends(get_session)) -> Us
         row = db.get(UserSession, session_id)
         claims = _claims_from_session(db, row) if row else None
         if claims is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expired, please log in again")
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "session expired, please log in again"
+            )
         return claims
 
     auth = request.headers.get("Authorization")
@@ -198,7 +201,11 @@ def verify_csrf(request: Request) -> None:
         return
     cookie_token = request.cookies.get(CSRF_COOKIE)
     header_token = request.headers.get(CSRF_HEADER)
-    if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+    if (
+        not cookie_token
+        or not header_token
+        or not secrets.compare_digest(cookie_token, header_token)
+    ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "missing or invalid CSRF token")
 
 
@@ -217,6 +224,26 @@ def require_curator(user: UserClaims = Depends(get_current_user)) -> UserClaims:
 def require_admin(user: UserClaims = Depends(get_current_user)) -> UserClaims:
     if "rag-admin" not in user.rag_roles:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-admin role")
+    return user
+
+
+def require_purge(user: UserClaims = Depends(get_current_user)) -> UserClaims:
+    """Issue #123: authority to destroy a document's content everywhere.
+
+    A dedicated role rather than reusing rag-admin, deliberately. rag-admin
+    today gates only the Classification/Releasability vocabulary routes and
+    grants no access to documents or queries at all -- a boundary this project
+    draws on purpose and that docs/governance.md states explicitly. Hanging
+    irreversible destruction off it would quietly widen the most privileged
+    role in the system into a data-touching one.
+
+    Separating it also means the two authorities can be held by different
+    people, which is the usual expectation for a destruction procedure: the
+    person who manages the tagging vocabulary is not automatically the person
+    who may erase evidence.
+    """
+    if "rag-purge" not in user.rag_roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-purge role")
     return user
 
 

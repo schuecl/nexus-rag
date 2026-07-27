@@ -10,10 +10,14 @@ import base64
 import hashlib
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from sqlmodel import Session, delete
+
 from app.deps import (
     CSRF_COOKIE,
     OIDC_CLIENT_ID,
@@ -26,9 +30,6 @@ from app.deps import (
 from common.claims import OIDC_ISSUERS
 from common.db import get_session
 from common.models import OAuthState, UserSession
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from sqlmodel import Session, delete
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -56,7 +57,7 @@ OAUTH_STATE_TTL = timedelta(minutes=10)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _purge_expired(db: Session) -> None:
@@ -86,14 +87,18 @@ def _purge_expired(db: Session) -> None:
     few hours late deletes a row that already stopped working.
     """
     now = _utcnow()
-    db.exec(delete(OAuthState).where(OAuthState.created_at < now - OAUTH_STATE_TTL))
-    db.exec(delete(UserSession).where(UserSession.created_at < now - SESSION_LIFETIME))
+    # SQLModel table classes use plain annotations rather than SQLAlchemy
+    # 2.0's Mapped[], so mypy sees these comparisons as plain bool -- not a
+    # real bug, see pyproject.toml's mypy section.
+    db.exec(delete(OAuthState).where(OAuthState.created_at < now - OAUTH_STATE_TTL))  # type: ignore[arg-type]
+    db.exec(delete(UserSession).where(UserSession.created_at < now - SESSION_LIFETIME))  # type: ignore[arg-type]
     db.commit()
 
 
 def _pkce_pair() -> tuple[str, str]:
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    digest = hashlib.sha256(verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
     return verifier, challenge
 
 
@@ -114,12 +119,16 @@ def login(db: Session = Depends(get_session)) -> RedirectResponse:
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
-    resp = RedirectResponse(f"{OIDC_BROWSER_ISSUER}/protocol/openid-connect/auth?{urlencode(params)}")
+    resp = RedirectResponse(
+        f"{OIDC_BROWSER_ISSUER}/protocol/openid-connect/auth?{urlencode(params)}"
+    )
     # Belt-and-suspenders CSRF binding: the state round-tripped through
     # Keycloak already has to match this cookie at /callback, so a forged
     # callback request (attacker knows/guesses a state) still needs the
     # victim's browser to have actually initiated that exact login.
-    resp.set_cookie(STATE_COOKIE, state, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=600)
+    resp.set_cookie(
+        STATE_COOKIE, state, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=600
+    )
     return resp
 
 

@@ -20,6 +20,8 @@ import nats
 from nats.js.api import StreamConfig
 from nats.js.client import JetStreamContext
 
+from common.tracing import inject_trace_context
+
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
 NATS_AUTH_TOKEN = os.environ.get("NATS_AUTH_TOKEN", "dev-nats-token")
 
@@ -40,9 +42,17 @@ async def ensure_stream(js: JetStreamContext) -> None:
     try:
         await js.stream_info(INGESTION_STREAM)
     except nats.js.errors.NotFoundError:
-        await js.add_stream(config=StreamConfig(name=INGESTION_STREAM, subjects=[INGESTION_SUBJECT]))
+        await js.add_stream(
+            config=StreamConfig(name=INGESTION_STREAM, subjects=[INGESTION_SUBJECT])
+        )
 
 
 async def publish_ingestion_job(js: JetStreamContext, document_id: str) -> None:
     await ensure_stream(js)
-    await js.publish(INGESTION_SUBJECT, document_id.encode())
+    # #134: the W3C traceparent rides in message *headers*, never the body --
+    # the body stays a bare document id, so ingestion-worker's
+    # malformed-payload guard (#109) and any message already in flight across
+    # an upgrade are untouched. JetStream stores headers with the message, so
+    # a redelivery carries the same context. headers is None when tracing is
+    # disabled, which is the byte-identical pre-#134 wire shape.
+    await js.publish(INGESTION_SUBJECT, document_id.encode(), headers=inject_trace_context())

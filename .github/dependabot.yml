@@ -1,0 +1,103 @@
+version: 2
+
+# Shared notes:
+# - pytest is held on the 8.x line: pytest 9 drops fixture-registration APIs
+#   that pytest-bdd 8.1 still uses, which breaks the BDD suite (verified: 10
+#   failures in tests/e2e). Every pip ecosystem below ignores pytest majors so
+#   that bump stops being re-proposed until pytest-bdd is compatible; see the
+#   NOTE in requirements-test.txt.
+# - Each ecosystem groups its minor+patch updates into a single PR to cut the
+#   weekly volume. Major bumps are deliberately left ungrouped so each lands as
+#   its own PR and gets reviewed on its own.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    # requirements-test.txt at the repo root
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-test-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /services/common
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-common:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /services/ingestion-api
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-ingestion-api:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /services/ingestion-worker
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-ingestion-worker:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /services/orchestration-mcp
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-orchestration-mcp:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /services/reranker-service
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: pytest
+        update-types: ["version-update:semver-major"]
+    groups:
+      pip-reranker-service:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

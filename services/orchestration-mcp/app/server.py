@@ -24,12 +24,30 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from pydantic import Field
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
+
+from app import metrics
+from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
+from common.logging_setup import setup_logging
+from common.siem import enable_siem_export
+from common.tracing import setup_tracing
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of the FR-31 audit events every rag_search call writes
+# (query, query.denied, ...).
+setup_logging("orchestration-mcp")
+enable_siem_export("orchestration-mcp")
+# #134: the rag_search span tree (rag_search.py). httpx instrumentation adds
+# the Ollama embedding call and the reranker-service hop as child spans and
+# carries the trace context to the reranker. Disabled unless
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_tracing("orchestration-mcp")
+HTTPXClientInstrumentor().instrument()
 
 # FastMCP's default DNS-rebinding protection only allows Host headers of
 # 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),
@@ -94,6 +112,27 @@ async def rag_search(
 @mcp_server.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
+
+
+@mcp_server.custom_route("/metrics", methods=["GET"])
+async def prometheus_metrics(_request: Request) -> Response:
+    """Issue #72: scrape surface for retrieval latency, outcome counts, and the
+    reranker fallback rate.
+
+    Unauthenticated, like /health, because a scrape target generally is -- and
+    because it carries no corpus content: stage names and outcome names only,
+    never a user, query, or document id (see app/metrics.py on why label
+    cardinality is kept content-free).
+
+    It is not *nothing*, though: aggregate query volume and result-count
+    distributions are operational signal. Reaching it should be restricted at
+    the network layer rather than left open to the namespace -- see the
+    NetworkPolicy work in #110, which currently allows only ingestion-api and
+    the configured MCP clients to reach this service, so a Prometheus scraper
+    needs adding there explicitly.
+    """
+    payload, content_type = metrics.render()
+    return Response(payload, media_type=content_type)
 
 
 @mcp_server.custom_route("/debug/rag_search", methods=["POST"])

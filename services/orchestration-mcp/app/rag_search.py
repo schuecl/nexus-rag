@@ -36,20 +36,37 @@ tracked but not attempted here.
 
 from __future__ import annotations
 
+import logging
 import os
+from time import perf_counter
 
 import httpx
 import jwt
+from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.models import Fusion, FusionQuery, Prefetch
+
+from app import metrics
 from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
 from common.models import AuditLogEntry
 from common.qdrant_filters import build_access_filter
-from common.qdrant_store import DENSE_VECTOR, QDRANT_COLLECTION, SPARSE_VECTOR, get_qdrant_client
+from common.qdrant_store import (
+    DENSE_VECTOR,
+    QDRANT_COLLECTION,
+    SPARSE_VECTOR,
+    collection_embedding_model,
+    get_qdrant_client,
+)
 from common.sparse_embedding import embed_sparse
-from qdrant_client.http.exceptions import UnexpectedResponse
-from qdrant_client.models import Fusion, FusionQuery, Prefetch
+from common.tracing import get_tracer
+
+logger = logging.getLogger("orchestration-mcp")
+
+# #134: spans carry counts/limits/flags only -- never query text or chunk
+# text (see common/tracing.py's constraint note).
+tracer = get_tracer("orchestration-mcp")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
@@ -77,6 +94,30 @@ MIN_HYBRID_CANDIDATES = 20
 MAX_TOP_K = 50
 DEFAULT_TOP_K = 5
 
+
+def _audit_query_detail(query: str, **extra: object) -> dict:
+    """The FR-31 detail payload for a retrieval attempt.
+
+    Issue #125: deliberately does NOT carry the query text. FR-31 exists to
+    answer "did the access filter apply, to whom, and what did it permit" --
+    actor, timestamp, outcome, filter, and result count answer all of that,
+    and none of them need the content of the question.
+
+    Storing the text does not stay inside the boundary the application draws
+    everywhere else. `rag-admin` grants no data access, no route reads the
+    audit log, and document access is ownership-scoped -- but audit_log lives
+    in Postgres, and NFR-2's hardening makes that table append-only without
+    restricting *reads*, so any holder of APP_DB_USER could recover every
+    user's query history. `query.denied` rows are the sharpest case: they
+    record what someone tried to reach and was refused.
+
+    `query_chars` is kept because length is useful for the anomaly detection
+    #127 wants (membership-inference probing is high-volume and
+    structurally repetitive) and discloses essentially nothing on its own.
+    """
+    return {"query_chars": len(query), **extra}
+
+
 # P1: see the module docstring. Delimits retrieved chunk text from anything
 # else in the tool response, so an instruction-shaped sentence inside a
 # document reads as quoted data, not a directive -- the same "wrap untrusted
@@ -93,6 +134,58 @@ SECURITY_NOTICE = (
 )
 
 
+# Issue #122: cached because it costs a Qdrant round trip and the answer only
+# changes when the corpus is re-ingested, which does not happen mid-process.
+_embedding_model_checked = False
+
+
+def _embedding_model_mismatch() -> str | None:
+    """Return an error message if the collection was built by a different
+    embedding model than this service is configured to query with.
+
+    Dense retrieval is only meaningful when query and document vectors come
+    from the same embedding space. A change to EMBEDDING_MODEL breaks that
+    with no error anywhere: Qdrant compares whatever it is handed,
+    ensure_collection() only acts when the collection is absent, and a model
+    with the same dimensionality (768 is near-universal) writes straight into
+    the existing collection. The dense leg then returns noise while BM25 keeps
+    contributing plausible keyword matches and RRF fuses the two, so results
+    look reasonable and quality quietly drops.
+
+    Fails closed on a positive mismatch only. An unknown model -- empty or
+    absent collection, or points written before this stamp existed -- is not
+    an error, or upgrading would break every deployment with an existing
+    corpus. Those cases are logged once instead; the check becomes
+    authoritative for a collection after its first stamped ingestion.
+    """
+    global _embedding_model_checked  # noqa: PLW0603 -- log-once flag, see below
+    try:
+        stored = collection_embedding_model(get_qdrant_client())
+    except Exception:  # never let a provenance check break retrieval
+        logger.warning("could not read embedding-model provenance from Qdrant", exc_info=True)
+        return None
+    if stored is None:
+        if not _embedding_model_checked:
+            logger.info(
+                "no embedding-model provenance on collection %s (empty, or ingested "
+                "before issue #122); mismatch detection is inactive until it is "
+                "re-ingested",
+                QDRANT_COLLECTION,
+            )
+            _embedding_model_checked = True
+        return None
+    if stored != EMBEDDING_MODEL:
+        return (
+            f"embedding model mismatch: collection '{QDRANT_COLLECTION}' was built with "
+            f"'{stored}' but this service is configured to query with "
+            f"'{EMBEDDING_MODEL}'. Dense retrieval would compare vectors from different "
+            "embedding spaces and silently return noise, so the query is refused. "
+            "Re-embed the corpus with the configured model, or point EMBEDDING_MODEL "
+            "back at the one that built the collection."
+        )
+    return None
+
+
 def _delimit_untrusted_text(text: str) -> str:
     return f"<{_UNTRUSTED_CONTENT_MARKER}>\n{text}\n</{_UNTRUSTED_CONTENT_MARKER}>"
 
@@ -105,6 +198,27 @@ async def _embed_query(query: str) -> list[float]:
         )
         resp.raise_for_status()
         return resp.json()["embedding"]
+
+
+def _timings_ms(timings: dict[str, float], started: float) -> dict[str, int]:
+    """Round per-stage durations to milliseconds for the audit entry, and feed
+    the same numbers to the scrape aggregates (issue #72).
+
+    Recorded in the audit log, never in the response: latency correlates with
+    how much the access filter matched and how many candidates were reranked,
+    so returning precise per-stage figures would hand membership inference a
+    cleaner timing signal than the wall-clock a caller can already observe
+    (see #127). Operators get the detail; callers do not.
+
+    Whole milliseconds, not floats: sub-millisecond precision is noise at this
+    scale, and a rounded value is a weaker side channel if these entries are
+    ever exported (#73).
+    """
+    total = perf_counter() - started
+    for stage, seconds in timings.items():
+        metrics.query_stage_seconds.labels(stage=stage).observe(seconds)
+    metrics.query_stage_seconds.labels(stage="total").observe(total)
+    return {**{k: round(v * 1000) for k, v in timings.items()}, "total": round(total * 1000)}
 
 
 def _audit(claims: UserClaims, action: str, detail: dict) -> None:
@@ -121,6 +235,27 @@ def _audit(claims: UserClaims, action: str, detail: dict) -> None:
 
 
 async def run_rag_search(
+    bearer_token: str,
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    *,
+    content_type_boosts: dict[str, float] | None = None,
+) -> dict:
+    """#134: the root span of the retrieval trace; the stage spans
+    (embed.query / qdrant.query / rerank) inside _run_rag_search nest under
+    it. A thin wrapper rather than a decorator so the result's shape can be
+    summarized onto the span (counts only -- never the query text)."""
+    with tracer.start_as_current_span("rag_search", attributes={"rag.top_k": top_k}) as span:
+        result = await _run_rag_search(
+            bearer_token, query, top_k, content_type_boosts=content_type_boosts
+        )
+        span.set_attribute("rag.results", len(result.get("results", [])))
+        if "error" in result:
+            span.set_attribute("rag.error", True)
+        return result
+
+
+async def _run_rag_search(
     bearer_token: str,
     query: str,
     top_k: int = DEFAULT_TOP_K,
@@ -145,7 +280,8 @@ async def run_rag_search(
         return {"error": f"invalid token: {exc}"}
 
     if not claims.can_query:
-        _audit(claims, "query.denied", {"query": query, "reason": "missing rag-query role"})
+        metrics.queries_total.labels(outcome="denied").inc()
+        _audit(claims, "query.denied", _audit_query_detail(query, reason="missing rag-query role"))
         return {"error": "missing rag-query role"}
 
     with next(get_session()) as session:
@@ -160,30 +296,68 @@ async def run_rag_search(
         "applied_filter": filter_summary,
     }
 
+    # Issue #122: refuse rather than silently degrade if the corpus was built
+    # by a different embedding model than this service queries with.
+    mismatch = _embedding_model_mismatch()
+    if mismatch is not None:
+        logger.error(mismatch)
+        # Deliberately records the reason and the query's length, not its
+        # text -- same shape #125 gives every other audit entry on this path.
+        # Written inline rather than via that PR's _audit_query_detail() helper
+        # so this change stays independent of it; collapse the two whichever
+        # lands second.
+        _audit(
+            claims,
+            "query.failed",
+            {"query_chars": len(query), "reason": "embedding model mismatch"},
+        )
+        result["error"] = mismatch
+        result["results"] = []
+        return result
+
     hybrid_limit = max(top_k * HYBRID_CANDIDATE_MULTIPLIER, MIN_HYBRID_CANDIDATES)
+    started = perf_counter()
+    timings: dict[str, float] = {}
 
     try:
-        dense_vector = await _embed_query(query)
-        sparse_vector = embed_sparse([query])[0]
-        hits = get_qdrant_client().query_points(
-            collection_name=QDRANT_COLLECTION,
-            prefetch=[
-                Prefetch(
-                    query=dense_vector,
-                    using=DENSE_VECTOR,
-                    filter=access_filter,
+        # #134: named stage spans at the same boundaries #72's timings
+        # measure, so a slow query attributes to a leg instead of being four
+        # loose numbers. Attributes are counts/limits only -- never the query
+        # text (the same rule #125 applies to the audit log and #72 to
+        # metric labels; see common/tracing.py).
+        with tracer.start_as_current_span("embed.query"):
+            dense_vector = await _embed_query(query)
+            sparse_vector = embed_sparse([query])[0]
+        timings["embed"] = perf_counter() - started
+        retrieval_started = perf_counter()
+        with tracer.start_as_current_span(
+            "qdrant.query", attributes={"qdrant.prefetch_limit": hybrid_limit}
+        ) as qdrant_span:
+            hits = (
+                get_qdrant_client()
+                .query_points(
+                    collection_name=QDRANT_COLLECTION,
+                    prefetch=[
+                        Prefetch(
+                            query=dense_vector,
+                            using=DENSE_VECTOR,
+                            filter=access_filter,
+                            limit=hybrid_limit,
+                        ),
+                        Prefetch(
+                            query=sparse_vector,
+                            using=SPARSE_VECTOR,
+                            filter=access_filter,
+                            limit=hybrid_limit,
+                        ),
+                    ],
+                    query=FusionQuery(fusion=Fusion.RRF),
                     limit=hybrid_limit,
-                ),
-                Prefetch(
-                    query=sparse_vector,
-                    using=SPARSE_VECTOR,
-                    filter=access_filter,
-                    limit=hybrid_limit,
-                ),
-            ],
-            query=FusionQuery(fusion=Fusion.RRF),
-            limit=hybrid_limit,
-        ).points
+                )
+                .points
+            )
+            qdrant_span.set_attribute("qdrant.candidates", len(hits))
+        timings["retrieve"] = perf_counter() - retrieval_started
     except (UnexpectedResponse, httpx.HTTPError) as exc:
         result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
         result["reranking"] = "skipped, no candidates"
@@ -193,16 +367,18 @@ async def run_rag_search(
             "created lazily on first ingestion (common.qdrant_store.ensure_collection), "
             "so this is expected if no document has been submitted yet"
         )
+        metrics.queries_total.labels(outcome="unavailable").inc()
         _audit(
             claims,
             "query",
-            {
-                "query": query,
-                "top_k": top_k,
-                "applied_filter": filter_summary,
-                "result_count": 0,
-                "note": result["note"],
-            },
+            _audit_query_detail(
+                query,
+                top_k=top_k,
+                applied_filter=filter_summary,
+                result_count=0,
+                note=result["note"],
+                timings_ms=_timings_ms(timings, started),
+            ),
         )
         return result
 
@@ -215,30 +391,61 @@ async def run_rag_search(
             "no chunks matched -- either nothing's been ingested/approved yet, "
             "or nothing in the corpus passes this user's access filter"
         )
+        metrics.queries_total.labels(outcome="empty").inc()
+        metrics.results_returned.observe(0)
         _audit(
             claims,
             "query",
-            {
-                "query": query,
-                "top_k": top_k,
-                "applied_filter": filter_summary,
-                "result_count": 0,
-                "note": result["note"],
-            },
+            _audit_query_detail(
+                query,
+                top_k=top_k,
+                applied_filter=filter_summary,
+                result_count=0,
+                note=result["note"],
+                timings_ms=_timings_ms(timings, started),
+            ),
         )
         return result
 
     candidates = [{"id": str(h.id), "score": h.score, "payload": h.payload} for h in hits]
-    reranked, rerank_note = await rerank(
-        query, candidates, top_k, content_type_boosts=content_type_boosts
-    )
+    rerank_started = perf_counter()
+    # #134: the httpx instrumentation propagates this span's context to
+    # reranker-service, whose own spans (FastAPI request + model.predict)
+    # nest under it -- the reranker's internal time stops being opaque.
+    with tracer.start_as_current_span(
+        "rerank", attributes={"rerank.candidates": len(candidates), "rerank.top_k": top_k}
+    ):
+        reranked, rerank_note = await rerank(
+            query, candidates, top_k, content_type_boosts=content_type_boosts
+        )
+    timings["rerank"] = perf_counter() - rerank_started
     result["reranking"] = rerank_note
+    # FR-25 degrades to fused order rather than failing when reranker-service
+    # is unreachable, which makes a quality drop invisible without this.
+    if "unavailable" in rerank_note:
+        metrics.reranker_fallback_total.inc()
     # P1: delimit chunk text *after* reranking, not before -- reranker-service's
     # cross-encoder needs the raw text to score against the query, not text
     # padded with marker tags. Copy each result rather than mutating the dicts
     # rerank() returned, since those still hold the raw text pulled from Qdrant.
+    # Issue #127: the response carries id + payload, and deliberately NOT the
+    # similarity score. OWASP's RAG guidance is explicit that scores must not
+    # be returned to users or agents, because the score gradient is the signal
+    # document-level membership inference needs: an authorized caller can
+    # probe with crafted queries and learn whether a document exists in the
+    # corpus, including documents their own filter excludes -- the *absence*
+    # of an expected score is informative too. Nothing downstream needs it;
+    # the calling model consumes rank order, which the list order already
+    # carries, and rerank() scores against the reranker's own output rather
+    # than this field.
     result["results"] = [
-        {**r, "payload": {**r["payload"], "text": _delimit_untrusted_text(r["payload"].get("text", ""))}}
+        {
+            "id": r["id"],
+            "payload": {
+                **r["payload"],
+                "text": _delimit_untrusted_text(r["payload"].get("text", "")),
+            },
+        }
         for r in reranked
     ]
     result["security_notice"] = SECURITY_NOTICE
@@ -246,13 +453,16 @@ async def run_rag_search(
     _audit(
         claims,
         "query",
-        {
-            "query": query,
-            "top_k": top_k,
-            "applied_filter": filter_summary,
-            "result_count": len(reranked),
-            "result_document_ids": [r["payload"].get("document_id") for r in reranked],
-        },
+        _audit_query_detail(
+            query,
+            top_k=top_k,
+            applied_filter=filter_summary,
+            result_count=len(reranked),
+            result_document_ids=[r["payload"].get("document_id") for r in reranked],
+            timings_ms=_timings_ms(timings, started),
+        ),
     )
+    metrics.queries_total.labels(outcome="ok").inc()
+    metrics.results_returned.observe(len(reranked))
 
     return result

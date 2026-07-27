@@ -1,0 +1,14 @@
+# Ruff configuration for the lint gate (.github/workflows/ci.yml), which
+# runs both `ruff check` and `ruff format --check` (issue #80).
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PLW", "RUF"]
+ignore = [
+    # FastAPI idiom: Depends()/Query()/etc. calls in parameter defaults.
+    "B008",
+]
+
+[lint.isort]
+known-first-party = ["common", "app"]

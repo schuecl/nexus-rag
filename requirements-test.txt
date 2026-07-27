@@ -1,0 +1,24 @@
+# Pinned test/lint toolchain for CI (.github/workflows/ci.yml) and local runs
+# (docs/testing.md). Install alongside each service's own dependencies.
+# NOTE: pytest is held on the 8.x line -- pytest-bdd 8.1.0 is not yet
+# compatible with pytest 9 (uses fixture registration removed in 9.1).
+# pytest 8.4.2 carries PYSEC-2026-1845 (fixed in 9.0.3); accepted here because
+# this toolchain never ships in a service image -- the pip-audit gate in
+# security.yml scans service dependencies only, not this file.
+pytest==8.4.2
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-bdd==8.1.0
+respx==0.23.1
+httpx==0.28.1
+beautifulsoup4==4.15.0
+# ingestion-worker parser dependencies exercised by tests/unit/ingestion_worker
+pypdf==6.14.2
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+# #134: common/tracing.py's OpenTelemetry stack (unit tests build a real
+# in-memory TracerProvider to assert span trees and NATS header propagation)
+opentelemetry-api==1.30.0
+opentelemetry-sdk==1.30.0
+opentelemetry-exporter-otlp-proto-http==1.30.0

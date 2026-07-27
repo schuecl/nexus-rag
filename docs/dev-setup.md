@@ -274,6 +274,46 @@ automated or for testing with your own file.
    output is a real FR-26 regression, not just a quality miss, and the run exits non-zero
    if one occurs.
 
+## Live validation history
+
+Most of this project was built with no Docker daemon, live Keycloak/Qdrant/Ollama, or
+Hugging Face access available, so initial verification leaned on `TestClient`/`uvicorn`/
+MCP-client round trips, in-memory Postgres/Qdrant, and hand-crafted JWTs — rigorous, but
+not the same as a real cluster.
+
+The full pipeline has since been validated against a real `docker compose up`, including
+the P0 durability work: a document submitted as `alice-ingest` was durably queued (NATS
+JetStream), picked up and processed by `ingestion-worker` (`queued → processing →
+pending_review`, confirmed via `GET /documents/{id}` polling), curated and approved, and
+then found by a real claims-filtered query against `orchestration-mcp`'s
+`/debug/rag_search` with a `bob-query`-obtained Keycloak token.
+
+That live run surfaced and fixed eight real bugs this repo's mocked verification couldn't
+have caught:
+
+1. A missing `mkdir` before a non-root `chown` — object-store write permissions.
+2. `obo.scopes` supplied as a JSON array where LibreChat expects a space-delimited string.
+3. Missing `JWT_SECRET` / `CREDS_KEY` / `CREDS_IV` in the LibreChat config.
+4. `ALLOW_SOCIAL_LOGIN` defaulting off, which disabled the OIDC button.
+5. An MCP SSRF domain-allowlist that blocked `orchestration-mcp`.
+6. A missing `OPENID_SCOPE`.
+7. A `depends_on` race against Keycloak's healthcheck.
+8. `openid-client` refusing a plain-HTTP issuer, which broke LibreChat's own OIDC login
+   (issue #75) — fixed with a real (self-signed, dev-only) HTTPS cert for both Keycloak
+   and a small nginx proxy in front of LibreChat, which has no HTTPS listener of its own.
+
+The OBO token-exchange mechanism itself is confirmed live: two real Keycloak config bugs
+were found and fixed (the Standard Token Exchange V2 switch was on the wrong client, and
+the exchanged token's HTTPS issuer wasn't in `orchestration-mcp`/`ingestion-api`'s issuer
+allowlist), and a scripted exchange now returns a correctly claims-filtered `rag_search`
+result.
+
+Still not confirmed: LibreChat's *own* code performing that exchange when a real chat
+message triggers the tool — driving that specific path hit a separate LibreChat auth quirk
+(its `openidJwt` reused-token strategy rejects its own token with "invalid algorithm"),
+tracked as a follow-up rather than chased down inline. See the "What's stubbed vs working"
+list below and `REQUIREMENTS.md`'s P1 list.
+
 ## What's stubbed vs working
 
 **Status-label convention (P1, REQUIREMENTS.md Section 11):** a bare "works" claim conflates
@@ -513,6 +553,60 @@ the docs, not a silent "it works" — flag it if you find one.
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.
+- **Distributed tracing across the queue and the retrieval fan-out
+  (issue #134)** — every service emits OpenTelemetry spans when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` points at an OTLP/HTTP collector
+  (otel-collector, Tempo, ...); unset, tracing is a no-op. The deliberate
+  piece is the queue boundary: `ingest.submit` (ingestion-api) and
+  `ingest.process` (ingestion-worker, with parse/chunk/embed/qdrant.upsert
+  children) form one trace because the W3C traceparent rides in the NATS
+  *message headers* — the body stays a bare document id, so the #109
+  malformed-payload guard and in-flight messages are untouched, and
+  JetStream redelivery carries the same context (validated against a real
+  NATS: nak → redelivery, headers byte-identical). Retrieval traces as
+  `rag_search` → embed.query / qdrant.query / rerank, with the context
+  propagating over httpx into reranker-service, whose request +
+  `model.predict` spans nest under the caller's — the cross-encoder's time
+  is no longer opaque. Span attributes are ids/counts/sizes only, never
+  query or chunk text (#125's rule), and head sampling defaults to 5%
+  (`OTEL_TRACES_SAMPLER_ARG`; ParentBased, so one decision covers a whole
+  request tree). Helm: `observability.tracing.*`. Unit-tested with a real
+  in-memory TracerProvider; not yet validated against a live Tempo.
+- **SIEM export of audit events, and level-configurable structured logging
+  (NFR-2, issue #73)** — every `audit_log` row (FR-31 funnels each ingestion,
+  curation, retrieval, and purge event from every service through that one
+  model) is forwarded as an RFC 5424 syslog message with a JSON payload the
+  moment it is inserted, via a SQLAlchemy `after_insert` hook in
+  `common/siem.py` — no per-call-site discipline required. Disabled unless
+  `SIEM_SYSLOG_HOST` is set — any IP/hostname and port the environment's
+  collector listens on (`SIEM_SYSLOG_PORT` default 514, or 6514 for tls;
+  Helm: `observability.siem.*`). Three transports via
+  `SIEM_SYSLOG_PROTOCOL`: `udp` (default), `tcp` (RFC 6587 octet-counted
+  framing), and `tls` (RFC 5425 — the same framing inside a verified TLS
+  session, for a collector on a protected segment: `SIEM_SYSLOG_CA_CERT`
+  points at the CA that signed the collector's certificate, optional
+  `SIEM_SYSLOG_CLIENT_CERT`/`SIEM_SYSLOG_CLIENT_KEY` for mutual TLS, and
+  `SIEM_SYSLOG_TLS_VERIFY=false` exists as a loudly-logged debug-only
+  escape hatch). To watch the export end to end locally, an opt-in
+  stand-in collector prints every message it receives, tagged per
+  transport: `docker compose --profile siem-debug up -d syslog-collector`,
+  point services at it with `SIEM_SYSLOG_HOST=syslog-collector`, then
+  `docker compose logs -f syslog-collector` (its TLS listener activates
+  automatically once `infra/certs/generate-dev-certs.sh` has run).
+  Fail-open on purpose: a collector
+  outage logs one warning and never blocks the request path — the DB row
+  remains the durable record either way. Denied actions (`query.denied`) go
+  out at WARNING severity, everything else at NOTICE, facility 13 (log
+  audit). Alongside it, every service now actually configures process
+  logging: `LOG_LEVEL` (DEBUG..CRITICAL, default INFO) and `LOG_FORMAT`
+  (`text`, or `json` for collector-friendly one-object-per-line) via
+  `common/logging_setup.py` — before this, the root-logger default (WARNING)
+  silently dropped every `logger.info` in the codebase. Both the syslog
+  payload and both log formats escape control characters, so a hostile value
+  cannot forge a second record (`common/log_safety.py`'s rule). Tested
+  against real UDP/TCP/TLS sockets in `tests/unit/common/test_siem.py`,
+  and validated live against the `syslog-collector` container on all three
+  transports; not yet validated against a production SIEM appliance.
 - **Separate DB credentials for the app and Keycloak, and an append-only audit log
   (NFR-2/NFR-3)** — `POSTGRES_USER` is now the bootstrap superuser only, never used for
   day-to-day traffic. `infra/postgres/init-app-roles.sh` (runs automatically on the

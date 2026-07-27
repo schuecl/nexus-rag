@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/schuecl/nexus-rag/security/policy
+    about: Do not open a public issue for security problems. Report them privately — see SECURITY.md.
+  - name: Question or discussion
+    url: https://github.com/schuecl/nexus-rag/issues?q=is%3Aissue
+    about: Search existing issues first; open a bug or enhancement if it's actionable.

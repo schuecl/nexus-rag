@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Durable parse/chunk/embed/store pipeline (FR-3..FR-6), consuming NATS JetStream (NFR-11)"
 requires-python = ">=3.11"
 dependencies = [
+    # #134: Ollama embedding call as a child span (app/main.py).
+    "opentelemetry-instrumentation-httpx>=0.51b0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
@@ -35,3 +37,29 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.mypy]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# Issue #79: second app service promoted from types-apps (report-only) to
+# the enforced `types` job in ci.yml. Scoped to app.* (not the whole config)
+# because MYPYPATH=../common pulls services/common into this run too, and
+# that package has its own separately-enforced (and currently looser) mypy
+# settings -- this must not tighten them as a side effect.
+module = ["app.*"]
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# common is already its own separately-enforced gate (`mypy services/common/
+# common` in ci.yml's `types` job). follow_imports=silent still uses its real
+# signatures to check app.* call sites, but stops this job from re-reporting
+# common's own findings (e.g. boto3/fastembed lacking stubs, allowed there
+# via that job's own ignore_missing_imports) under different settings here.
+module = ["common.*"]
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+# openpyxl ships no stubs or py.typed marker.
+module = ["openpyxl.*"]
+ignore_missing_imports = true

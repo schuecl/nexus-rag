@@ -1,0 +1,227 @@
+# Security: static analysis, dependency auditing, Helm validation, and
+# vulnerability scanning. Runs on every PR and weekly; image scans run
+# weekly/on-demand only (they build every image first, which is slow).
+name: security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+
+# Default to read-only. Only trivy-fs escalates (security-events: write, at
+# the job level) to publish SARIF to the Security tab; nothing else needs
+# more than repo read (#112).
+permissions:
+  contents: read
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - run: pip install bandit==1.9.4
+      - name: bandit static analysis
+        # Excludes test suites: they are full of bare `assert`, which is
+        # exactly right in a test and is all B101 would report. Now that
+        # per-service tests live under services/*/tests (issue #113), not
+        # excluding them buries real findings under ~170 B101 lines.
+        run: bandit -r services scripts --exclude '*/tests/*'
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install all service dependencies
+        # Audits the dependency tree the services actually ship, not the
+        # test toolchain (requirements-test.txt is dev-only). setuptools is
+        # upgraded first -- the version pip's own bootstrap leaves behind
+        # flags PYSEC-2026-3447 and would fail the audit on a non-service
+        # package.
+        run: |
+          pip install pip-audit==2.10.1
+          pip install -U "setuptools>=83.0.0"
+          pip install --no-deps \
+            -e services/common -e services/ingestion-api \
+            -e services/ingestion-worker -e services/orchestration-mcp \
+            -e services/reranker-service
+          pip install \
+            "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" "sqlmodel>=0.0.21" \
+            "psycopg[binary]>=3.1" "qdrant-client>=1.10" "fastembed>=0.6" \
+            "boto3>=1.34" "nats-py>=2.7" \
+            "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" \
+            "pypdf>=6.14.2" "python-docx>=1.1" "python-pptx>=1.0" \
+            "openpyxl>=3.1" "beautifulsoup4>=4.12" \
+            "mcp>=1.6" "sentence-transformers>=3.0" \
+            "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30" \
+            "opentelemetry-instrumentation-fastapi>=0.51b0" "opentelemetry-instrumentation-httpx>=0.51b0"
+      - name: Audit for known vulnerabilities
+        run: pip-audit --skip-editable
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: helm lint
+        run: helm lint helm/nexus-rag
+      - name: helm template renders
+        # oidcRedirectUri must be set explicitly when no ingress host is
+        # configured -- the chart fails closed on this by design.
+        run: >
+          helm template helm/nexus-rag --debug
+          --set ingestionApi.oidcRedirectUri=https://rag.ci.example/auth/callback
+          > /dev/null
+
+  trivy-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Read the repo, and write code scanning results. This is the only job in
+    # the file that needs more than `contents: read` -- it uploads SARIF so
+    # filesystem findings land in the Security tab, not just the run log.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # One scan, two outcomes: trivy writes the SARIF report first, then
+      # applies exit-code, so a HIGH/CRITICAL both fails the gate here AND
+      # leaves a report for the upload below (which runs on always()).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: 1
+      - name: Upload Trivy filesystem SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  trivy-image:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service
+      # Scan each built image with the same SHA-pinned trivy-action the
+      # filesystem scan uses, instead of `docker run aquasec/trivy:latest`.
+      # That `:latest` was a floating tag (the very thing pin-check/NFR-16
+      # forbids in the shipped images); reusing the action keeps trivy on one
+      # pinned supply-chain surface and drops the docker-socket mount.
+      - name: Scan ingestion-api image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-ingestion-api
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan ingestion-worker image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-ingestion-worker
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan orchestration-mcp image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-orchestration-mcp
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan reranker-service image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-reranker-service
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
+  secret-scan:
+    # Catch committed credentials before they reach main. gitleaks scans the
+    # working tree on push/schedule; on a PR it needs full history so it can
+    # diff the PR's commits (fetch-depth: 0). Fails the job on any finding.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          # No org licence required for a public repo; this keeps the action
+          # from probing for one. GITHUB_TOKEN lets it annotate the PR.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sbom:
+    # Generate a CycloneDX SBOM per shipped image and keep it as a build
+    # artifact, so what actually went into each image is auditable after the
+    # fact. Non-PR only: it builds every image first (like trivy-image).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service
+      - run: mkdir -p sbom
+      - name: SBOM for ingestion-api
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-ingestion-api
+          format: cyclonedx-json
+          output-file: sbom/ingestion-api.cdx.json
+          upload-artifact: false
+      - name: SBOM for ingestion-worker
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-ingestion-worker
+          format: cyclonedx-json
+          output-file: sbom/ingestion-worker.cdx.json
+          upload-artifact: false
+      - name: SBOM for orchestration-mcp
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-orchestration-mcp
+          format: cyclonedx-json
+          output-file: sbom/orchestration-mcp.cdx.json
+          upload-artifact: false
+      - name: SBOM for reranker-service
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-reranker-service
+          format: cyclonedx-json
+          output-file: sbom/reranker-service.cdx.json
+          upload-artifact: false
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error

@@ -40,10 +40,10 @@ def validate_supersede_target(
     if old_doc.owner_org != new_owner_org:
         errors.append("target document belongs to a different org")
     if old_doc.classification not in allowed_classifications:
-        errors.append(
-            "target document's classification is above the submitter's cleared level"
-        )
+        errors.append("target document's classification is above the submitter's cleared level")
     if not releasability_authorized(old_doc.releasability, user_releasability):
-        errors.append("submitter does not hold one or more of the target document's releasability values")
+        errors.append(
+            "submitter does not hold one or more of the target document's releasability values"
+        )
     if errors:
         raise SupersedeValidationError(errors)

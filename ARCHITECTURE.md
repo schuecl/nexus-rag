@@ -376,7 +376,7 @@ rather than reimplementing the check:
 | Ingest-time tagging | `ingestion-api` upload route | Classification/Releasability offered ≤ uploader's clearance/releasability |
 | Curation | `ingestion-api` curate route | Approving curator holds `rag-curate:<org>` for the doc's org, and clearance/releasability cover the (possibly corrected) tags |
 | Query-time retrieval | `orchestration-mcp` | Qdrant filter restricts to `approved` + classification ≤ clearance + releasability match + access_scope match |
-| Audit | Both services, `audit_log` table | Every submit/approve/reject/supersede/query is recorded against the actor's `sub`, not a self-reported name |
+| Audit | Both services, `audit_log` table | Every submit/approve/reject/supersede/query is recorded against the actor's `sub`, not a self-reported name. Each row is also exported as RFC 5424 syslog to the environment's SIEM when `SIEM_SYSLOG_HOST` is configured (NFR-2, #73) -- the DB row stays the durable system of record; the syslog copy is an export, fail-open by design so a collector outage never blocks the request path |
 
 ## 6. Deployment topology
 
@@ -403,6 +403,27 @@ via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUr
 `externalObjectStore.endpoint`/`.bucket`), not deployed by the chart.
 
 ## 7. Known gaps
+
+### Observability (issue #72)
+
+`orchestration-mcp` exposes a Prometheus `/metrics` endpoint covering the
+retrieval path: per-stage latency (embed / retrieve / rerank / total), query
+outcomes, result-count distribution, and the reranker fallback rate — the last
+of which matters because FR-25 degrades to fused order instead of failing, so
+a ranking-quality drop is otherwise invisible. Per-request timings also land in
+the FR-31 audit entry, next to the actor and the authorization outcome.
+
+Deliberately *not* returned to callers: response latency correlates with how
+much the access filter matched and how many candidates were reranked, so
+per-stage figures would sharpen the membership-inference surface #127
+describes. Operators get them via the audit log and the scrape endpoint.
+
+Still open: `ingestion-api`, `ingestion-worker`, and `reranker-service` have no
+metrics surface, so ingestion throughput, queue depth, and worker processing
+duration remain unmeasured (NATS exposes its own monitoring endpoint on :8222
+to align with). NFR-4's end-to-end latency budget also remains an open question
+in REQUIREMENTS.md — the instrumentation to eventually answer it with data now
+exists for the query path only.
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based

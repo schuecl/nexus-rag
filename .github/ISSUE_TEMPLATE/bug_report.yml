@@ -1,0 +1,60 @@
+name: Bug report
+description: Report something that isn't working as intended
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For a **security-sensitive** issue, do not file
+        it here — follow [SECURITY.md](../blob/main/SECURITY.md) to report it
+        privately instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps. Include the exact command(s) where relevant.
+      placeholder: |
+        1. `docker compose up`
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the system?
+      options:
+        - ingestion-api
+        - ingestion-worker
+        - orchestration-mcp
+        - reranker-service
+        - services/common
+        - Helm chart
+        - docker-compose / dev setup
+        - CI / tooling
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: How were you running it (Compose vs Helm), OS, Python version, relevant image tags.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any relevant log output. This is automatically formatted as code.
+      render: shell
+    validations:
+      required: false

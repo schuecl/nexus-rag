@@ -16,7 +16,10 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080")
 REALM = "nexus-rag"
 CLIENT_ID = "rag-app"
 CLIENT_SECRET = os.environ.get("RAG_APP_KEYCLOAK_CLIENT_SECRET", "dev-rag-app-secret")
-SEED_PASSWORD = "devpass123"  # matches infra/keycloak/realm-export -- dev-only
+# nosec B105: not a credential this repo protects -- it is the password the
+# committed dev realm export seeds its throwaway users with, so it has to
+# match that file literally. Any real deployment imports its own realm.
+SEED_PASSWORD = "devpass123"  # nosec B105
 
 
 def get_token(username: str) -> str:

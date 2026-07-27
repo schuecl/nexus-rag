@@ -7,16 +7,19 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.deps import allowed_classifications, require_curator, verify_csrf
+from common.claims import UserClaims
 from common.db import get_session
 from common.metadata import releasability_authorized
 from common.models import AuditLogEntry, Document, Notification
 from common.qdrant_store import delete_document_chunks, get_qdrant_client, update_document_payload
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-from sqlmodel import Session, select
 
 logger = logging.getLogger("ingestion-api")
 
@@ -25,9 +28,9 @@ router = APIRouter(prefix="/curate", tags=["curation"])
 
 @router.get("/queue")
 def list_queue(
-    user=Depends(require_curator),
+    user: UserClaims = Depends(require_curator),
     session: Session = Depends(get_session),
-):
+) -> Sequence[Document]:
     docs = session.exec(
         select(Document)
         .where(Document.status == "pending_review")
@@ -45,11 +48,9 @@ def _load_pending(session: Session, doc_id: uuid.UUID) -> Document:
     return doc
 
 
-def _check_curator_authority(user, doc: Document, session: Session) -> None:
+def _check_curator_authority(user: UserClaims, doc: Document, session: Session) -> None:
     if not user.can_curate_org(doc.owner_org):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, f"not a curator for org '{doc.owner_org}'"
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a curator for org '{doc.owner_org}'")
     allowed = allowed_classifications(session, user.clearance)
     if doc.classification not in allowed:
         raise HTTPException(
@@ -67,7 +68,7 @@ def _check_curator_authority(user, doc: Document, session: Session) -> None:
         )
 
 
-def _validate_supersede(user, new_doc: Document, session: Session) -> Document:
+def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -> Document:
     """FR-7: everything that can fail about the version swap, checked *before*
     any mutation (Postgres or Qdrant) happens for either document -- so a
     rejected approval attempt never leaves the new document's chunks flipped
@@ -95,12 +96,14 @@ def _validate_supersede(user, new_doc: Document, session: Session) -> Document:
     return old_doc
 
 
-def _execute_supersede(user, old_doc: Document, new_doc: Document, session: Session) -> None:
+def _execute_supersede(
+    user: UserClaims, old_doc: Document, new_doc: Document, session: Session
+) -> None:
     """The actual swap -- only called after _validate_supersede has already
     passed, so this is expected not to fail."""
     delete_document_chunks(get_qdrant_client(), str(old_doc.id))
     old_doc.status = "superseded"
-    old_doc.updated_at = datetime.now(timezone.utc)
+    old_doc.updated_at = datetime.now(UTC)
     session.add(old_doc)
     session.add(
         AuditLogEntry(
@@ -123,10 +126,10 @@ class Corrections(BaseModel):
 def approve(
     doc_id: uuid.UUID,
     corrections: Corrections | None = None,
-    user=Depends(require_curator),
+    user: UserClaims = Depends(require_curator),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     doc = _load_pending(session, doc_id)
     _check_curator_authority(user, doc, session)
 
@@ -147,9 +150,9 @@ def approve(
 
     doc.status = "approved"
     doc.reviewed_by_sub = user.sub
-    doc.reviewed_at = datetime.now(timezone.utc)
+    doc.reviewed_at = datetime.now(UTC)
 
-    qdrant_fields = {"status": doc.status}
+    qdrant_fields: dict[str, str | list[str]] = {"status": doc.status}
     if corrections:
         if corrections.classification:
             qdrant_fields["classification"] = doc.classification
@@ -217,17 +220,17 @@ class Rejection(BaseModel):
 def reject(
     doc_id: uuid.UUID,
     body: Rejection,
-    user=Depends(require_curator),
+    user: UserClaims = Depends(require_curator),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     doc = _load_pending(session, doc_id)
     _check_curator_authority(user, doc, session)
 
     doc.status = "rejected"
     doc.rejection_reason = body.reason
     doc.reviewed_by_sub = user.sub
-    doc.reviewed_at = datetime.now(timezone.utc)
+    doc.reviewed_at = datetime.now(UTC)
     qdrant = get_qdrant_client()
     update_document_payload(qdrant, str(doc.id), {"status": doc.status})
     # NFR-13: same reasoning as approve() above -- revert the Qdrant write if

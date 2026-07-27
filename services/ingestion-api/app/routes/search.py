@@ -19,8 +19,9 @@ from __future__ import annotations
 import os
 
 import httpx
-from app.deps import get_current_access_token
 from fastapi import APIRouter, Depends, Query
+
+from app.deps import get_current_access_token
 
 router = APIRouter(prefix="/search", tags=["search"])
 

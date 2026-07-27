@@ -18,23 +18,36 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from nats.aio.msg import Msg
+from nats.errors import TimeoutError as NatsTimeoutError
+from nats.js.api import ConsumerConfig
+from qdrant_client.models import PointStruct
+from sqlmodel import Session
 
 from app.chunking import chunk_sections
-from app.embedding import EmbeddingError, embed_texts
+from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import ParsingError, parse_document
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
 from common.models import AuditLogEntry, Document
 from common.object_store import get_object_store
-from common.qdrant_store import chunk_vector, ensure_collection, get_qdrant_client, upsert_chunks
+from common.qdrant_store import (
+    EMBEDDING_MODEL_KEY,
+    chunk_vector,
+    ensure_collection,
+    get_qdrant_client,
+    upsert_chunks,
+)
 from common.sparse_embedding import embed_sparse
-from nats.js.api import ConsumerConfig
-from nats.errors import TimeoutError as NatsTimeoutError
-from qdrant_client.models import PointStruct
-from sqlmodel import Session
+from common.tracing import extract_trace_context, get_tracer
 
 logger = logging.getLogger("ingestion-worker")
+
+# #134: spans carry ids, counts, and byte sizes only -- never chunk text,
+# filenames, or any other corpus content (see common/tracing.py).
+tracer = get_tracer("ingestion-worker")
 
 # Generous enough to cover a slow embedding pass over a large document
 # without a false-positive redelivery racing the attempt that's already
@@ -61,7 +74,7 @@ NAK_BACKOFF_SECONDS = 30.0
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -122,14 +135,30 @@ async def process_document(document_id: uuid.UUID) -> bool:
         session.commit()
 
         try:
+            if doc.original_object_key is None:
+                # A document can be purged (common/purge.py) while still
+                # queued/processing -- original_object_key is cleared as part
+                # of that. Same permanent-failure handling as a missing
+                # object-store key below: retrying can't produce a key that
+                # was deliberately destroyed.
+                raise FileNotFoundError("original_object_key is unset (document was purged)")
             contents = get_object_store().get(doc.original_object_key)
-            sections = parse_document(doc.filename, contents)
-            chunks = chunk_sections(sections)
+            # #134's ingest.process stage spans: attribute values are counts
+            # and byte sizes only, never the text they describe.
+            with tracer.start_as_current_span("parse") as span:
+                span.set_attribute("document.bytes", len(contents))
+                sections = parse_document(doc.filename, contents)
+                span.set_attribute("document.sections", len(sections))
+            with tracer.start_as_current_span("chunk") as span:
+                chunks = chunk_sections(sections)
+                span.set_attribute("document.chunks", len(chunks))
             if not chunks:
                 raise ParsingError("document contained no extractable text")
 
-            dense_vectors = await embed_texts([c.text for c in chunks])
-            sparse_vectors = embed_sparse([c.text for c in chunks])
+            with tracer.start_as_current_span("embed") as span:
+                span.set_attribute("document.chunks", len(chunks))
+                dense_vectors = await embed_texts([c.text for c in chunks])
+                sparse_vectors = embed_sparse([c.text for c in chunks])
 
             points = [
                 PointStruct(
@@ -145,6 +174,14 @@ async def process_document(document_id: uuid.UUID) -> bool:
                         # what kind of content they hold (e.g. prefer table
                         # chunks for a query asking about a specific value).
                         "content_type": chunk.content_type,
+                        # Issue #122: which model produced this vector, and
+                        # when. Without it a change to EMBEDDING_MODEL leaves
+                        # stored and query vectors in different embedding
+                        # spaces with nothing to detect it -- the dense leg
+                        # silently returns noise while BM25 and reranking keep
+                        # the results looking plausible.
+                        EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
+                        "embedded_at": _utcnow().isoformat(),
                         "filename": doc.filename,
                         "doc_type": doc.doc_type,
                         "source_originator": doc.source_originator,
@@ -158,11 +195,13 @@ async def process_document(document_id: uuid.UUID) -> bool:
                         "status": "pending_review",
                     },
                 )
-                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors)
+                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors, strict=True)
             ]
-            qdrant = get_qdrant_client()
-            ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
-            upsert_chunks(qdrant, points)
+            with tracer.start_as_current_span("qdrant.upsert") as span:
+                span.set_attribute("qdrant.points", len(points))
+                qdrant = get_qdrant_client()
+                ensure_collection(qdrant, dense_size=len(dense_vectors[0]))
+                upsert_chunks(qdrant, points)
 
             doc.status = "embedded"
             doc.chunk_count = len(chunks)
@@ -224,7 +263,7 @@ async def process_document(document_id: uuid.UUID) -> bool:
             )
             session.commit()
             return True
-        except Exception:  # noqa: BLE001 -- NFR-7: never crash the worker
+        except Exception:
             # Unexpected/transient -- Qdrant or the DB unreachable, a bug,
             # etc. Roll back rather than commit doc.status = "processing" as
             # a dead end, and don't ack: JetStream redelivers this message
@@ -249,8 +288,7 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
                 return
             doc.status = "failed"
             doc.processing_error = (
-                f"processing failed after {attempts} delivery attempts; "
-                "see ingestion-worker logs"
+                f"processing failed after {attempts} delivery attempts; see ingestion-worker logs"
             )
             session.add(doc)
             session.add(
@@ -263,13 +301,13 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
                 )
             )
             session.commit()
-    except Exception:  # noqa: BLE001 -- best effort; the message is dropped either way
+    except Exception:
         logger.exception(
             "could not mark document %s failed after exhausting redelivery", document_id
         )
 
 
-async def _handle_message(msg) -> None:
+async def _handle_message(msg: Msg) -> None:
     """One message, start to finish. Every failure mode here is contained:
     nothing raised while handling a single message may unwind consume_forever
     and take the whole consumer down with it."""
@@ -284,7 +322,21 @@ async def _handle_message(msg) -> None:
         await msg.term()
         return
 
-    terminal = await process_document(document_id)
+    # #134: parent this consumer's span onto the publisher's trace via the
+    # message headers, so ingest.submit -> ingest.process reads as one trace
+    # even across pods and redeliveries (JetStream stores headers with the
+    # message). A missing header -- an in-flight message from before this
+    # existed, or an untraced publisher -- just starts a fresh trace.
+    with tracer.start_as_current_span(
+        "ingest.process",
+        context=extract_trace_context(msg.headers),
+        attributes={
+            "document.id": str(document_id),
+            "messaging.delivery_attempt": msg.metadata.num_delivered,
+        },
+    ) as span:
+        terminal = await process_document(document_id)
+        span.set_attribute("ingest.terminal", terminal)
     if terminal:
         await msg.ack()
         STATUS.processed += 1
@@ -321,9 +373,7 @@ async def consume_forever() -> None:
         psub = await js.pull_subscribe(
             INGESTION_SUBJECT,
             durable=DURABLE_CONSUMER_NAME,
-            config=ConsumerConfig(
-                ack_wait=ACK_WAIT_SECONDS, max_deliver=MAX_DELIVERY_ATTEMPTS
-            ),
+            config=ConsumerConfig(ack_wait=ACK_WAIT_SECONDS, max_deliver=MAX_DELIVERY_ATTEMPTS),
         )
 
         logger.info("ingestion-worker: subscribed, waiting for jobs")
@@ -340,7 +390,7 @@ async def consume_forever() -> None:
             for msg in msgs:
                 try:
                     await _handle_message(msg)
-                except Exception:  # noqa: BLE001 -- one bad message must not stop the consumer
+                except Exception:
                     logger.exception("unhandled error handling a message, continuing")
     except asyncio.CancelledError:
         # Normal shutdown -- app/main.py's lifespan cancels this task.
