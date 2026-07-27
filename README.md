@@ -9,6 +9,9 @@ existing stack, exposed to LibreChat as a custom MCP tool.
 Full requirements, design constraints, and open questions: **[REQUIREMENTS.md](REQUIREMENTS.md)**.
 For how the pieces fit together — component diagram, data model, and sequence diagrams for
 every major flow — see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+For how the corpus itself is governed — access control, curation as the data-quality gate,
+lineage, query confidentiality, and the retention/destruction gaps — see
+**[docs/governance.md](docs/governance.md)**.
 Everything below is a snapshot of what's actually built against that spec, not a plan.
 
 ## Status
