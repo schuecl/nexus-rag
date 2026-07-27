@@ -258,7 +258,13 @@ baseline, on any of:
   harness supports it (issue #71); the cross-run persistence in `e2e.yml` is the
   remaining step.
 - Integration layer with containerized Postgres/Qdrant/NATS/Keycloak
-  (NFR-11 crash-redelivery, NFR-13 revert-on-partial-failure, NFR-2
-  append-only audit enforcement are only covered live/manually today).
+  (NFR-11 crash-redelivery, NFR-2 append-only audit enforcement are only
+  covered live/manually today). NFR-13 revert-on-partial-failure now has a
+  committed mock-based regression test
+  (`services/ingestion-api/tests/test_curate_nfr13_revert.py`, issue #77) —
+  the remaining gap there is specifically a live run against a real
+  Postgres/Qdrant pair, which needs a fault-injection hook (deliberately not
+  added yet, to keep production code free of test-only branches) rather than
+  just this integration layer.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
