@@ -189,28 +189,28 @@ jobs:
           ingestion-api ingestion-worker orchestration-mcp reranker-service
       - run: mkdir -p sbom
       - name: SBOM for ingestion-api
-        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: nexus-rag-ingestion-api
           format: cyclonedx-json
           output-file: sbom/ingestion-api.cdx.json
           upload-artifact: false
       - name: SBOM for ingestion-worker
-        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: nexus-rag-ingestion-worker
           format: cyclonedx-json
           output-file: sbom/ingestion-worker.cdx.json
           upload-artifact: false
       - name: SBOM for orchestration-mcp
-        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: nexus-rag-orchestration-mcp
           format: cyclonedx-json
           output-file: sbom/orchestration-mcp.cdx.json
           upload-artifact: false
       - name: SBOM for reranker-service
-        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: nexus-rag-reranker-service
           format: cyclonedx-json
