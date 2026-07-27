@@ -85,8 +85,7 @@ def validate_against_claims(
     errors = []
     if metadata.classification not in allowed_classifications:
         errors.append(
-            f"classification '{metadata.classification}' is above the submitter's "
-            "cleared level"
+            f"classification '{metadata.classification}' is above the submitter's cleared level"
         )
     if not releasability_authorized(metadata.releasability, user_releasability):
         errors.append(

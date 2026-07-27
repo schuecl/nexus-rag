@@ -26,20 +26,28 @@ class TestRerank:
 
     @respx.mock
     async def test_reorders_by_cross_encoder_score(self):
-        respx.post(RERANK_URL).mock(return_value=httpx.Response(
-            200, json=[{"id": "a", "score": 0.1},
-                       {"id": "b", "score": 0.9},
-                       {"id": "c", "score": 0.5}],
-        ))
+        respx.post(RERANK_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"id": "a", "score": 0.1},
+                    {"id": "b", "score": 0.9},
+                    {"id": "c", "score": 0.5},
+                ],
+            )
+        )
         ranked, note = await rerank("query", _candidates("a", "b", "c"), top_k=3)
         assert [c["id"] for c in ranked] == ["b", "c", "a"]
         assert "rerank" in note
 
     @respx.mock
     async def test_truncates_to_top_k(self):
-        respx.post(RERANK_URL).mock(return_value=httpx.Response(
-            200, json=[{"id": i, "score": 1.0} for i in "abcde"],
-        ))
+        respx.post(RERANK_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json=[{"id": i, "score": 1.0} for i in "abcde"],
+            )
+        )
         ranked, _ = await rerank("query", _candidates("a", "b", "c", "d", "e"), top_k=2)
         assert len(ranked) == 2
 
@@ -61,9 +69,12 @@ class TestRerank:
 
     @respx.mock
     async def test_candidates_missing_from_scores_sort_last(self):
-        respx.post(RERANK_URL).mock(return_value=httpx.Response(
-            200, json=[{"id": "b", "score": 0.9}],
-        ))
+        respx.post(RERANK_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json=[{"id": "b", "score": 0.9}],
+            )
+        )
         ranked, _ = await rerank("query", _candidates("a", "b"), top_k=2)
         assert ranked[0]["id"] == "b"
 

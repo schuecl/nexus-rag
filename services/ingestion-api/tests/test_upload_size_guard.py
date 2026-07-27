@@ -62,9 +62,7 @@ class TestReadBounded:
 
         assert exc.value.status_code == 413
 
-    async def test_read_stops_early_instead_of_consuming_the_whole_upload(
-        self, monkeypatch
-    ):
+    async def test_read_stops_early_instead_of_consuming_the_whole_upload(self, monkeypatch):
         """The point of the change: the old code did one read() of everything
         and *then* measured it. This asserts we stop partway through rather
         than materialising a body far larger than the limit.

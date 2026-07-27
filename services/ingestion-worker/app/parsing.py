@@ -24,8 +24,15 @@ from __future__ import annotations
 
 import io
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from docx.document import Document as DocxDocument
+    from docx.table import Table as DocxTable
+    from docx.text.paragraph import Paragraph as DocxParagraph
 
 
 class ParsingError(Exception):
@@ -64,7 +71,6 @@ def _check_zip_bomb(content: bytes) -> None:
                     )
     except zipfile.BadZipFile as exc:
         raise ParsingError(f"corrupt archive: {exc}") from exc
-
 
 
 @dataclass
@@ -129,7 +135,7 @@ def _parse_markdown(content: bytes) -> list[ParsedSection]:
     current_heading: str | None = None
     current_lines: list[str] = []
 
-    def flush():
+    def flush() -> None:
         body = "\n".join(current_lines).strip()
         if body:
             sections.append(ParsedSection(text=body, heading=current_heading))
@@ -163,7 +169,7 @@ def _parse_html(content: bytes) -> list[ParsedSection]:
         heading_text = heading.get_text(strip=True)
         body_parts = []
         for sibling in heading.find_next_siblings():
-            if sibling.name in ("h1", "h2", "h3"):
+            if getattr(sibling, "name", None) in ("h1", "h2", "h3"):
                 break
             body_parts.append(sibling.get_text(separator="\n", strip=True))
         body = "\n".join(p for p in body_parts if p)
@@ -225,9 +231,7 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
             # (same page_or_slide, content_type "text" vs "table") instead of
             # being joined into one blob -- see the ParsedSection docstring.
             if prose:
-                sections.append(
-                    ParsedSection(text=prose, page_or_slide=i + 1, content_type="text")
-                )
+                sections.append(ParsedSection(text=prose, page_or_slide=i + 1, content_type="text"))
             for table in tables:
                 markdown = _table_to_markdown(table.extract())
                 if markdown:
@@ -238,7 +242,7 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
     return sections
 
 
-def _iter_docx_block_items(document):
+def _iter_docx_block_items(document: DocxDocument) -> Iterator[DocxParagraph | DocxTable]:
     """Yield a document's paragraphs and tables in document order.
 
     python-docx's own `document.paragraphs` and `document.tables` are two
@@ -259,7 +263,7 @@ def _iter_docx_block_items(document):
             yield Table(child, document)
 
 
-def _docx_table_grid(table) -> list[list[str | None]]:
+def _docx_table_grid(table: DocxTable) -> list[list[str | None]]:
     # Note: python-docx repeats the same Cell object across a merged span, so
     # a horizontally- or vertically-merged cell's text appears once per
     # spanned position rather than once per visual cell -- a known
@@ -276,7 +280,7 @@ def _parse_docx(content: bytes) -> list[ParsedSection]:
     current_heading: str | None = None
     current_lines: list[str] = []
 
-    def flush_prose():
+    def flush_prose() -> None:
         body = "\n".join(current_lines).strip()
         if body:
             sections.append(ParsedSection(text=body, heading=current_heading, content_type="text"))

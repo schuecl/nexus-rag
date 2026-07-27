@@ -256,7 +256,5 @@ def evaluate_markings(
 
     held = {c.upper() for c in assigned_releasability}
     advisory.detected_caveats = list(detected.caveats)
-    advisory.unassigned_caveats = [
-        c for c in detected.caveats if c.upper() not in held
-    ]
+    advisory.unassigned_caveats = [c for c in detected.caveats if c.upper() not in held]
     return advisory

@@ -196,8 +196,7 @@ def main() -> None:
     d_v1 = submit(
         alice,
         "network-access-sop-v1.md",
-        "# Network Access SOP (v1)\n\nVPN access requires a hardware token "
-        "and manager approval.",
+        "# Network Access SOP (v1)\n\nVPN access requires a hardware token and manager approval.",
         classification="CUI",
         releasability=["FVEY"],
         access_scope=["USAREUR-AF"],
@@ -227,8 +226,11 @@ if __name__ == "__main__":
     try:
         main()
     except httpx.HTTPStatusError as exc:
-        print(f"FAILED: {exc.request.method} {exc.request.url} -> {exc.response.status_code} "
-              f"{exc.response.text}", file=sys.stderr)
+        print(
+            f"FAILED: {exc.request.method} {exc.request.url} -> {exc.response.status_code} "
+            f"{exc.response.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as exc:
         print(f"FAILED: {exc}", file=sys.stderr)

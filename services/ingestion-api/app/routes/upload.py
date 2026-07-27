@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
@@ -30,15 +31,21 @@ from app.deps import (
     require_purge,
     verify_csrf,
 )
+from common.claims import UserClaims
 from common.db import get_session
 from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
 from common.object_store import document_object_key, get_object_store
 from common.purge import PurgeError, purge_document
+from common.tracing import get_tracer
 from common.versioning import SupersedeValidationError, validate_supersede_target
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
+
+# #134: spans carry ids, counts, and byte sizes only -- never file content or
+# filenames (the purge path treats filenames as content; see common/purge.py).
+tracer = get_tracer("ingestion-api")
 
 # FR-9/NFR-7: "a configurable size limit" -- was a hardcoded constant despite
 # the comment's own claim; now actually reads from the environment, default
@@ -73,9 +80,7 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
     # branch that fires and nothing large is ever copied. The loop below is
     # the guard for the case where size isn't populated.
     if file.size is not None and file.size > limit:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
-        )
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit")
 
     chunks: list[bytes] = []
     total = 0
@@ -85,9 +90,7 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
             break
         total += len(chunk)
         if total > limit:
-            raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
-            )
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -104,10 +107,10 @@ async def submit_document(
     program_community: str | None = Form(None),
     effective_date: str | None = Form(None),
     supersedes_document_id: str | None = Form(None),
-    user=Depends(require_ingest),
+    user: UserClaims = Depends(require_ingest),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     contents = await _read_bounded(file, MAX_UPLOAD_BYTES)
     if not contents:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
@@ -205,15 +208,23 @@ async def submit_document(
     # drives doc.status through processing -> embedded -> pending_review (or
     # failed). request.app.state.jetstream is set up once at startup
     # (app/main.py's lifespan), not reconnected per request.
-    await publish_ingestion_job(request.app.state.jetstream, str(doc.id))
+    #
+    # #134: publish inside a named ingest.submit span so the traceparent
+    # riding the NATS message headers points here, and ingestion-worker's
+    # ingest.process span continues this trace across the queue.
+    with tracer.start_as_current_span(
+        "ingest.submit",
+        attributes={"document.id": str(doc.id), "document.bytes": len(contents)},
+    ):
+        await publish_ingestion_job(request.app.state.jetstream, str(doc.id))
     return doc
 
 
 @router.get("/mine")
 def list_my_documents(
-    user=Depends(get_current_user),
+    user: UserClaims = Depends(get_current_user),
     session: Session = Depends(get_session),
-):
+) -> Sequence[Document]:
     docs = session.exec(select(Document).where(Document.uploader_sub == user.sub)).all()
     return docs
 
@@ -221,9 +232,9 @@ def list_my_documents(
 @router.get("/{doc_id}")
 def get_document(
     doc_id: uuid.UUID,
-    user=Depends(get_current_user),
+    user: UserClaims = Depends(get_current_user),
     session: Session = Depends(get_session),
-):
+) -> Document:
     """FR-8: lets a caller poll a submission's status after the immediate
     202 response. Scoped to the uploader themselves -- this isn't a general
     document-lookup endpoint; curators have their own scoped queue view
@@ -242,10 +253,10 @@ class PurgeRequest(BaseModel):
 def purge(
     doc_id: uuid.UUID,
     body: PurgeRequest,
-    user=Depends(require_purge),
+    user: UserClaims = Depends(require_purge),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     """Issue #123: destroy a document's content in every store that holds it.
 
     The remediation path for classification spillage. Until this existed a

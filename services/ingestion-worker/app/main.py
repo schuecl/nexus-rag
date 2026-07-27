@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -28,9 +29,26 @@ from fastapi.responses import JSONResponse
 # whichever instance existed at import time. Production only ever mutates it
 # in place so either form would work there, but the indirection keeps the two
 # modules from disagreeing about which object is current.
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
 from app import processing
 from app.processing import consume_forever
 from common.db import init_db
+from common.logging_setup import setup_logging
+from common.siem import enable_siem_export
+from common.tracing import setup_tracing
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of the audit events the pipeline writes (document.embedded,
+# document.failed, ...).
+setup_logging("ingestion-worker")
+enable_siem_export("ingestion-worker")
+# #134: the ingest.process span tree (processing.py), joined to
+# ingestion-api's ingest.submit via NATS message headers. httpx
+# instrumentation adds the Ollama embedding call as a child span. Disabled
+# (no-op spans) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_tracing("ingestion-worker")
+HTTPXClientInstrumentor().instrument()
 
 
 def _log_consumer_exit(task: asyncio.Task) -> None:
@@ -48,7 +66,7 @@ def _log_consumer_exit(task: asyncio.Task) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()  # idempotent -- ingestion-api already does this too (common/db.py)
     consumer_task = asyncio.create_task(consume_forever())
     consumer_task.add_done_callback(_log_consumer_exit)
@@ -61,8 +79,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="nexus-rag ingestion-worker", lifespan=lifespan)
 
 
-@app.get("/health")
-def health():
+@app.get("/health", response_model=None)
+def health() -> JSONResponse | Mapping[str, object]:
     """503 whenever the consumer isn't running, so a k8s liveness probe
     restarts the pod and a readiness probe takes it out of service instead of
     both reporting a worker that stopped working. The body carries the

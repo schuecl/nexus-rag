@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -12,8 +13,23 @@ from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
 from common.job_queue import ensure_stream, get_nats_connection
+from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, ReleasabilityValue
+from common.siem import enable_siem_export
+from common.tracing import setup_tracing
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of every audit event this service writes (upload, curation,
+# purge, auth). Module level, before the app object exists, so startup logging
+# is already formatted and filtered.
+setup_logging("ingestion-api")
+enable_siem_export("ingestion-api")
+# #134: request spans (FastAPI auto-instrumentation, applied to the app after
+# it is created below) plus the manual ingest.submit span in routes/upload.py
+# whose context rides the NATS headers to ingestion-worker. Disabled unless
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_tracing("ingestion-api")
 
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),
@@ -41,7 +57,7 @@ def _seed_defaults() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     _seed_defaults()
     # NFR-11: one long-lived JetStream connection for the process, not a
@@ -58,6 +74,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
+# #134: one request span per route, with incoming traceparent honored; the
+# import lives here rather than at the top so the app object exists first.
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
+
+FastAPIInstrumentor.instrument_app(app)
 templates = Jinja2Templates(directory="app/templates")
 
 app.include_router(auth.router)
@@ -69,7 +90,7 @@ app.include_router(search.router)
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -80,10 +101,13 @@ def _live_controlled_vocab(session: Session) -> dict:
     # queue page, since FR-13's "correct" action assigns the same
     # Classification/Releasability values FR-17 requires come from a
     # controlled vocabulary, not free text -- same as at upload time.
+    # SQLModel table classes use plain annotations rather than SQLAlchemy
+    # 2.0's Mapped[], so mypy sees ClassificationLevel.rank as a bare int --
+    # not a real bug, see pyproject.toml's mypy section.
     classifications = session.exec(
         select(ClassificationLevel)
         .where(ClassificationLevel.active == True)  # noqa: E712
-        .order_by(ClassificationLevel.rank)
+        .order_by(ClassificationLevel.rank)  # type: ignore[arg-type]
     ).all()
     releasability = session.exec(
         select(ReleasabilityValue).where(ReleasabilityValue.active == True)  # noqa: E712
@@ -100,7 +124,7 @@ def upload_page(
     request: Request,
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
-):
+) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
     ctx["current_user"] = current_user
     return templates.TemplateResponse(request, "upload.html", ctx)
@@ -111,7 +135,7 @@ def curate_page(
     request: Request,
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
-):
+) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
     ctx["current_user"] = current_user
     return templates.TemplateResponse(request, "curate.html", ctx)
@@ -120,14 +144,12 @@ def curate_page(
 @app.get("/notifications", response_class=HTMLResponse)
 def notifications_page(
     request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
-):
-    return templates.TemplateResponse(
-        request, "notifications.html", {"current_user": current_user}
-    )
+) -> HTMLResponse:
+    return templates.TemplateResponse(request, "notifications.html", {"current_user": current_user})
 
 
 @app.get("/search", response_class=HTMLResponse)
 def search_page(
     request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
-):
+) -> HTMLResponse:
     return templates.TemplateResponse(request, "search.html", {"current_user": current_user})

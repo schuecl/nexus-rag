@@ -42,8 +42,9 @@ class TestValidateSupersedeTarget:
     def test_valid_target_passes(self):
         validate_supersede_target(_document(), **GOOD_KWARGS)
 
-    @pytest.mark.parametrize("status", ["queued", "processing", "pending_review",
-                                        "rejected", "superseded", "failed"])
+    @pytest.mark.parametrize(
+        "status", ["queued", "processing", "pending_review", "rejected", "superseded", "failed"]
+    )
     def test_non_approved_target_rejected(self, status):
         with pytest.raises(SupersedeValidationError) as excinfo:
             validate_supersede_target(_document(status=status), **GOOD_KWARGS)
@@ -51,9 +52,7 @@ class TestValidateSupersedeTarget:
 
     def test_cross_org_target_rejected(self):
         with pytest.raises(SupersedeValidationError) as excinfo:
-            validate_supersede_target(
-                _document(owner_org="Signal-Corps"), **GOOD_KWARGS
-            )
+            validate_supersede_target(_document(owner_org="Signal-Corps"), **GOOD_KWARGS)
         assert any("different org" in e for e in excinfo.value.errors)
 
     def test_classification_above_clearance_rejected(self):
@@ -65,19 +64,20 @@ class TestValidateSupersedeTarget:
                 _document(classification="SECRET"),
                 **{**GOOD_KWARGS, "allowed_classifications": ["UNCLASSIFIED", "CUI"]},
             )
-        assert any("above the submitter's cleared level" in e
-                   for e in excinfo.value.errors)
+        assert any("above the submitter's cleared level" in e for e in excinfo.value.errors)
 
     def test_unheld_releasability_rejected(self):
         with pytest.raises(SupersedeValidationError) as excinfo:
-            validate_supersede_target(
-                _document(releasability=["NOFORN"]), **GOOD_KWARGS
-            )
+            validate_supersede_target(_document(releasability=["NOFORN"]), **GOOD_KWARGS)
         assert any("does not hold" in e for e in excinfo.value.errors)
 
     def test_multiple_violations_accumulate(self):
-        doc = _document(status="pending_review", owner_org="Signal-Corps",
-                        classification="SECRET", releasability=["NOFORN"])
+        doc = _document(
+            status="pending_review",
+            owner_org="Signal-Corps",
+            classification="SECRET",
+            releasability=["NOFORN"],
+        )
         with pytest.raises(SupersedeValidationError) as excinfo:
             validate_supersede_target(
                 doc, **{**GOOD_KWARGS, "allowed_classifications": ["UNCLASSIFIED", "CUI"]}

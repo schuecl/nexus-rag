@@ -43,6 +43,7 @@ def _at_or_below(clearance: str) -> list[str]:
 
 # ------------------------------------------------------------------ scenarios
 
+
 @scenario(FEATURE, "The retrieval filter only ever returns approved documents")
 def test_filter_requires_approved():
     pass
@@ -95,9 +96,14 @@ def test_supersede_org_guard():
 
 # ---------------------------------------------------------------------- steps
 
-@given(parsers.parse('a user "{username}" with clearance "{clearance}" and '
-                     'releasability "{releasability}" and org "{org}"'),
-       target_fixture="ctx")
+
+@given(
+    parsers.parse(
+        'a user "{username}" with clearance "{clearance}" and '
+        'releasability "{releasability}" and org "{org}"'
+    ),
+    target_fixture="ctx",
+)
 def ctx_user(username, clearance, releasability, org):
     # clearance/releasability are properties derived from rag-clearance:/
     # rag-releasability: client roles (#104, #116), so the Gherkin's values
@@ -157,15 +163,17 @@ def ctx_existing_doc(ctx, status, org):
 
 @when("the server-side access filter is built for that user", target_fixture="ctx")
 def build_filter(ctx):
-    allowed = ctx.get(
-        "allowed_classifications", _at_or_below(ctx["claims"].clearance)
-    )
+    allowed = ctx.get("allowed_classifications", _at_or_below(ctx["claims"].clearance))
     ctx["filter"] = build_access_filter(ctx["claims"], allowed_classifications=allowed)
     return ctx
 
 
-@when(parsers.parse('that user submits metadata with classification "{classification}" '
-                    'and releasability "{releasability}"'))
+@when(
+    parsers.parse(
+        'that user submits metadata with classification "{classification}" '
+        'and releasability "{releasability}"'
+    )
+)
 def submit_metadata(ctx, classification, releasability):
     metadata = DocumentMetadataIn(
         classification=classification,
@@ -201,6 +209,7 @@ def supersede(ctx):
 
 # ------------------------------------------------------------------ assertions
 
+
 def _condition(ctx, key):
     return {c.key: c for c in ctx["filter"].must}[key]
 
@@ -212,9 +221,7 @@ def filter_requires_status(ctx, status):
 
 @then(parsers.parse('the filter admits only classifications "{values}"'))
 def filter_admits_classifications(ctx, values):
-    assert _condition(ctx, "classification").match.any == [
-        v for v in values.split(",") if v
-    ]
+    assert _condition(ctx, "classification").match.any == [v for v in values.split(",") if v]
 
 
 @then("the filter admits no classifications")

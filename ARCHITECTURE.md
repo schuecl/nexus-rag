@@ -376,7 +376,7 @@ rather than reimplementing the check:
 | Ingest-time tagging | `ingestion-api` upload route | Classification/Releasability offered ≤ uploader's clearance/releasability |
 | Curation | `ingestion-api` curate route | Approving curator holds `rag-curate:<org>` for the doc's org, and clearance/releasability cover the (possibly corrected) tags |
 | Query-time retrieval | `orchestration-mcp` | Qdrant filter restricts to `approved` + classification ≤ clearance + releasability match + access_scope match |
-| Audit | Both services, `audit_log` table | Every submit/approve/reject/supersede/query is recorded against the actor's `sub`, not a self-reported name |
+| Audit | Both services, `audit_log` table | Every submit/approve/reject/supersede/query is recorded against the actor's `sub`, not a self-reported name. Each row is also exported as RFC 5424 syslog to the environment's SIEM when `SIEM_SYSLOG_HOST` is configured (NFR-2, #73) -- the DB row stays the durable system of record; the syslog copy is an export, fail-open by design so a collector outage never blocks the request path |
 
 ## 6. Deployment topology
 

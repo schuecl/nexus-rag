@@ -87,8 +87,11 @@ def _purge_expired(db: Session) -> None:
     few hours late deletes a row that already stopped working.
     """
     now = _utcnow()
-    db.exec(delete(OAuthState).where(OAuthState.created_at < now - OAUTH_STATE_TTL))
-    db.exec(delete(UserSession).where(UserSession.created_at < now - SESSION_LIFETIME))
+    # SQLModel table classes use plain annotations rather than SQLAlchemy
+    # 2.0's Mapped[], so mypy sees these comparisons as plain bool -- not a
+    # real bug, see pyproject.toml's mypy section.
+    db.exec(delete(OAuthState).where(OAuthState.created_at < now - OAUTH_STATE_TTL))  # type: ignore[arg-type]
+    db.exec(delete(UserSession).where(UserSession.created_at < now - SESSION_LIFETIME))  # type: ignore[arg-type]
     db.commit()
 
 

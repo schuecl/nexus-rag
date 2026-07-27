@@ -34,12 +34,17 @@ def session():
 class TestAllowedClassifications:
     def test_top_clearance_sees_everything(self, session):
         assert allowed_classifications(session, "TOP SECRET") == [
-            "UNCLASSIFIED", "CUI", "SECRET", "TOP SECRET",
+            "UNCLASSIFIED",
+            "CUI",
+            "SECRET",
+            "TOP SECRET",
         ]
 
     def test_mid_clearance_sees_at_or_below(self, session):
         assert allowed_classifications(session, "SECRET") == [
-            "UNCLASSIFIED", "CUI", "SECRET",
+            "UNCLASSIFIED",
+            "CUI",
+            "SECRET",
         ]
 
     def test_lowest_clearance_sees_only_lowest(self, session):
@@ -55,11 +60,15 @@ class TestAllowedClassifications:
         session.add(ClassificationLevel(value="CONFIDENTIAL", rank=2, active=False))
         session.commit()
         assert allowed_classifications(session, "TOP SECRET") == [
-            "UNCLASSIFIED", "CUI", "SECRET", "TOP SECRET",
+            "UNCLASSIFIED",
+            "CUI",
+            "SECRET",
+            "TOP SECRET",
         ]
         # Note: the user's-own-level lookup does not filter on `active`, so an
         # inactive value still resolves as a clearance (to its active inferiors).
         # Asserting current behavior; tightening this is a deliberate follow-up.
         assert allowed_classifications(session, "CONFIDENTIAL") == [
-            "UNCLASSIFIED", "CUI",
+            "UNCLASSIFIED",
+            "CUI",
         ]

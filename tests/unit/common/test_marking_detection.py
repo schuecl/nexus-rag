@@ -124,9 +124,7 @@ class TestEvaluateMarkings:
         assert adv.has_findings is True
 
     def test_caveat_already_held_not_flagged(self):
-        adv = self._detect_eval(
-            "SECRET//REL TO NATO", assigned="SECRET", releasability=["NATO"]
-        )
+        adv = self._detect_eval("SECRET//REL TO NATO", assigned="SECRET", releasability=["NATO"])
         assert adv.unassigned_caveats == []
 
     def test_clean_document_has_no_findings(self):

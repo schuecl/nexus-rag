@@ -553,6 +553,60 @@ the docs, not a silent "it works" — flag it if you find one.
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.
+- **Distributed tracing across the queue and the retrieval fan-out
+  (issue #134)** — every service emits OpenTelemetry spans when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` points at an OTLP/HTTP collector
+  (otel-collector, Tempo, ...); unset, tracing is a no-op. The deliberate
+  piece is the queue boundary: `ingest.submit` (ingestion-api) and
+  `ingest.process` (ingestion-worker, with parse/chunk/embed/qdrant.upsert
+  children) form one trace because the W3C traceparent rides in the NATS
+  *message headers* — the body stays a bare document id, so the #109
+  malformed-payload guard and in-flight messages are untouched, and
+  JetStream redelivery carries the same context (validated against a real
+  NATS: nak → redelivery, headers byte-identical). Retrieval traces as
+  `rag_search` → embed.query / qdrant.query / rerank, with the context
+  propagating over httpx into reranker-service, whose request +
+  `model.predict` spans nest under the caller's — the cross-encoder's time
+  is no longer opaque. Span attributes are ids/counts/sizes only, never
+  query or chunk text (#125's rule), and head sampling defaults to 5%
+  (`OTEL_TRACES_SAMPLER_ARG`; ParentBased, so one decision covers a whole
+  request tree). Helm: `observability.tracing.*`. Unit-tested with a real
+  in-memory TracerProvider; not yet validated against a live Tempo.
+- **SIEM export of audit events, and level-configurable structured logging
+  (NFR-2, issue #73)** — every `audit_log` row (FR-31 funnels each ingestion,
+  curation, retrieval, and purge event from every service through that one
+  model) is forwarded as an RFC 5424 syslog message with a JSON payload the
+  moment it is inserted, via a SQLAlchemy `after_insert` hook in
+  `common/siem.py` — no per-call-site discipline required. Disabled unless
+  `SIEM_SYSLOG_HOST` is set — any IP/hostname and port the environment's
+  collector listens on (`SIEM_SYSLOG_PORT` default 514, or 6514 for tls;
+  Helm: `observability.siem.*`). Three transports via
+  `SIEM_SYSLOG_PROTOCOL`: `udp` (default), `tcp` (RFC 6587 octet-counted
+  framing), and `tls` (RFC 5425 — the same framing inside a verified TLS
+  session, for a collector on a protected segment: `SIEM_SYSLOG_CA_CERT`
+  points at the CA that signed the collector's certificate, optional
+  `SIEM_SYSLOG_CLIENT_CERT`/`SIEM_SYSLOG_CLIENT_KEY` for mutual TLS, and
+  `SIEM_SYSLOG_TLS_VERIFY=false` exists as a loudly-logged debug-only
+  escape hatch). To watch the export end to end locally, an opt-in
+  stand-in collector prints every message it receives, tagged per
+  transport: `docker compose --profile siem-debug up -d syslog-collector`,
+  point services at it with `SIEM_SYSLOG_HOST=syslog-collector`, then
+  `docker compose logs -f syslog-collector` (its TLS listener activates
+  automatically once `infra/certs/generate-dev-certs.sh` has run).
+  Fail-open on purpose: a collector
+  outage logs one warning and never blocks the request path — the DB row
+  remains the durable record either way. Denied actions (`query.denied`) go
+  out at WARNING severity, everything else at NOTICE, facility 13 (log
+  audit). Alongside it, every service now actually configures process
+  logging: `LOG_LEVEL` (DEBUG..CRITICAL, default INFO) and `LOG_FORMAT`
+  (`text`, or `json` for collector-friendly one-object-per-line) via
+  `common/logging_setup.py` — before this, the root-logger default (WARNING)
+  silently dropped every `logger.info` in the codebase. Both the syslog
+  payload and both log formats escape control characters, so a hostile value
+  cannot forge a second record (`common/log_safety.py`'s rule). Tested
+  against real UDP/TCP/TLS sockets in `tests/unit/common/test_siem.py`,
+  and validated live against the `syslog-collector` container on all three
+  transports; not yet validated against a production SIEM appliance.
 - **Separate DB credentials for the app and Keycloak, and an append-only audit log
   (NFR-2/NFR-3)** — `POSTGRES_USER` is now the bootstrap superuser only, never used for
   day-to-day traffic. `infra/postgres/init-app-roles.sh` (runs automatically on the

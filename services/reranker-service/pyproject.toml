@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "Cross-encoder reranking pass over hybrid retrieval candidates (FR-25)"
 requires-python = ">=3.11"
 dependencies = [
+    # #134: inline tracing setup + request spans (see app/main.py).
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sentence-transformers>=3.0",
@@ -15,3 +20,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.mypy]
+# Issue #79: first app service promoted from types-apps (report-only) to the
+# enforced `types` job in ci.yml.
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# sentence-transformers ships no stubs; fastapi/pydantic/opentelemetry do and
+# stay fully checked.
+module = ["sentence_transformers.*"]
+ignore_missing_imports = true
