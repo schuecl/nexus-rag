@@ -1,0 +1,253 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Issue #110: default-deny ingress for this chart's data-plane components, with
+an explicit allowlist per component.
+
+Why this matters more here than in a typical chart: orchestration-mcp is the
+*only* place FR-26 is enforced. It parses the caller's claims, builds the
+access filter, and hands it to Qdrant. Qdrant itself has no notion of
+clearance or releasability -- it applies whatever filter it is given. So
+anything that can open a socket to Qdrant with a valid API key reads the whole
+corpus at every classification level, and the chunk payload stores the source
+text in cleartext (see issue #127), so it does not even need to invert an
+embedding. Without policy, "anything" means every pod in the namespace.
+
+reranker-service is the sharper case: it requires no credential at all, and it
+receives full retrieved chunk text.
+
+Scope and honest limits:
+
+- These are **ingress** policies. Egress is deliberately not restricted here:
+  the chart's services must reach an external Postgres, Keycloak, and object
+  store (see values.yaml's externalPostgres/externalKeycloak/
+  externalObjectStore), whose addresses this chart does not know. A
+  default-deny egress policy would have to be written against the actual
+  cluster's CIDRs and DNS, which belongs with the deployment, not the chart.
+  networkPolicy.denyEgressByDefault is offered for operators who want to opt
+  in and supply their own allow rules.
+- A NetworkPolicy is only enforced if the cluster's CNI implements it. Calico,
+  Cilium, and Antrea do; some managed CNIs do not. Enabled by default here
+  because failing safe matters more than convenience, but an operator on a
+  non-enforcing CNI gets no protection and no warning from Kubernetes -- worth
+  verifying rather than assuming.
+- Kubernetes has no "deny" rule: a pod is default-deny only once *some* policy
+  selects it. Each policy below therefore both selects its component and
+  enumerates every legitimate source, which is why they are written per
+  component rather than as one broad rule.
+*/}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-qdrant
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "qdrant") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        # orchestration-mcp reads (query_points, holds the read-only key).
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 14 }}
+        # ingestion-worker writes new points; ingestion-api updates/deletes
+        # them on approve/reject/supersede.
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 14 }}
+        {{- with .Values.networkPolicy.extraQdrantClients }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.qdrant.service.httpPort }}
+          protocol: TCP
+        - port: {{ .Values.qdrant.service.grpcPort }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-reranker-service
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reranker-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "reranker-service") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # Sole legitimate client. /rerank takes no credential of its own, so
+    # reachability *is* authorization for this component until that changes.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 14 }}
+      ports:
+        - port: {{ .Values.rerankerService.service.port }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-embedding-service
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedding-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "embedding-service") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        # ingestion-worker embeds chunks; orchestration-mcp embeds queries.
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 14 }}
+        {{- with .Values.networkPolicy.extraEmbeddingClients }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.embeddingService.service.port }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-nats
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "nats") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        # ingestion-api publishes jobs; ingestion-worker consumes them.
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 14 }}
+      ports:
+        - port: {{ .Values.nats.service.clientPort }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-orchestration-mcp
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestration-mcp
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "orchestration-mcp") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        # ingestion-api's /search/query proxies here on the caller's behalf.
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 14 }}
+        {{- with .Values.networkPolicy.mcpClients }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.orchestrationMcp.service.port }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-ingestion-api
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  {{- if .Values.networkPolicy.ingressControllerSelectors }}
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingressControllerSelectors | nindent 8 }}
+      ports:
+        - port: {{ .Values.ingestionApi.service.port }}
+          protocol: TCP
+  {{- else }}
+  {{/*
+  Deny all ingress when no controller selector is configured.
+
+  This has to be an empty rule list, NOT a rule with ports and an absent
+  `from`: Kubernetes treats a rule that specifies `ports` without `from` as
+  "allow every source on these ports", so the naive templating renders a
+  policy that reads as protective and permits everything. An empty `ingress`
+  list is the actual deny-all.
+
+  The consequence is deliberate and visible rather than silent: ingestion-api
+  becomes unreachable until networkPolicy.ingressControllerSelectors names the
+  cluster's ingress controller. NOTES.txt says so at install time. Guessing a
+  default was rejected -- a plausible-but-wrong selector would grant access to
+  some other namespace while looking configured.
+  */}}
+  ingress: []
+  {{- end }}
+{{- if .Values.networkPolicy.denyEgressByDefault }}
+---
+{{/*
+Opt-in only. Denies all egress from this chart's four custom services except
+DNS, then relies on networkPolicy.egressAllow for everything else. Every one
+of these services needs the *external* Postgres and Keycloak, and
+ingestion-api/ingestion-worker additionally need the external object store, so
+enabling this without supplying egressAllow rules will break the deployment --
+which is why it is off by default rather than merely documented.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-default-deny-egress
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [ingestion-api, ingestion-worker, orchestration-mcp, reranker-service]
+  policyTypes: ["Egress"]
+  egress:
+    # DNS, without which nothing resolves the in-cluster Services above.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # In-namespace traffic to this chart's own components.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.selectorLabels" . | nindent 14 }}
+    {{- with .Values.networkPolicy.egressAllow }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}
