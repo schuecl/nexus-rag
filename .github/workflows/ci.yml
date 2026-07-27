@@ -173,33 +173,12 @@ jobs:
             "opentelemetry-instrumentation-httpx>=0.51b0"
       - name: mypy on orchestration-mcp (enforced, issue #79)
         run: cd services/orchestration-mcp && MYPYPATH=../common mypy app
-
-  types-apps:
-    # ingestion-api predates the type gate; keep its mypy output visible but
-    # non-blocking until its annotations are tightened. Kept separate from
-    # the enforced gates above, and exits 0 by design so the report stays in
-    # the logs without putting a red X on every PR. reranker-service,
-    # ingestion-worker, and orchestration-mcp graduated to the enforced
-    # `types` job above (#79); ingestion-api is last (largest of the four).
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install mypy and services/common dependencies
+      - name: Install ingestion-api dependencies
         run: |
-          pip install mypy==2.3.0
-          pip install --no-deps -e services/common
-          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
-      - name: mypy on ingestion-api (report-only)
-        run: |
-          (cd services/ingestion-api && MYPYPATH=../common mypy app) || \
-            echo "::notice::app-service mypy findings (report-only; see docs/testing.md)"
-          exit 0
+          pip install "fastapi>=0.115" "httpx>=0.27" "jinja2>=3.1" \
+            "python-multipart>=0.0.9" "opentelemetry-instrumentation-fastapi>=0.51b0"
+      - name: mypy on ingestion-api (enforced, issue #79)
+        run: cd services/ingestion-api && MYPYPATH=../common mypy app
 
   pin-check:
     runs-on: ubuntu-latest

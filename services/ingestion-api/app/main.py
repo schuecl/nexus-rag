@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -56,7 +57,7 @@ def _seed_defaults() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     _seed_defaults()
     # NFR-11: one long-lived JetStream connection for the process, not a
@@ -89,7 +90,7 @@ app.include_router(search.router)
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -100,10 +101,13 @@ def _live_controlled_vocab(session: Session) -> dict:
     # queue page, since FR-13's "correct" action assigns the same
     # Classification/Releasability values FR-17 requires come from a
     # controlled vocabulary, not free text -- same as at upload time.
+    # SQLModel table classes use plain annotations rather than SQLAlchemy
+    # 2.0's Mapped[], so mypy sees ClassificationLevel.rank as a bare int --
+    # not a real bug, see pyproject.toml's mypy section.
     classifications = session.exec(
         select(ClassificationLevel)
         .where(ClassificationLevel.active == True)  # noqa: E712
-        .order_by(ClassificationLevel.rank)
+        .order_by(ClassificationLevel.rank)  # type: ignore[arg-type]
     ).all()
     releasability = session.exec(
         select(ReleasabilityValue).where(ReleasabilityValue.active == True)  # noqa: E712
@@ -120,7 +124,7 @@ def upload_page(
     request: Request,
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
-):
+) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
     ctx["current_user"] = current_user
     return templates.TemplateResponse(request, "upload.html", ctx)
@@ -131,7 +135,7 @@ def curate_page(
     request: Request,
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
-):
+) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
     ctx["current_user"] = current_user
     return templates.TemplateResponse(request, "curate.html", ctx)
@@ -140,7 +144,7 @@ def curate_page(
 @app.get("/notifications", response_class=HTMLResponse)
 def notifications_page(
     request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
-):
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "notifications.html", {"current_user": current_user}
     )
@@ -149,5 +153,5 @@ def notifications_page(
 @app.get("/search", response_class=HTMLResponse)
 def search_page(
     request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
-):
+) -> HTMLResponse:
     return templates.TemplateResponse(request, "search.html", {"current_user": current_user})

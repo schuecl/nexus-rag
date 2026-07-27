@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Sequence
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
@@ -30,6 +31,7 @@ from app.deps import (
     require_purge,
     verify_csrf,
 )
+from common.claims import UserClaims
 from common.db import get_session
 from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
@@ -109,10 +111,10 @@ async def submit_document(
     program_community: str | None = Form(None),
     effective_date: str | None = Form(None),
     supersedes_document_id: str | None = Form(None),
-    user=Depends(require_ingest),
+    user: UserClaims = Depends(require_ingest),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     contents = await _read_bounded(file, MAX_UPLOAD_BYTES)
     if not contents:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
@@ -224,9 +226,9 @@ async def submit_document(
 
 @router.get("/mine")
 def list_my_documents(
-    user=Depends(get_current_user),
+    user: UserClaims = Depends(get_current_user),
     session: Session = Depends(get_session),
-):
+) -> Sequence[Document]:
     docs = session.exec(select(Document).where(Document.uploader_sub == user.sub)).all()
     return docs
 
@@ -234,9 +236,9 @@ def list_my_documents(
 @router.get("/{doc_id}")
 def get_document(
     doc_id: uuid.UUID,
-    user=Depends(get_current_user),
+    user: UserClaims = Depends(get_current_user),
     session: Session = Depends(get_session),
-):
+) -> Document:
     """FR-8: lets a caller poll a submission's status after the immediate
     202 response. Scoped to the uploader themselves -- this isn't a general
     document-lookup endpoint; curators have their own scoped queue view
@@ -255,10 +257,10 @@ class PurgeRequest(BaseModel):
 def purge(
     doc_id: uuid.UUID,
     body: PurgeRequest,
-    user=Depends(require_purge),
+    user: UserClaims = Depends(require_purge),
     session: Session = Depends(get_session),
-    _csrf=Depends(verify_csrf),
-):
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
     """Issue #123: destroy a document's content in every store that holds it.
 
     The remediation path for classification spillage. Until this existed a

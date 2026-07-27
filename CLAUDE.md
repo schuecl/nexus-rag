@@ -82,8 +82,8 @@ docker compose --profile eval run --rm eval-retrieval
 ### Lint / types / security
 ```bash
 ruff check services scripts tests       # lint gate (line-length 100; format-check NOT enforced)
-mypy services/common/common             # type gate -- enforced scope is services/common only;
-                                         # the four app services run report-only, not blocking
+mypy services/common/common             # type gate -- enforced across services/common and
+                                         # all four app services (see ci.yml's `types` job)
 python scripts/check_pinned_images.py   # NFR-16: no floating/`:latest` image or model tags
 bandit -r services scripts --exclude '*/tests/*'
 helm lint helm/nexus-rag
@@ -191,7 +191,10 @@ in `docs/testing.md`.
   "What's stubbed vs working" for the current convention and status of every major feature.
 - **ruff is the lint/import-order arbiter** (`known-first-party = ["common", "app"]`,
   100-column lines); `ruff format` is intentionally not enforced yet.
-- **mypy is only a hard gate on `services/common`**; the four app services are report-only
-  until their annotations catch up.
+- **mypy is a hard gate on `services/common` and all four app services** (issue #79);
+  each app service scopes `disallow_untyped_defs` to its own `app.*` via a
+  `pyproject.toml` override, since `MYPYPATH=../common` also pulls
+  `services/common` into that run and its settings must not tighten as a
+  side effect.
 - Tests for `common` go under `tests/unit/common/` (root) so the coverage gate sees them;
   per-service tests go under `services/<service>/tests/`.
