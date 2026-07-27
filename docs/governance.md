@@ -47,7 +47,7 @@ issue.
 | Durability of source | **Validated live** | NFR-12 object store retains every original |
 | Embedding provenance | **Not done** | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
 | Query/response lineage | **Not done** | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
-| Retention & destruction | **Not done** | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
+| Retention & destruction | **Partial** | Purge path implemented+validated ([#136](https://github.com/schuecl/nexus-rag/pull/136)); schedule proposed in [Retention and destruction](#retention-and-destruction), awaiting ratification ([#123](https://github.com/schuecl/nexus-rag/issues/123)) |
 | Query confidentiality | **Partial** | See [Query confidentiality](#query-confidentiality-and-user-privacy) |
 | Privacy threat model | **Not done** | [#127](https://github.com/schuecl/nexus-rag/issues/127) |
 | Observability of quality | **Partial** | FR-30 harness exists; not tracked over time ([#71](https://github.com/schuecl/nexus-rag/issues/71)) |
@@ -252,22 +252,124 @@ submit ──▶ queued ──▶ processing ──▶ embedded ──▶ pendin
                                           │
                                           ▼
                                      superseded  (FR-7, on approval of a successor)
+
+any state ──▶ purged  (#123/#136: admin-gated destruction; tombstone remains)
 ```
 
-Retention is **unbounded at every stage**. Rejected and superseded documents
-keep their Postgres row and their original file indefinitely; only the
-supersede path removes anything, and only from Qdrant. There is no delete
-route, `ObjectStore.delete()` has no callers, and the audit log is append-only
-by design.
+Spillage **can** now be remediated: the purge path
+([#136](https://github.com/schuecl/nexus-rag/pull/136), merged and
+validated) destroys a document's chunks in the vector store, deletes the
+object-store original, and tombstones the Postgres row with every
+content-bearing field scrubbed to `[purged]` — gated by the dedicated
+`rag-purge` role (deliberately not `rag-admin`, which must stay a
+no-data-access role), and itself audited as `document.purged` without
+retaining the filename.
 
-The practical consequence: **a mis-classified document cannot be destroyed.**
-Flipping its status removes it from retrieval promptly — the FR-26 filter
-requires `approved` — so the exposure is closed, but the bytes remain. For a
-deployment where spillage remediation is a defined procedure, that is a gap
-with a deadline attached. See
-[#123](https://github.com/schuecl/nexus-rag/issues/123), which also covers the
-unresolved tension between NFR-2's append-only audit log and any retention
-schedule.
+What remains unbounded is everything the purge path is not pointed at:
+rejected and superseded documents that nobody purges, notifications, and the
+audit log (append-only by design). The retention schedule below is the
+proposed answer; until it is ratified and its expiry mechanism exists,
+growth outside the purge path is still monotonic. See
+[Retention and destruction](#retention-and-destruction) and
+[#123](https://github.com/schuecl/nexus-rag/issues/123).
+
+## Retention and destruction
+
+Issue [#123](https://github.com/schuecl/nexus-rag/issues/123)'s three policy
+items, resolved into a concrete **proposed** schedule the requirement owner
+can ratify, adjust, or reject line by line. Status labels: **Implemented**
+means the mechanism exists on `main` today; **Proposed** means this document
+is the design and nothing enforces it yet. Nothing here is silently in
+force — until ratification, the implemented pieces (purge, session reaping)
+are the only destruction that happens.
+
+### Proposed retention schedule, per data class
+
+| Data class | Retention (proposed) | Destruction mechanism | Status |
+|---|---|---|---|
+| Original files (object store) | Life of the document; destroyed on purge. Rejected documents: eligible for purge review after **90 days**; superseded originals: retained **1 year** after supersession, then eligible | `purge_document()` — deletes the original via `ObjectStore.delete()` | Purge **Implemented**; the 90-day/1-year eligibility sweep **Proposed** |
+| Chunks (vector store, either backend) | Lifecycle-bound to the document; never outlive it | Deleted on supersede (FR-7) and on purge; backend-agnostic via the #160 seam | **Implemented** |
+| `documents` rows | Active rows: life of the document. Purged rows become **tombstones, kept indefinitely** — the tombstone *is* the destruction evidence (id, timestamps, `purged` status; every content field scrubbed to `[purged]`) | Tombstoning on purge; no hard delete of tombstones | **Implemented** |
+| Notifications | **90 days** after creation, read or not | A reaper on the #108 pattern (scheduled sweep in-app; the app role may DELETE its own notifications) | **Proposed** |
+| `oauth_states` / `user_sessions` | Bounded lifetimes, reaped continuously | #108 (merged) | **Implemented** |
+| `audit_log` | Local minimum **1 year** (configurable, `AUDIT_RETENTION_DAYS`), then eligible for administrative expiry — **except** destruction-evidence entries (`document.purged`, `audit.expired`), retained **7 years** | The audited-expiry process below; never the application role | **Proposed** |
+| SIEM copy of audit events | Governed by the environment's SIEM retention schedule, not this system | #73 export (in review) hands custody off; the SIEM is the long-term audit store | Out of this system's control — stated, not assumed |
+| Traces / metrics / process logs | Backend-governed (Tempo/Prometheus/Loki retention). Carry ids, counts, and sizes only — no corpus content or query text by construction (#125's rule, enforced in #132/#134/#158) | Observability backend configuration | Out of scope for this schedule |
+
+### Destruction authority and evidence
+
+| Question | Answer |
+|---|---|
+| Who may purge a document? | Holders of the dedicated **`rag-purge`** client role only. Deliberately not `rag-admin`: that role gates vocabulary and grants no data access — a boundary this document states elsewhere, and hanging irreversible destruction on it would widen the most privileged role into a data-touching one. The two authorities can (and in a real deployment should) be held by different people |
+| Who may expire audit entries? | No application role, ever — the append-only grant (NFR-2) stays exactly as it is. Only the administrative expiry process below, run by the platform admin under the bootstrap credentials, on the ratified schedule |
+| What evidence survives a purge? | The tombstoned `documents` row (id, uploader sub, timestamps, `purged` status) and a `document.purged` audit entry recording who, when, and the stated reason — deliberately **not** the filename or any other content-bearing field, so the evidence chain does not itself become a lower-classification aggregation of the destroyed content |
+| What evidence survives an audit expiry? | An `audit.expired` entry per run: the count of rows destroyed and the time range they covered — never their contents |
+
+### Reconciling NFR-2 with scheduled destruction (the audited-expiry design)
+
+NFR-2's append-only audit log and "records must be destroyed on a schedule"
+are in direct conflict, and the repo previously resolved it by silently
+choosing the first. The explicit resolution proposed here:
+
+**Audit entries are subject to retention, with the append-only grant
+untouched.** The application role keeps exactly its current `SELECT`/`INSERT`
+grant — expiry is not an application capability, cannot be reached from any
+route, and adds no new grant. Instead, a separate administrative one-shot (the
+`harden-audit-log` pattern: same credentials, same invocation shape, Compose
+one-shot / Kubernetes CronJob) performs the schedule:
+
+1. **Precondition, checked every run:** SIEM export (#73) is configured
+   (`SIEM_SYSLOG_HOST` set) — local expiry without an off-box custody chain
+   would be destruction of the only copy. If unset, the job refuses and exits
+   non-zero rather than warning and proceeding.
+2. Delete `audit_log` rows with `created_at < now() − AUDIT_RETENTION_DAYS`,
+   **excluding** `action IN ('document.purged', 'audit.expired')`, which
+   follow the 7-year evidence retention.
+3. Write one `audit.expired` entry recording the run: rows destroyed, range
+   covered, retention setting in force. (The job holds superuser credentials,
+   so writing to the append-only table is unproblematic; the entry is the
+   run's evidence.)
+4. Emit the same summary to the SIEM (the entry is an `AuditLogEntry`, so
+   the #73 hook forwards it like any other).
+
+The job is deliberately **not implemented in this change**: its parameters
+are exactly what ratification decides, and shipping an unratified destroyer
+of audit records would invert this document's own rule that destruction is a
+deliberate, owned decision.
+
+### Audit-content minimization
+
+The concern: audit details can accumulate into a lower-classification
+aggregation of higher-classification content that cannot be selectively
+expunged. Current state and the remaining decision:
+
+- **Query text** — resolved: removed from audit details by #125/#128
+  (merged); only `query_chars` remains.
+- **Purge entries** — resolved: #136 keeps the filename out of
+  `document.purged` details by design.
+- **Filenames elsewhere** — open: `document.submit`/`document.embedded`/
+  curation audit details still record the filename. **Proposal:** stop —
+  `target_id` (the document id) is the stable key, the filename is
+  resolvable through the `documents` row while the document exists, and
+  after a purge the row is scrubbed, which is precisely the property audit
+  details currently defeat. Notifications keep the filename (they are
+  user-facing messages, and fall under the 90-day notification retention).
+  One-line-per-call-site change; filed as the follow-up to ratification.
+
+### What ratification needs to decide
+
+1. The four proposed periods: 90 days (rejected-purge eligibility, and
+   notifications), 1 year (superseded originals, and `AUDIT_RETENTION_DAYS`),
+   7 years (destruction evidence). Each is a placeholder for the governing
+   records schedule, chosen to be defensible defaults rather than claims
+   about any specific mandate.
+2. Whether audit expiry is wanted at all, or NFR-2's "keep forever" stands
+   with the SIEM as the retention-schedule surface instead.
+3. The filename-minimization proposal above.
+
+Once decided: implement the notification reaper and the expiry one-shot,
+flip this section's **Proposed** rows to **Implemented**, and record the
+decision (who, when) here.
 
 ## Roles and responsibilities
 
@@ -306,7 +408,7 @@ Stated so their absence reads as a decision rather than an oversight:
 | Gap | Issue |
 |---|---|
 | Embedding-model provenance; no re-embedding path | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
-| No deletion path; no retention policy | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
+| Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
 | Raw query text readable at the DB layer | [#125](https://github.com/schuecl/nexus-rag/issues/125) |
 | No privacy threat model; scores enable membership inference | [#127](https://github.com/schuecl/nexus-rag/issues/127) |
 | Retrieval quality not tracked over time | [#71](https://github.com/schuecl/nexus-rag/issues/71) |

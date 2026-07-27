@@ -375,3 +375,60 @@ ingestionWorker:
     limits:
       cpu: "2"
       memory: "2Gi"
+
+# Issue #110: default-deny ingress for this chart's data-plane components.
+#
+# Why it matters here specifically: orchestration-mcp is the only place FR-26
+# is enforced. Qdrant applies whatever filter it is handed and has no notion of
+# clearance, and the chunk payload holds the source text in cleartext -- so
+# anything that can reach Qdrant reads the whole corpus at every classification
+# level. reranker-service is worse: it takes no credential at all and receives
+# full chunk text, so reachability *is* authorization for it today.
+networkPolicy:
+  # Enabled by default: failing safe matters more than convenience here. Note
+  # that a NetworkPolicy is inert unless the cluster's CNI enforces it (Calico,
+  # Cilium, Antrea do; some managed CNIs silently do not) -- worth verifying
+  # rather than assuming, since Kubernetes reports no error either way.
+  enabled: true
+
+  # Who may reach ingestion-api. Empty means *nothing* may, which will make the
+  # UI unreachable -- set this to whatever identifies your ingress controller.
+  # Left empty rather than guessed because the right selector is
+  # cluster-specific, and a wrong-but-plausible default would silently grant
+  # access to the wrong namespace.
+  #
+  # Typical (ingress-nginx in its own namespace):
+  #   ingressControllerSelectors:
+  #     - namespaceSelector:
+  #         matchLabels:
+  #           kubernetes.io/metadata.name: ingress-nginx
+  ingressControllerSelectors: []
+
+  # Who may call orchestration-mcp's MCP endpoint. LibreChat is part of the
+  # existing MPNexus stack rather than this chart, so it cannot be selected by
+  # this chart's own labels. ingestion-api's /search/query proxy is allowed
+  # unconditionally; everything else goes here.
+  #
+  #   mcpClients:
+  #     - namespaceSelector:
+  #         matchLabels:
+  #           kubernetes.io/metadata.name: librechat
+  #       podSelector:
+  #         matchLabels:
+  #           app: librechat
+  mcpClients: []
+
+  # Additional NetworkPolicyPeer entries for the backing stores, for callers
+  # this chart does not deploy (a migration job, a debug pod, an operator).
+  extraQdrantClients: []
+  extraEmbeddingClients: []
+
+  # Opt-in default-deny egress from the four custom services. Off by default
+  # because all of them need the *external* Postgres and Keycloak, and two also
+  # need the external object store, none of whose addresses this chart knows --
+  # turning this on without populating egressAllow will break the deployment.
+  # DNS and in-namespace traffic are permitted automatically.
+  denyEgressByDefault: false
+  # Extra egress rules, appended verbatim. Typically the CIDRs or namespaces of
+  # the external Postgres, Keycloak, and object store.
+  egressAllow: []

@@ -36,3 +36,38 @@ Next steps:
      {{ include "nexus-rag.fullname" . }}-ingestion-api:{{ .Values.ingestionApi.service.port }}
      from inside the cluster, or enable ingestionApi.ingress in values.yaml.
 {{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy (issue #110) is ENABLED. Qdrant, NATS, the embedding service,
+and reranker-service now accept traffic only from this chart's own components.
+{{- if not .Values.networkPolicy.ingressControllerSelectors }}
+
+  !! ingestion-api is currently DENYING ALL INGRESS.
+
+     networkPolicy.ingressControllerSelectors is empty, so nothing -- including
+     your ingress controller -- can reach the ingestion UI. This is the safe
+     default rather than a guess: a plausible-but-wrong selector would grant
+     access to the wrong namespace while looking configured.
+
+     Set it to whatever identifies your ingress controller, e.g.
+
+       networkPolicy:
+         ingressControllerSelectors:
+           - namespaceSelector:
+               matchLabels:
+                 kubernetes.io/metadata.name: ingress-nginx
+{{- end }}
+{{- if not .Values.networkPolicy.mcpClients }}
+
+  !! orchestration-mcp accepts traffic ONLY from ingestion-api.
+
+     LibreChat is not deployed by this chart, so it cannot be selected by this
+     chart's labels. Until networkPolicy.mcpClients names it, LibreChat's MCP
+     tool calls will be dropped. The ingestion UI's own /search page still
+     works, which can make this look healthy when it is not.
+{{- end }}
+
+  Note: a NetworkPolicy has no effect unless the cluster's CNI enforces it
+  (Calico/Cilium/Antrea do; some managed CNIs silently do not). Kubernetes
+  reports no error either way -- verify rather than assume.
+{{- end }}
