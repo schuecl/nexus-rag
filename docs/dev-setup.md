@@ -730,18 +730,22 @@ the docs, not a silent "it works" — flag it if you find one.
   step itself succeeds and something later fails — but by the time that delete runs, the
   new document's Qdrant payload has already been flipped to `approved`, so the corpus
   always has *something* retrievable; what could still lag is Postgres's bookkeeping view,
-  which is exactly the gap this change closes. Smoke-tested directly (bypassing the FastAPI
-  layer, calling `approve()`/`reject()` against an in-memory SQLite DB with a mocked Qdrant
-  client): a normal approve; `session.commit()` raising on a plain approve, on a reject, and
-  on a supersede where the old document's Qdrant delete itself raises — in every failure
-  case, the Qdrant write is reverted to `pending_review`, the exception still propagates
-  (so the caller gets a 5xx, not a silent partial success), and Postgres rolls back to
-  `pending_review` for both documents. The happy path — a normal `approve()` against a real
-  Postgres/Qdrant pair — has since been validated live (see the NFR-11 bullet above: the
-  live-tested document was curated and approved for real). The `try`/`except` revert-on-
-  failure branch specifically is still only mock-tested — nothing in a successful run
-  exercises it by construction, since it only runs when `session.commit()` or the old
-  document's Qdrant delete actually raises.
+  which is exactly the gap this change closes. Originally smoke-tested ad hoc (bypassing the
+  FastAPI layer, calling `approve()`/`reject()` against an in-memory SQLite DB with a mocked
+  Qdrant client) but never committed as a regression test — issue #77 flagged that nothing in
+  the repo actually failed if this logic regressed. `services/ingestion-api/tests/
+  test_curate_nfr13_revert.py` now pins that same technique down permanently: a normal
+  approve/reject; `session.commit()` raising on a plain approve, on a reject, and on a
+  supersede where the old document's Qdrant delete itself raises; and the revert call itself
+  also failing (confirming the *original* exception still propagates, not the revert's). In
+  every failure case, the Qdrant write is reverted to `pending_review` and the exception still
+  propagates (so the caller gets a 5xx, not a silent partial success). The happy path — a
+  normal `approve()` against a real Postgres/Qdrant pair — has since been validated live (see
+  the NFR-11 bullet above: the live-tested document was curated and approved for real). The
+  `try`/`except` revert-on-failure branch itself is committed and tested against mocks, not
+  yet against a real multi-container live stack — deterministically forcing a real Qdrant
+  call to fail at that exact point without a dedicated fault-injection hook in production code
+  (out of scope for this pass) still needs one, so that step of #77 remains open.
 - **Search page in the ingestion UI (http://localhost:8001/search)** — a query-testing
   page for a logged-in user, proxying to `orchestration-mcp`'s existing `/debug/rag_search`
   REST endpoint (`app/routes/search.py`) with the session's own access token forwarded
