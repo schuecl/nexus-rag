@@ -91,8 +91,68 @@ docker compose --profile eval run --rm eval-retrieval
   dev-only and excluded), `helm lint` + `helm template`, Trivy filesystem
   scan (HIGH/CRITICAL, unfixed ignored); weekly: Trivy image scans of the
   four built images.
+- **`.github/workflows/codeql.yml`** (PR + push to main + weekly): checked-in
+  ("advanced setup") CodeQL analysis with the `security-extended` query
+  suite, replacing GitHub's implicit default setup. It deliberately triggers
+  on `pull_request` rather than `pull_request_target` — the default setup
+  does not run at all on PRs opened from a fork, which left every
+  fork-authored PR permanently unable to satisfy a required `CodeQL` check
+  (hit in practice on #64-#67). Triggering here gives fork PRs the same
+  scoped, read-only-plus-`security-events:write` token GitHub grants for this
+  case, without widening what fork-authored code can otherwise touch.
 - **`.github/dependabot.yml`**: weekly pip (per service + test toolchain),
   GitHub Actions, and Docker base-image updates.
+
+## Branch protection (merge gates)
+
+A repository ruleset (`Protect-Main`, target `refs/heads/main`) enforces PR-only,
+non-fast-forward merges and a set of required status checks — the mechanism that
+makes the gates above actually *block* a merge rather than being advisory-only
+(issue #81; #60's premise that verification is enforced, not just available).
+
+**Required checks** (every job below runs unconditionally on every PR, no path
+filter, so a required check can never be left permanently "waiting"):
+
+- `CodeQL` (GitHub code-scanning integration check, distinct from the
+  `Analyze (python)` workflow job it's derived from)
+- `unit (3.11)`, `unit (3.12)`
+- `service-tests (ingestion-api)`,
+  `service-tests (ingestion-worker, --cov=app.chunking --cov=app.parsing)`,
+  `service-tests (orchestration-mcp, --cov=app.reranking)`
+- `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
+- `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
+
+Branches must also be up to date with `main` before merging (strict status
+checks), so a required check always runs against the code that will actually
+land.
+
+**Deliberately not required: `golden-query` and `mutation`.** Both live in
+`e2e.yml`, which is path-filtered (`services/**`, `scripts/**`, `infra/**`,
+`docker-compose.yml`, the workflow file itself) and also runs on a nightly
+schedule. A required status check that never fires for a given PR (e.g. a
+docs-only or workflow-only change that doesn't touch those paths) leaves
+GitHub's merge button permanently stuck on "Expected — waiting for status to
+be reported" — the same class of bug the fork-PR CodeQL fix above addresses,
+just triggered by a path filter instead of a fork-token limitation. `mutation`
+is additionally still advisory pending a baseline (see below). Making
+`golden-query` a merge gate would mean either dropping its path filter (paying
+its ~5-6 minute full-stack-compose cost on every PR, including doc-only ones)
+or accepting that gap — worth revisiting once there's an owner for that
+tradeoff, but out of scope here.
+
+**Fork-PR CodeQL reporting, confirmed working.** Issue #81's comment flagged
+an open question: does the default CodeQL setup produce a check run on
+fork-originated PRs at all? It didn't at the time (#64-#67 hit exactly this).
+The checked-in `codeql.yml` above already fixes it: five current
+fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
+`Analyze (python)` passing, so no further action was needed on that half of
+the issue.
+
+**Applying ruleset changes.** The GitHub REST API's ruleset `PATCH` endpoint
+returned `404` for every attempt when exercised for this change (`GET`,
+`POST` create, and `DELETE` all worked against the same token/permissions,
+only `PATCH` failed) — apply updates by deleting and recreating the ruleset,
+or via the repo Settings → Rules UI, rather than assuming `PATCH` works.
 
 ## Coverage policy
 
