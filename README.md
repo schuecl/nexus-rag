@@ -12,9 +12,12 @@ claims through one shared library, never trusted from the client.
 
 > **Documentation:** requirements and design constraints in
 > **[REQUIREMENTS.md](REQUIREMENTS.md)**; component diagram, data model, and per-flow
-> sequence diagrams in **[ARCHITECTURE.md](ARCHITECTURE.md)**. This README is a snapshot of
-> what's built, not a plan — see [Project status](#project-status) for how confidently each
-> part has been verified.
+> sequence diagrams in **[ARCHITECTURE.md](ARCHITECTURE.md)**; how the corpus itself is
+> governed — access control, curation as the data-quality gate, lineage, query
+> confidentiality, and the retention/destruction gaps — in
+> **[docs/governance.md](docs/governance.md)**. This README is a snapshot of what's built,
+> not a plan — see [Project status](#project-status) for how confidently each part has been
+> verified.
 
 ## What it does
 
@@ -122,7 +125,7 @@ nexus-rag/
     librechat/, litellm/     # throwaway dev configs
   scripts/                   # sample-data seeding, retrieval evaluation harness
   helm/nexus-rag/            # production Helm chart (NFR-10)
-  docs/                      # dev-setup.md, testing.md
+  docs/                      # dev-setup.md, testing.md, governance.md
 ```
 
 ## Documentation
@@ -131,6 +134,7 @@ nexus-rag/
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — component diagram, data model, per-flow sequences
 - **[docs/dev-setup.md](docs/dev-setup.md)** — local stack, seeded users, full walkthrough, and the honest what's-stubbed-vs-working list
 - **[docs/testing.md](docs/testing.md)** — the test pyramid, coverage/mutation policy, and known gaps
+- **[docs/governance.md](docs/governance.md)** — access control, curation, lineage, query confidentiality, and retention/destruction gaps
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — workflow, CI gates, and how to run the suites
 
