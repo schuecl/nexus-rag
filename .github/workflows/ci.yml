@@ -195,6 +195,17 @@ jobs:
           python-version: "3.11"
       - name: NFR-16 -- no floating image tags
         run: python scripts/check_pinned_images.py
+      # #111: the Compose stack is what dev-setup.md and e2e.yml actually
+      # exercise, so its hardening is enforced here rather than left to
+      # review -- otherwise the chart's securityContext only ever runs in an
+      # environment nobody uses day to day.
+      - name: Issue #111 -- Compose hardening matches the chart
+        run: |
+          # This job installs no requirements file, so pyyaml comes in here.
+          # The `unit` job gets it from requirements-test.txt instead, which is
+          # what the guard's own tests need.
+          pip install "pyyaml==6.0.3"
+          python scripts/check_compose_hardening.py
 
   build:
     runs-on: ubuntu-latest

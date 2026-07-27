@@ -101,6 +101,37 @@ Host prerequisites for the GPU path: an NVIDIA driver, the
 `nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
 Air-gapped (NFR-1): mirror the chosen torch index internally and point
 `TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## Container hardening (#111)
+
+Every Compose service runs with `security_opt: ["no-new-privileges:true"]`, and
+the four custom-built services mirror the Helm chart's `securityContext`
+exactly:
+
+| setting | Compose | chart (`_helpers.tpl`) |
+|---|---|---|
+| non-root uid | `user: "10001:10001"` | `runAsUser: 10001` |
+| read-only rootfs | `read_only: true` + `tmpfs: [/tmp]` | `readOnlyRootFilesystem: true` + `emptyDir` |
+| capabilities | `cap_drop: ["ALL"]` | `capabilities.drop: ["ALL"]` |
+| privilege escalation | `no-new-privileges:true` | `allowPrivilegeEscalation: false` |
+
+The point is that the settings gating production get exercised on every dev run
+and every `e2e.yml` run. `read_only` in particular is the kind of thing that
+works until some library wants a scratch path — better to find that here.
+
+`cap_drop: ["ALL"]` also applies to Qdrant, NATS, and Ollama. Postgres and
+Keycloak keep their default capability set: both drop privileges from root at
+startup and need `CAP_CHOWN`/`SETUID`/`SETGID` to do it.
+
+`scripts/check_compose_hardening.py` enforces all of this in CI, alongside the
+NFR-16 pinning check, so the two definitions can't drift apart silently.
+
+**Every published port binds `127.0.0.1` explicitly.** A bare `8003:8003`
+listens on all interfaces, which on a laptop on a shared network makes
+`reranker-service` (which sees retrieved chunk text) and `ollama` open
+unauthenticated endpoints. Containers reach each other by service name on
+`nexus-rag-net` regardless, so nothing in the documented flow changes — the
+`http://localhost:PORT` URLs below all still work.
+
 ## Observability stack (optional, #133)
 
 Off by default. Bring it up alongside the app stack:
