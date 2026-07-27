@@ -177,7 +177,5 @@ baseline, on any of:
 - Integration layer with containerized Postgres/Qdrant/NATS/Keycloak
   (NFR-11 crash-redelivery, NFR-13 revert-on-partial-failure, NFR-2
   append-only audit enforcement are only covered live/manually today).
-- `ruff format --check` is not enforced; adopting it would reformat most of
-  the repo in one pass and was kept out of the initial CI change.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.

@@ -80,9 +80,7 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
     # branch that fires and nothing large is ever copied. The loop below is
     # the guard for the case where size isn't populated.
     if file.size is not None and file.size > limit:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
-        )
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit")
 
     chunks: list[bytes] = []
     total = 0
@@ -92,9 +90,7 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
             break
         total += len(chunk)
         if total > limit:
-            raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit"
-            )
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds size limit")
         chunks.append(chunk)
     return b"".join(chunks)
 

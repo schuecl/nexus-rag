@@ -128,11 +128,7 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
     pairs = [(body.query, chunk.text) for chunk in body.chunks]
     # #134: the CPU-bound stage this service exists for, as its own span --
     # batch size only, never query/chunk text (common/tracing.py's rule).
-    with tracer.start_as_current_span(
-        "model.predict", attributes={"rerank.pairs": len(pairs)}
-    ):
+    with tracer.start_as_current_span("model.predict", attributes={"rerank.pairs": len(pairs)}):
         scores = _model.predict(pairs)
-    ranked = sorted(
-        zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True
-    )
+    ranked = sorted(zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True)
     return [RerankedChunk(id=chunk.id, score=float(score)) for chunk, score in ranked]

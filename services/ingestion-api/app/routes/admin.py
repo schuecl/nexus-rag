@@ -116,9 +116,7 @@ def retire_releasability(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> dict[str, str]:
-    row = session.exec(
-        select(ReleasabilityValue).where(ReleasabilityValue.value == value)
-    ).first()
+    row = session.exec(select(ReleasabilityValue).where(ReleasabilityValue.value == value)).first()
     if row:
         row.active = False
         session.add(row)

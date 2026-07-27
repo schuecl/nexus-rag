@@ -67,8 +67,7 @@ class TestValidateAgainstClaims:
                 allowed_classifications=["UNCLASSIFIED", "CUI"],
                 user_releasability=["FVEY"],
             )
-        assert any("above the submitter's cleared level" in e
-                   for e in excinfo.value.errors)
+        assert any("above the submitter's cleared level" in e for e in excinfo.value.errors)
 
     def test_unheld_releasability_rejected(self):
         with pytest.raises(MetadataValidationError) as excinfo:

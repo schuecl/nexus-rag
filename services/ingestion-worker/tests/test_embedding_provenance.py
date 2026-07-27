@@ -73,9 +73,7 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(processing, "Session", lambda _engine: _Session())
     monkeypatch.setattr(processing, "get_engine", object)
-    monkeypatch.setattr(
-        processing, "get_object_store", _FakeStore
-    )
+    monkeypatch.setattr(processing, "get_object_store", _FakeStore)
     monkeypatch.setattr(processing, "parse_document", lambda _f, _c: ["section"])
     monkeypatch.setattr(
         processing,

@@ -42,9 +42,7 @@ class TestEnsureStream:
     async def test_creates_stream_when_missing(self):
         js = _FakeJetStream(stream_exists=False)
         await ensure_stream(js)
-        assert js.added_streams == [
-            {"name": INGESTION_STREAM, "subjects": [INGESTION_SUBJECT]}
-        ]
+        assert js.added_streams == [{"name": INGESTION_STREAM, "subjects": [INGESTION_SUBJECT]}]
 
     async def test_idempotent_when_present(self):
         js = _FakeJetStream(stream_exists=True)

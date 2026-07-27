@@ -145,9 +145,7 @@ def curate_page(
 def notifications_page(
     request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
 ) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "notifications.html", {"current_user": current_user}
-    )
+    return templates.TemplateResponse(request, "notifications.html", {"current_user": current_user})
 
 
 @app.get("/search", response_class=HTMLResponse)

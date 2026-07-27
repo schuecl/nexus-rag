@@ -64,8 +64,7 @@ class TestClassificationCondition:
     def test_empty_allowed_list_admits_nothing(self):
         # Unknown clearance resolves to [] upstream (common/classification.py);
         # the filter must then match no document rather than everything.
-        qfilter = build_access_filter(_claims(clearance="BOGUS"),
-                                      allowed_classifications=[])
+        qfilter = build_access_filter(_claims(clearance="BOGUS"), allowed_classifications=[])
         assert _conditions_by_key(qfilter)["classification"].match.any == []
 
 
@@ -86,8 +85,7 @@ class TestReleasabilityCondition:
         # nothing else -- it must never degrade into "no constraint", and it
         # must not become "match nothing" either, since NONE is the normal
         # state for most documents.
-        qfilter = build_access_filter(_claims(releasability=[]),
-                                      allowed_classifications=ALLOWED)
+        qfilter = build_access_filter(_claims(releasability=[]), allowed_classifications=ALLOWED)
         cond = _conditions_by_key(qfilter)["releasability"]
         assert cond.match.any == [NO_RELEASABILITY_RESTRICTION]
 
@@ -101,8 +99,7 @@ class TestAccessScopeCondition:
         assert "analysts" in scope
 
     def test_org_included_when_present(self):
-        qfilter = build_access_filter(_claims(org="USAREUR-AF"),
-                                      allowed_classifications=ALLOWED)
+        qfilter = build_access_filter(_claims(org="USAREUR-AF"), allowed_classifications=ALLOWED)
         assert "USAREUR-AF" in _conditions_by_key(qfilter)["access_scope"].match.any
 
     def test_org_absent_when_none(self):
@@ -116,16 +113,14 @@ class TestAccessScopeCondition:
     def test_no_foreign_values_leak_into_scope(self):
         qfilter = build_access_filter(_claims(), allowed_classifications=ALLOWED)
         scope = set(_conditions_by_key(qfilter)["access_scope"].match.any)
-        assert scope == {ALL_AUTHENTICATED_ACCESS_SCOPE, "user-0001",
-                         "analysts", "USAREUR-AF"}
+        assert scope == {ALL_AUTHENTICATED_ACCESS_SCOPE, "user-0001", "analysts", "USAREUR-AF"}
 
     def test_distinct_users_get_distinct_scopes(self):
         scope_a = _conditions_by_key(
             build_access_filter(_claims(sub="alice"), allowed_classifications=ALLOWED)
         )["access_scope"].match.any
         scope_b = _conditions_by_key(
-            build_access_filter(_claims(sub="mallory", groups=[]),
-                                allowed_classifications=ALLOWED)
+            build_access_filter(_claims(sub="mallory", groups=[]), allowed_classifications=ALLOWED)
         )["access_scope"].match.any
         assert "mallory" not in scope_a
         assert "alice" not in scope_b

@@ -35,8 +35,7 @@ class TestFilesystemObjectStore:
         store.put("a/b/c/d", b"x")
         assert (tmp_path / "a" / "b" / "c" / "d").read_bytes() == b"x"
 
-    @pytest.mark.parametrize("key", ["../escape", "documents/../../escape",
-                                     "/absolute/path", ".."])
+    @pytest.mark.parametrize("key", ["../escape", "documents/../../escape", "/absolute/path", ".."])
     def test_path_traversal_keys_rejected(self, tmp_path, key):
         store = FilesystemObjectStore(str(tmp_path))
         with pytest.raises(ValueError, match="invalid object key"):
@@ -69,8 +68,9 @@ class TestS3ObjectStore:
         return client
 
     def _store(self):
-        return S3ObjectStore(endpoint_url="http://minio:9000", bucket="nexus",
-                             access_key="ak", secret_key="sk")
+        return S3ObjectStore(
+            endpoint_url="http://minio:9000", bucket="nexus", access_key="ak", secret_key="sk"
+        )
 
     def test_round_trip(self, fake_boto3):
         store = self._store()
@@ -99,8 +99,12 @@ class TestGetObjectStore:
 
     def test_s3_backend_requires_config(self, monkeypatch):
         monkeypatch.setenv("OBJECT_STORE_BACKEND", "s3")
-        for var in ("OBJECT_STORE_S3_ENDPOINT", "OBJECT_STORE_S3_BUCKET",
-                    "OBJECT_STORE_S3_ACCESS_KEY", "OBJECT_STORE_S3_SECRET_KEY"):
+        for var in (
+            "OBJECT_STORE_S3_ENDPOINT",
+            "OBJECT_STORE_S3_BUCKET",
+            "OBJECT_STORE_S3_ACCESS_KEY",
+            "OBJECT_STORE_S3_SECRET_KEY",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(KeyError):
             get_object_store()

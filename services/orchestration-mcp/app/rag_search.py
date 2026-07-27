@@ -245,9 +245,7 @@ async def run_rag_search(
     (embed.query / qdrant.query / rerank) inside _run_rag_search nest under
     it. A thin wrapper rather than a decorator so the result's shape can be
     summarized onto the span (counts only -- never the query text)."""
-    with tracer.start_as_current_span(
-        "rag_search", attributes={"rag.top_k": top_k}
-    ) as span:
+    with tracer.start_as_current_span("rag_search", attributes={"rag.top_k": top_k}) as span:
         result = await _run_rag_search(
             bearer_token, query, top_k, content_type_boosts=content_type_boosts
         )
@@ -335,25 +333,29 @@ async def _run_rag_search(
         with tracer.start_as_current_span(
             "qdrant.query", attributes={"qdrant.prefetch_limit": hybrid_limit}
         ) as qdrant_span:
-            hits = get_qdrant_client().query_points(
-                collection_name=QDRANT_COLLECTION,
-                prefetch=[
-                    Prefetch(
-                        query=dense_vector,
-                        using=DENSE_VECTOR,
-                        filter=access_filter,
-                        limit=hybrid_limit,
-                    ),
-                    Prefetch(
-                        query=sparse_vector,
-                        using=SPARSE_VECTOR,
-                        filter=access_filter,
-                        limit=hybrid_limit,
-                    ),
-                ],
-                query=FusionQuery(fusion=Fusion.RRF),
-                limit=hybrid_limit,
-            ).points
+            hits = (
+                get_qdrant_client()
+                .query_points(
+                    collection_name=QDRANT_COLLECTION,
+                    prefetch=[
+                        Prefetch(
+                            query=dense_vector,
+                            using=DENSE_VECTOR,
+                            filter=access_filter,
+                            limit=hybrid_limit,
+                        ),
+                        Prefetch(
+                            query=sparse_vector,
+                            using=SPARSE_VECTOR,
+                            filter=access_filter,
+                            limit=hybrid_limit,
+                        ),
+                    ],
+                    query=FusionQuery(fusion=Fusion.RRF),
+                    limit=hybrid_limit,
+                )
+                .points
+            )
             qdrant_span.set_attribute("qdrant.candidates", len(hits))
         timings["retrieve"] = perf_counter() - retrieval_started
     except (UnexpectedResponse, httpx.HTTPError) as exc:

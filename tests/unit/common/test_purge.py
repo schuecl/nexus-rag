@@ -159,9 +159,7 @@ class TestPartialFailure:
                 raise RuntimeError("s3 down")
 
         monkeypatch.setattr(purge_mod, "get_qdrant_client", object)
-        monkeypatch.setattr(
-            purge_mod, "delete_document_chunks", lambda _c, i: cleared.append(i)
-        )
+        monkeypatch.setattr(purge_mod, "delete_document_chunks", lambda _c, i: cleared.append(i))
         monkeypatch.setattr(purge_mod, "get_object_store", _Store)
 
         with pytest.raises(PurgeError):
