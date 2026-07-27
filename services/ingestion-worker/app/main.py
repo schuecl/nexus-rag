@@ -31,6 +31,14 @@ from fastapi.responses import JSONResponse
 from app import processing
 from app.processing import consume_forever
 from common.db import init_db
+from common.logging_setup import setup_logging
+from common.siem import enable_siem_export
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of the audit events the pipeline writes (document.embedded,
+# document.failed, ...).
+setup_logging("ingestion-worker")
+enable_siem_export("ingestion-worker")
 
 
 def _log_consumer_exit(task: asyncio.Task) -> None:

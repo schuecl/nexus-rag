@@ -36,6 +36,9 @@ spec:
             - name: http
               containerPort: 8003
           env:
+            # #73: log verbosity, matching the other custom services.
+            - name: LOG_LEVEL
+              value: {{ .Values.observability.logLevel | quote }}
             - name: RERANKER_MODEL
               value: {{ .Values.rerankerService.model | quote }}
           volumeMounts:

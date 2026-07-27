@@ -12,8 +12,17 @@ from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
 from common.job_queue import ensure_stream, get_nats_connection
+from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, ReleasabilityValue
+from common.siem import enable_siem_export
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of every audit event this service writes (upload, curation,
+# purge, auth). Module level, before the app object exists, so startup logging
+# is already formatted and filtered.
+setup_logging("ingestion-api")
+enable_siem_export("ingestion-api")
 
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),

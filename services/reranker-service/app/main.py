@@ -5,12 +5,24 @@ session -- small enough to finish now, and orchestration-mcp's hybrid search
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder
+
+# #73: honor LOG_LEVEL like the other services. Deliberately stdlib-only
+# rather than common.logging_setup: this service has no dependency on
+# services/common (no DB, no audit writes, so no SIEM hook either), and a
+# log-format preference isn't worth adding one. A typo'd level falls back to
+# INFO instead of crashing the pod, matching the shared module's behavior.
+_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+logging.basicConfig(
+    level=_level if _level in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} else "INFO",
+    format="%(asctime)s %(levelname)s [reranker-service] %(name)s: %(message)s",
+)
 
 MODEL_NAME = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
 

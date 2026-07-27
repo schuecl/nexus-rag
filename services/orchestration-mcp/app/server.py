@@ -32,6 +32,14 @@ from starlette.responses import JSONResponse, Response
 
 from app import metrics
 from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
+from common.logging_setup import setup_logging
+from common.siem import enable_siem_export
+
+# #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
+# SIEM export of the FR-31 audit events every rag_search call writes
+# (query, query.denied, ...).
+setup_logging("orchestration-mcp")
+enable_siem_export("orchestration-mcp")
 
 # FastMCP's default DNS-rebinding protection only allows Host headers of
 # 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),
