@@ -5,7 +5,7 @@
 # pytest 8.4.2 carries PYSEC-2026-1845 (fixed in 9.0.3); accepted here because
 # this toolchain never ships in a service image -- the pip-audit gate in
 # security.yml scans service dependencies only, not this file.
-pytest==8.4.2
+pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-bdd==8.1.0
