@@ -23,7 +23,7 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [project.optional-dependencies]
-test = ["pytest>=9.1.1", "pytest-asyncio>=0.24"]
+test = ["pytest>=9.1.1", "pytest-asyncio>=1.4.0"]
 
 # The upload path is async, so its tests are too -- same configuration
 # ingestion-worker and orchestration-mcp already use.
