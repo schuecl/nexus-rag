@@ -195,9 +195,7 @@ async def process_document(document_id: uuid.UUID) -> bool:
                         "status": "pending_review",
                     },
                 )
-                for chunk, dense, sparse in zip(
-                    chunks, dense_vectors, sparse_vectors, strict=True
-                )
+                for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors, strict=True)
             ]
             with tracer.start_as_current_span("qdrant.upsert") as span:
                 span.set_attribute("qdrant.points", len(points))
@@ -290,8 +288,7 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
                 return
             doc.status = "failed"
             doc.processing_error = (
-                f"processing failed after {attempts} delivery attempts; "
-                "see ingestion-worker logs"
+                f"processing failed after {attempts} delivery attempts; see ingestion-worker logs"
             )
             session.add(doc)
             session.add(
@@ -376,9 +373,7 @@ async def consume_forever() -> None:
         psub = await js.pull_subscribe(
             INGESTION_SUBJECT,
             durable=DURABLE_CONSUMER_NAME,
-            config=ConsumerConfig(
-                ack_wait=ACK_WAIT_SECONDS, max_deliver=MAX_DELIVERY_ATTEMPTS
-            ),
+            config=ConsumerConfig(ack_wait=ACK_WAIT_SECONDS, max_deliver=MAX_DELIVERY_ATTEMPTS),
         )
 
         logger.info("ingestion-worker: subscribed, waiting for jobs")

@@ -30,9 +30,7 @@ def build_access_filter(
     return Filter(
         must=[
             FieldCondition(key="status", match=MatchValue(value="approved")),
-            FieldCondition(
-                key="classification", match=MatchAny(any=allowed_classifications)
-            ),
+            FieldCondition(key="classification", match=MatchAny(any=allowed_classifications)),
             FieldCondition(
                 key="releasability",
                 match=MatchAny(any=[NO_RELEASABILITY_RESTRICTION, *claims.releasability]),

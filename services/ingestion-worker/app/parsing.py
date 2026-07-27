@@ -73,7 +73,6 @@ def _check_zip_bomb(content: bytes) -> None:
         raise ParsingError(f"corrupt archive: {exc}") from exc
 
 
-
 @dataclass
 class ParsedSection:
     """One structural unit of a document -- a heading's worth of text, a PDF
@@ -232,9 +231,7 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
             # (same page_or_slide, content_type "text" vs "table") instead of
             # being joined into one blob -- see the ParsedSection docstring.
             if prose:
-                sections.append(
-                    ParsedSection(text=prose, page_or_slide=i + 1, content_type="text")
-                )
+                sections.append(ParsedSection(text=prose, page_or_slide=i + 1, content_type="text"))
             for table in tables:
                 markdown = _table_to_markdown(table.extract())
                 if markdown:

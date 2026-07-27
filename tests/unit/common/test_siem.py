@@ -286,9 +286,7 @@ class TestTlsExport:
         payload = json.loads(message.decode("ascii").split(" - ", 1)[1])
         assert payload["action"] == "document.submit"
 
-    def test_untrusted_collector_is_refused_but_fails_open(
-        self, monkeypatch, db, entry, tmp_path
-    ):
+    def test_untrusted_collector_is_refused_but_fails_open(self, monkeypatch, db, entry, tmp_path):
         # No CA configured, so the self-signed collector must fail
         # verification -- the export is refused (no plaintext-equivalent
         # fallback), while the audit row still lands (fail-open).

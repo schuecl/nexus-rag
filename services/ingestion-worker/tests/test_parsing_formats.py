@@ -54,8 +54,10 @@ class TestMarkdownParsing:
 
 class TestHtmlParsing:
     def test_scripts_and_styles_stripped(self):
-        html = b"<html><head><style>body{}</style></head><body>" \
-               b"<p>visible</p><script>alert(1)</script></body></html>"
+        html = (
+            b"<html><head><style>body{}</style></head><body>"
+            b"<p>visible</p><script>alert(1)</script></body></html>"
+        )
         sections = parse_document("page.html", html)
         text = " ".join(s.text for s in sections)
         assert "visible" in text
@@ -152,7 +154,7 @@ class TestZipBombGuard:
             _check_zip_bomb(archive)
 
     def test_legitimate_archive_passes(self):
-        archive = self._zip_with(b'<w:document>real content</w:document>' * 50)
+        archive = self._zip_with(b"<w:document>real content</w:document>" * 50)
         _check_zip_bomb(archive)  # no exception
 
     def test_non_zip_rejected(self):

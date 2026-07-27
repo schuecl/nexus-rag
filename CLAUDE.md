@@ -81,7 +81,8 @@ docker compose --profile eval run --rm eval-retrieval
 
 ### Lint / types / security
 ```bash
-ruff check services scripts tests       # lint gate (line-length 100; format-check NOT enforced)
+ruff check services scripts tests       # lint gate (line-length 100)
+ruff format --check services scripts tests  # format gate (issue #80)
 mypy services/common/common             # type gate -- enforced across services/common and
                                          # all four app services (see ci.yml's `types` job)
 python scripts/check_pinned_images.py   # NFR-16: no floating/`:latest` image or model tags
@@ -189,8 +190,8 @@ in `docs/testing.md`.
   *validated against a live environment* (run against the real `docker compose up` stack).
   Don't upgrade a claim past what was actually exercised — see `docs/dev-setup.md`'s
   "What's stubbed vs working" for the current convention and status of every major feature.
-- **ruff is the lint/import-order arbiter** (`known-first-party = ["common", "app"]`,
-  100-column lines); `ruff format` is intentionally not enforced yet.
+- **ruff is the lint/import-order/format arbiter** (`known-first-party = ["common", "app"]`,
+  100-column lines); both `ruff check` and `ruff format --check` are enforced (issue #80).
 - **mypy is a hard gate on `services/common` and all four app services** (issue #79);
   each app service scopes `disallow_untyped_defs` to its own `app.*` via a
   `pyproject.toml` override, since `MYPYPATH=../common` also pulls

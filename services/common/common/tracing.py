@@ -123,9 +123,7 @@ def setup_tracing(service: str) -> bool:
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(provider)
     _state["enabled"] = True
-    logger.info(
-        "tracing enabled: OTLP to %s, head-sampling ratio %s (#134)", endpoint, ratio
-    )
+    logger.info("tracing enabled: OTLP to %s, head-sampling ratio %s (#134)", endpoint, ratio)
     return True
 
 

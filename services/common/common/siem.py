@@ -101,6 +101,7 @@ def _facility() -> int:
         return _FACILITY_LOG_AUDIT
     return value
 
+
 _NILVALUE = "-"
 
 # Module-level so enable_siem_export() is idempotent per process: the mapper
@@ -266,8 +267,7 @@ def _build_sender() -> _UdpSender | _TcpSender | None:
             ca_cert=os.environ.get("SIEM_SYSLOG_CA_CERT", "").strip() or None,
             client_cert=os.environ.get("SIEM_SYSLOG_CLIENT_CERT", "").strip() or None,
             client_key=os.environ.get("SIEM_SYSLOG_CLIENT_KEY", "").strip() or None,
-            verify=os.environ.get("SIEM_SYSLOG_TLS_VERIFY", "true").strip().lower()
-            != "false",
+            verify=os.environ.get("SIEM_SYSLOG_TLS_VERIFY", "true").strip().lower() != "false",
         )
     if protocol == "tcp":
         return _TcpSender(host, port)
@@ -285,9 +285,7 @@ def _forward(mapper, connection, target: AuditLogEntry) -> None:
     if sender is None:
         return
     try:
-        sender.send(
-            format_rfc5424(target, _state["service"], _state["hostname"], _state["procid"])
-        )
+        sender.send(format_rfc5424(target, _state["service"], _state["hostname"], _state["procid"]))
     except Exception:
         # Fail-open (see module docstring): the audit row is already written;
         # a SIEM outage must not break the request. Warn once, then stay quiet
@@ -323,7 +321,5 @@ def enable_siem_export(service: str) -> bool:
     if not _state["registered"]:
         event.listen(AuditLogEntry, "after_insert", _forward)
         _state["registered"] = True
-    logger.info(
-        "SIEM export enabled: forwarding audit events as RFC 5424 syslog (NFR-2)"
-    )
+    logger.info("SIEM export enabled: forwarding audit events as RFC 5424 syslog (NFR-2)")
     return True

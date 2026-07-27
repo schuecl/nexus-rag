@@ -54,10 +54,7 @@ class _TextFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         message = log_safe(record.getMessage())
-        line = (
-            f"{_timestamp(record)} {record.levelname} [{self._service}] "
-            f"{record.name}: {message}"
-        )
+        line = f"{_timestamp(record)} {record.levelname} [{self._service}] {record.name}: {message}"
         if record.exc_info:
             # Tracebacks are multi-line by design; they come from this process,
             # not from external input, so they are not escaped into one line.

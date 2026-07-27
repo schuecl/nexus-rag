@@ -50,9 +50,7 @@ def _load_pending(session: Session, doc_id: uuid.UUID) -> Document:
 
 def _check_curator_authority(user: UserClaims, doc: Document, session: Session) -> None:
     if not user.can_curate_org(doc.owner_org):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, f"not a curator for org '{doc.owner_org}'"
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a curator for org '{doc.owner_org}'")
     allowed = allowed_classifications(session, user.clearance)
     if doc.classification not in allowed:
         raise HTTPException(
