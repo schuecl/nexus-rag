@@ -109,6 +109,7 @@ A repository ruleset (`Protect-Main`, target `refs/heads/main`) enforces PR-only
 non-fast-forward merges and a set of required status checks — the mechanism that
 makes the gates above actually *block* a merge rather than being advisory-only
 (issue #81; #60's premise that verification is enforced, not just available).
+Applied 2026-07-27.
 
 **Required checks** (every job below runs unconditionally on every PR, no path
 filter, so a required check can never be left permanently "waiting"):
@@ -122,9 +123,12 @@ filter, so a required check can never be left permanently "waiting"):
 - `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
 - `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
 
-Branches must also be up to date with `main` before merging (strict status
-checks), so a required check always runs against the code that will actually
-land.
+Branches are **not** currently required to be up to date with `main` before
+merging (`strict_required_status_checks_policy` is `false`) — the issue's
+suggested direction included this, but it adds rebase friction to every
+Dependabot PR and was left off when the ruleset was applied. Revisit if stale
+required-check results (a check that passed against an older `main`) become a
+real problem in practice.
 
 **Deliberately not required: `golden-query` and `mutation`.** Both live in
 `e2e.yml`, which is path-filtered (`services/**`, `scripts/**`, `infra/**`,
@@ -148,11 +152,13 @@ fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
 `Analyze (python)` passing, so no further action was needed on that half of
 the issue.
 
-**Applying ruleset changes.** The GitHub REST API's ruleset `PATCH` endpoint
-returned `404` for every attempt when exercised for this change (`GET`,
-`POST` create, and `DELETE` all worked against the same token/permissions,
-only `PATCH` failed) — apply updates by deleting and recreating the ruleset,
-or via the repo Settings → Rules UI, rather than assuming `PATCH` works.
+**Applying ruleset changes.** The ruleset REST API's `PATCH` endpoint (used
+to add the checks above) 404s for at least one token type (an OAuth-app
+token with `repo` scope) even with admin permission on the repo — `GET`,
+`POST` (create), and `DELETE` all worked against that same token. It works
+fine as a classic/fine-grained PAT or via the Settings → Rules UI (how this
+change was actually applied); if `PATCH` 404s for you, check what kind of
+token is being used before assuming a permissions problem.
 
 ## Coverage policy
 
