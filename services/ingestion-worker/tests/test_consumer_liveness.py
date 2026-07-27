@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -90,7 +91,8 @@ class TestMalformedPayload:
 
 class TestRedeliveryBound:
     async def _handle(self, monkeypatch, *, terminal: bool, num_delivered: int) -> _Msg:
-        async def _result(_doc_id):
+        async def _result(_doc_id, delivery_attempt=1):
+            assert delivery_attempt == num_delivered
             return terminal
 
         monkeypatch.setattr(processing, "process_document", _result)
@@ -130,7 +132,8 @@ class TestRedeliveryBound:
         explain it, and the uploader never gets an FR-8 status."""
         recorded: list[tuple] = []
 
-        async def _transient(_doc_id):
+        async def _transient(_doc_id, delivery_attempt=1):
+            assert delivery_attempt == processing.MAX_DELIVERY_ATTEMPTS
             return False
 
         monkeypatch.setattr(processing, "process_document", _transient)
@@ -151,6 +154,75 @@ class TestRedeliveryBound:
         message to a fresh replica forever."""
         assert processing.MAX_DELIVERY_ATTEMPTS > 1
         assert processing.NAK_BACKOFF_SECONDS > 0
+
+
+class TestDuplicateSafeClaim:
+    class _Doc:
+        def __init__(self, status, processing_started_at=None):
+            self.status = status
+            self.processing_started_at = processing_started_at
+            self.updated_at = datetime.now(UTC)
+
+    class _Session:
+        def __init__(self, doc):
+            self.doc = doc
+            self.commits = 0
+
+        def get(self, _model, _id, **kwargs):
+            assert kwargs["with_for_update"] is True
+            return self.doc
+
+        def add(self, _doc):
+            pass
+
+        def commit(self):
+            self.commits += 1
+
+    def test_terminal_document_makes_a_duplicate_safe_to_ack(self):
+        session = self._Session(self._Doc("pending_review"))
+
+        doc, terminal = processing._claim_document(session, uuid.uuid4(), 1)
+
+        assert doc is None
+        assert terminal is True
+        assert session.commits == 0
+
+    def test_separate_duplicate_cannot_race_a_fresh_processing_lease(self):
+        session = self._Session(self._Doc("processing", datetime.now(UTC)))
+
+        doc, terminal = processing._claim_document(session, uuid.uuid4(), 1)
+
+        assert doc is None
+        assert terminal is True
+        assert session.commits == 0
+
+    def test_duplicate_cannot_race_the_post_upsert_checkpoint(self):
+        session = self._Session(self._Doc("embedded", datetime.now(UTC)))
+
+        doc, terminal = processing._claim_document(session, uuid.uuid4(), 1)
+
+        assert doc is None
+        assert terminal is True
+        assert session.commits == 0
+
+    def test_jetstream_redelivery_reclaims_after_a_crash(self):
+        session = self._Session(self._Doc("processing", datetime.now(UTC)))
+
+        doc, terminal = processing._claim_document(session, uuid.uuid4(), 2)
+
+        assert doc is session.doc
+        assert terminal is False
+        assert session.commits == 1
+
+    def test_redelivery_finishes_a_crash_after_the_vector_checkpoint(self):
+        session = self._Session(self._Doc("embedded", datetime.now(UTC)))
+
+        doc, terminal = processing._claim_document(session, uuid.uuid4(), 2)
+
+        assert doc is session.doc
+        assert terminal is False
+        assert session.doc.status == "processing"
+        assert session.commits == 1
 
 
 class TestHealthReflectsTheConsumer:

@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 # Imported as a module, not `from app.processing import STATUS`: STATUS is a
 # mutable module-level object, and a from-import would bind this module to
@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 # modules from disagreeing about which object is current.
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-from app import processing
+from app import metrics, processing
 from app.processing import consume_forever
 from common.db import init_db
 from common.logging_setup import setup_logging
@@ -92,3 +92,9 @@ def health() -> JSONResponse | Mapping[str, object]:
     if not status.running:
         return JSONResponse(payload, status_code=503)
     return payload
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    payload, content_type = metrics.render()
+    return Response(payload, media_type=content_type)

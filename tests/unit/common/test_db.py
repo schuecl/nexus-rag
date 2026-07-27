@@ -22,11 +22,19 @@ def test_adds_missing_column_to_preexisting_table():
     # A documents table from before the tagging_advisory column existed.
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE documents (id TEXT PRIMARY KEY)"))
-    assert "tagging_advisory" not in _columns(engine, "documents")
+    assert not {
+        "tagging_advisory",
+        "queue_published_at",
+        "processing_started_at",
+    } & _columns(engine, "documents")
 
     _ensure_columns(engine)
 
-    assert "tagging_advisory" in _columns(engine, "documents")
+    assert {
+        "tagging_advisory",
+        "queue_published_at",
+        "processing_started_at",
+    } <= _columns(engine, "documents")
     engine.dispose()
 
 

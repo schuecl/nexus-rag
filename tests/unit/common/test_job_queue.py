@@ -70,3 +70,10 @@ class TestPublishIngestionJob:
         _, payload = js.published[0]
         assert payload == b"doc-123"
         assert len(payload) < 64
+
+    async def test_document_id_is_the_jetstream_deduplication_key(self):
+        js = _FakeJetStream(stream_exists=True)
+
+        await publish_ingestion_job(js, "doc-123")
+
+        assert js.published_headers[0]["Nats-Msg-Id"] == "doc-123"

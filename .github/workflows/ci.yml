@@ -158,7 +158,8 @@ jobs:
       - name: Install reranker-service dependencies
         run: |
           pip install "fastapi>=0.115" \
-            "opentelemetry-instrumentation-fastapi>=0.51b0"
+            "opentelemetry-instrumentation-fastapi>=0.51b0" \
+            "prometheus-client>=0.20"
       - name: mypy on reranker-service (enforced, issue #79)
         run: cd services/reranker-service && mypy app
       - name: Install ingestion-worker dependencies

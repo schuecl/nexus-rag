@@ -76,10 +76,11 @@ class TestQueueBoundaryPropagation:
         assert "traceparent" in headers
 
     @pytest.mark.asyncio
-    async def test_publish_without_tracing_sends_headers_none(self):
+    async def test_publish_without_tracing_sends_only_deduplication_header(self):
         js = AsyncMock()
-        await publish_ingestion_job(js, "8ec9a2a6-0000-0000-0000-000000000002")
-        assert js.publish.await_args.kwargs["headers"] is None
+        document_id = "8ec9a2a6-0000-0000-0000-000000000002"
+        await publish_ingestion_job(js, document_id)
+        assert js.publish.await_args.kwargs["headers"] == {"Nats-Msg-Id": document_id}
 
 
 class TestSetup:

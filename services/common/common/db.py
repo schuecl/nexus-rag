@@ -30,6 +30,11 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "documents": {
         # Issue #138: advisory marking-mismatch findings (common/models.py).
         "tagging_advisory": "JSON",
+        # #164: durable Postgres -> JetStream hand-off and duplicate-safe
+        # worker claim. Nullable so existing rows upgrade without a table
+        # rewrite.
+        "queue_published_at": "TIMESTAMP WITH TIME ZONE",
+        "processing_started_at": "TIMESTAMP WITH TIME ZONE",
     },
 }
 

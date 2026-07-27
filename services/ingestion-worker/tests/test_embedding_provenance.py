@@ -53,7 +53,7 @@ def captured(monkeypatch):
     points: list = []
 
     class _Session:
-        def get(self, _model, _id):
+        def get(self, _model, _id, **_kwargs):
             return doc
 
         def add(self, _obj):
@@ -102,6 +102,13 @@ def captured(monkeypatch):
 
 
 class TestChunkProvenance:
+    async def test_chunk_id_is_stable_across_retries(self, captured):
+        doc, points = captured
+
+        await processing.process_document(doc.id)
+
+        assert points[0].id == str(uuid.uuid5(doc.id, "chunk:0"))
+
     async def test_chunk_records_the_embedding_model(self, captured):
         doc, points = captured
 

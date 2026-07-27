@@ -19,17 +19,20 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter
 
 from nats.aio.msg import Msg
 from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.api import ConsumerConfig
 from sqlmodel import Session, select
 
+from app import metrics
 from app.chunking import chunk_sections
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import ParsedSection, ParsingError, parse_document
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
+from common.log_safety import log_safe
 from common.marking_detection import detect_markings, evaluate_markings
 from common.models import AuditLogEntry, ClassificationLevel, Document, ReleasabilityValue
 from common.object_store import get_object_store
@@ -171,21 +174,85 @@ def _apply_tagging_advisory(session: Session, doc: Document, sections: list[Pars
         )
 
 
-async def process_document(document_id: uuid.UUID) -> bool:
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _claim_document(
+    session: Session, document_id: uuid.UUID, delivery_attempt: int
+) -> tuple[Document | None, bool]:
+    """Claim one document under a row lock.
+
+    Returns ``(doc, False)`` when this caller owns processing. ``(None, True)``
+    means the message is a safe-to-ack duplicate or references terminal work.
+    A JetStream redelivery (attempt > 1) may reclaim ``processing`` after a
+    crash; a separate duplicate message (attempt 1) cannot race an active
+    worker whose lease is still fresh.
+    """
+    doc = session.get(Document, document_id, with_for_update=True)
+    if doc is None:
+        logger.error("document %s not found, acking to drop the message", document_id)
+        metrics.jobs_total.labels(outcome="missing").inc()
+        return None, True
+
+    # ``embedded`` is a checkpoint, not a terminal state. A process can die
+    # after committing it and before the pending_review/audit commit below;
+    # the redelivery must then replay the stable-id upsert and finish the
+    # transition rather than acknowledge a permanently stranded document.
+    if doc.status not in {"queued", "processing", "embedded"}:
+        logger.info(
+            "document %s is already %s; acknowledging duplicate job",
+            document_id,
+            doc.status,
+        )
+        metrics.jobs_total.labels(outcome="duplicate_terminal").inc()
+        return None, True
+
+    started_at = getattr(doc, "processing_started_at", None)
+    if (
+        doc.status in {"processing", "embedded"}
+        and delivery_attempt <= 1
+        and started_at is not None
+        and (_utcnow() - _as_utc(started_at)).total_seconds() < ACK_WAIT_SECONDS
+    ):
+        logger.info(
+            "document %s already has an active processing lease; acknowledging duplicate job",
+            document_id,
+        )
+        metrics.jobs_total.labels(outcome="duplicate_inflight").inc()
+        return None, True
+
+    doc.status = "processing"
+    doc.processing_started_at = _utcnow()
+    doc.updated_at = _utcnow()
+    session.add(doc)
+    session.commit()
+    return doc, False
+
+
+async def process_document(document_id: uuid.UUID, delivery_attempt: int = 1) -> bool:
     """Returns True for a terminal outcome (success or permanent failure --
     ack the message either way), False for a transient/unexpected error
     (don't ack -- let JetStream redeliver)."""
-    with Session(get_engine()) as session:
-        doc = session.get(Document, document_id)
-        if doc is None:
-            # Nothing sensible to retry -- the row is just gone (shouldn't
-            # happen in practice). Ack so this doesn't loop forever.
-            logger.error("document %s not found, acking to drop the message", document_id)
-            return True
+    started = perf_counter()
+    try:
+        return await _process_document(document_id, delivery_attempt)
+    finally:
+        metrics.job_seconds.observe(perf_counter() - started)
 
-        doc.status = "processing"
-        session.add(doc)
-        session.commit()
+
+async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bool:
+    with Session(get_engine()) as session:
+        doc, terminal = _claim_document(session, document_id, delivery_attempt)
+        if terminal:
+            return True
+        if doc is None:
+            # _claim_document only returns (None, False) if its contract is
+            # broken -- a real check rather than an assert, because asserts
+            # are stripped under `python -O` and bandit flags them (B101).
+            # Terminal: nothing to retry if the claim returned nothing.
+            logger.error("claim for %s returned no document; dropping", log_safe(document_id))
+            return True
 
         try:
             if doc.original_object_key is None:
@@ -196,28 +263,43 @@ async def process_document(document_id: uuid.UUID) -> bool:
                 # was deliberately destroyed.
                 raise FileNotFoundError("original_object_key is unset (document was purged)")
             contents = get_object_store().get(doc.original_object_key)
+            metrics.document_bytes.observe(len(contents))
             # #134's ingest.process stage spans: attribute values are counts
             # and byte sizes only, never the text they describe.
-            with tracer.start_as_current_span("parse") as span:
+            with (
+                metrics.stage_seconds.labels(stage="parse").time(),
+                tracer.start_as_current_span("parse") as span,
+            ):
                 span.set_attribute("document.bytes", len(contents))
                 sections = parse_document(doc.filename, contents)
                 span.set_attribute("document.sections", len(sections))
             # Issue #138: advisory only, never blocks -- see _apply_tagging_advisory.
             _apply_tagging_advisory(session, doc, sections)
-            with tracer.start_as_current_span("chunk") as span:
+            with (
+                metrics.stage_seconds.labels(stage="chunk").time(),
+                tracer.start_as_current_span("chunk") as span,
+            ):
                 chunks = chunk_sections(sections)
                 span.set_attribute("document.chunks", len(chunks))
             if not chunks:
                 raise ParsingError("document contained no extractable text")
+            metrics.chunks_produced.observe(len(chunks))
 
-            with tracer.start_as_current_span("embed") as span:
+            with (
+                metrics.stage_seconds.labels(stage="embed").time(),
+                tracer.start_as_current_span("embed") as span,
+            ):
                 span.set_attribute("document.chunks", len(chunks))
                 dense_vectors = await embed_texts([c.text for c in chunks])
                 sparse_vectors = embed_sparse([c.text for c in chunks])
 
             points = [
                 ChunkPoint(
-                    id=str(uuid.uuid4()),
+                    # Stable across retries: an ambiguous acknowledgement or
+                    # worker crash may process this document more than once,
+                    # and upsert must replace the same point rather than
+                    # create duplicate retrievable chunks.
+                    id=str(uuid.uuid5(doc.id, f"chunk:{chunk.chunk_index}")),
                     dense=dense,
                     sparse=sparse,
                     payload={
@@ -256,7 +338,10 @@ async def process_document(document_id: uuid.UUID) -> bool:
             # #160: through the backend seam -- Qdrant by default, Milvus when
             # VECTOR_BACKEND=milvus. One span name either way, backend as an
             # attribute, so the A/B reads side by side in Tempo.
-            with tracer.start_as_current_span("vector.upsert") as span:
+            with (
+                metrics.stage_seconds.labels(stage="vector_upsert").time(),
+                tracer.start_as_current_span("vector.upsert") as span,
+            ):
                 span.set_attribute("vector.backend", backend_name())
                 span.set_attribute("vector.points", len(points))
                 store = get_store()
@@ -269,6 +354,8 @@ async def process_document(document_id: uuid.UUID) -> bool:
             session.commit()
 
             doc.status = "pending_review"
+            doc.processing_started_at = None
+            doc.updated_at = _utcnow()
             session.add(doc)
             session.add(
                 AuditLogEntry(
@@ -280,6 +367,8 @@ async def process_document(document_id: uuid.UUID) -> bool:
                 )
             )
             session.commit()
+            metrics.jobs_total.labels(outcome="succeeded").inc()
+            metrics.last_success_timestamp_seconds.set(_utcnow().timestamp())
             return True
         except FileNotFoundError as exc:
             # The original upload isn't in the object store. Retrying reads of
@@ -290,6 +379,8 @@ async def process_document(document_id: uuid.UUID) -> bool:
             # still falls through to the transient branch below and is bounded
             # by MAX_DELIVERY_ATTEMPTS instead.
             doc.status = "failed"
+            doc.processing_started_at = None
+            doc.updated_at = _utcnow()
             doc.processing_error = f"original file missing from object store: {exc}"
             session.add(doc)
             session.add(
@@ -302,6 +393,7 @@ async def process_document(document_id: uuid.UUID) -> bool:
                 )
             )
             session.commit()
+            metrics.jobs_total.labels(outcome="permanent_failure").inc()
             return True
         except (ParsingError, EmbeddingError) as exc:
             # Permanent failures -- corrupt/unsupported input, or the
@@ -310,6 +402,8 @@ async def process_document(document_id: uuid.UUID) -> bool:
             # document in `failed` and ack rather than let JetStream
             # redeliver it forever.
             doc.status = "failed"
+            doc.processing_started_at = None
+            doc.updated_at = _utcnow()
             doc.processing_error = str(exc)
             session.add(doc)
             session.add(
@@ -322,6 +416,7 @@ async def process_document(document_id: uuid.UUID) -> bool:
                 )
             )
             session.commit()
+            metrics.jobs_total.labels(outcome="permanent_failure").inc()
             return True
         except Exception:
             # Unexpected/transient -- Qdrant or the DB unreachable, a bug,
@@ -333,6 +428,23 @@ async def process_document(document_id: uuid.UUID) -> bool:
                 document_id,
             )
             session.rollback()
+            # Make the claim immediately reclaimable by the scheduled NAK.
+            # If the database itself is still unavailable this may fail; the
+            # redelivery number (>1) is the independent reclaim signal.
+            try:
+                doc.status = "queued"
+                doc.processing_started_at = None
+                doc.updated_at = _utcnow()
+                session.add(doc)
+                session.commit()
+            except Exception:
+                session.rollback()
+                logger.exception(
+                    "could not release processing lease for document %s; "
+                    "redelivery will reclaim it",
+                    document_id,
+                )
+            metrics.jobs_total.labels(outcome="transient_failure").inc()
             return False
 
 
@@ -347,6 +459,8 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
             if doc is None:
                 return
             doc.status = "failed"
+            doc.processing_started_at = None
+            doc.updated_at = _utcnow()
             doc.processing_error = (
                 f"processing failed after {attempts} delivery attempts; see ingestion-worker logs"
             )
@@ -361,6 +475,7 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
                 )
             )
             session.commit()
+            metrics.jobs_total.labels(outcome="delivery_exhausted").inc()
     except Exception:
         logger.exception(
             "could not mark document %s failed after exhausting redelivery", document_id
@@ -379,6 +494,7 @@ async def _handle_message(msg: Msg) -> None:
         # produce the same result. Previously this raised straight out of the
         # loop and killed the consumer.
         logger.error("dropping message with unparseable document id %r", raw)
+        metrics.jobs_total.labels(outcome="malformed").inc()
         await msg.term()
         return
 
@@ -395,7 +511,9 @@ async def _handle_message(msg: Msg) -> None:
             "messaging.delivery_attempt": msg.metadata.num_delivered,
         },
     ) as span:
-        terminal = await process_document(document_id)
+        attempt = msg.metadata.num_delivered
+        metrics.delivery_attempts.observe(attempt)
+        terminal = await process_document(document_id, delivery_attempt=attempt)
         span.set_attribute("ingest.terminal", terminal)
     if terminal:
         await msg.ack()
@@ -439,9 +557,11 @@ async def consume_forever() -> None:
         logger.info("ingestion-worker: subscribed, waiting for jobs")
         STATUS.running = True
         STATUS.started_at = _utcnow()
+        metrics.consumer_running.set(1)
 
         while True:
             STATUS.last_poll_at = _utcnow()
+            metrics.last_poll_timestamp_seconds.set(STATUS.last_poll_at.timestamp())
             try:
                 msgs = await psub.fetch(FETCH_BATCH_SIZE, timeout=FETCH_TIMEOUT_SECONDS)
             except NatsTimeoutError:
@@ -467,3 +587,4 @@ async def consume_forever() -> None:
         raise
     finally:
         STATUS.running = False
+        metrics.consumer_running.set(0)

@@ -12,6 +12,10 @@ dependencies = [
     "jinja2>=3.1.6",
     "httpx>=0.28.1",
     "qdrant-client>=1.18.0",
+    # #164: the /metrics scrape surface (app/metrics.py). Declared here like
+    # the other three services do -- without it the image builds fine and
+    # then the container exits on `import prometheus_client` at startup.
+    "prometheus-client>=0.20",
     "nexus-rag-common",
 ]
 

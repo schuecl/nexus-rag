@@ -55,4 +55,10 @@ async def publish_ingestion_job(js: JetStreamContext, document_id: str) -> None:
     # an upgrade are untouched. JetStream stores headers with the message, so
     # a redelivery carries the same context. headers is None when tracing is
     # disabled, which is the byte-identical pre-#134 wire shape.
-    await js.publish(INGESTION_SUBJECT, document_id.encode(), headers=inject_trace_context())
+    headers = dict(inject_trace_context() or {})
+    # JetStream de-duplicates this id inside the stream's duplicate window.
+    # That covers the ambiguous-ack case where the server persisted a publish
+    # but the API lost the acknowledgement and its reconciler retries. The
+    # worker independently guards duplicate delivery beyond that window.
+    headers["Nats-Msg-Id"] = document_id
+    await js.publish(INGESTION_SUBJECT, document_id.encode(), headers=headers)
