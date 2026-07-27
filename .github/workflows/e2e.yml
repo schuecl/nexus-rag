@@ -22,12 +22,17 @@ on:
       - "docker-compose.yml"
       - ".github/workflows/e2e.yml"
 
+# Read-only token: this workflow only builds/runs the stack and uploads
+# artifacts, neither of which needs write scopes (#112).
+permissions:
+  contents: read
+
 jobs:
   golden-query:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Generate the dev TLS material Keycloak's HTTPS listener needs
         # #98 gave Keycloak a real HTTPS listener
         # (KC_HTTPS_CERTIFICATE_FILE -> /opt/keycloak/certs/dev.crt, mounted
@@ -105,7 +110,7 @@ jobs:
           docker compose --profile eval run --rm eval-retrieval | tee retrieval-eval.txt
       - name: Upload evaluation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: retrieval-eval-report
           path: retrieval-eval.txt
@@ -125,8 +130,8 @@ jobs:
     continue-on-error: true
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -155,7 +160,7 @@ jobs:
       - name: Export HTML report
         if: always()
         run: cd services/common && mutmut html || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         if: always()
         with:
           name: mutation-report

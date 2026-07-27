@@ -9,12 +9,19 @@ on:
     - cron: "43 4 * * 1"
   workflow_dispatch:
 
+# Default to read-only. Only trivy-fs escalates (security-events: write, at
+# the job level) to publish SARIF to the Security tab; nothing else needs
+# more than repo read (#112).
+permissions:
+  contents: read
+
 jobs:
   bandit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - run: pip install bandit==1.9.4
@@ -27,9 +34,10 @@ jobs:
 
   pip-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -59,9 +67,10 @@ jobs:
 
   helm:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
       - name: helm lint
         run: helm lint helm/nexus-rag
       - name: helm template renders
@@ -74,33 +83,143 @@ jobs:
 
   trivy-fs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Read the repo, and write code scanning results. This is the only job in
+    # the file that needs more than `contents: read` -- it uploads SARIF so
+    # filesystem findings land in the Security tab, not just the run log.
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@v0.36.0
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # One scan, two outcomes: trivy writes the SARIF report first, then
+      # applies exit-code, so a HIGH/CRITICAL both fails the gate here AND
+      # leaves a report for the upload below (which runs on always()).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          format: sarif
+          output: trivy-fs.sarif
           exit-code: 1
+      - name: Upload Trivy filesystem SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@662472033e021d55d94146f66f6058822b0b39fd # v3.27.0
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
 
   trivy-image:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Build service images
         run: >
           docker compose build
           ingestion-api ingestion-worker orchestration-mcp reranker-service
-      - name: Scan images (HIGH/CRITICAL)
-        run: |
-          for image in \
-            nexus-rag-ingestion-api \
-            nexus-rag-ingestion-worker \
-            nexus-rag-orchestration-mcp \
-            nexus-rag-reranker-service; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-              aquasec/trivy:latest image \
-              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
-          done
+      # Scan each built image with the same SHA-pinned trivy-action the
+      # filesystem scan uses, instead of `docker run aquasec/trivy:latest`.
+      # That `:latest` was a floating tag (the very thing pin-check/NFR-16
+      # forbids in the shipped images); reusing the action keeps trivy on one
+      # pinned supply-chain surface and drops the docker-socket mount.
+      - name: Scan ingestion-api image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-ingestion-api
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan ingestion-worker image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-ingestion-worker
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan orchestration-mcp image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-orchestration-mcp
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan reranker-service image (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: nexus-rag-reranker-service
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
+  secret-scan:
+    # Catch committed credentials before they reach main. gitleaks scans the
+    # working tree on push/schedule; on a PR it needs full history so it can
+    # diff the PR's commits (fetch-depth: 0). Fails the job on any finding.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          # No org licence required for a public repo; this keeps the action
+          # from probing for one. GITHUB_TOKEN lets it annotate the PR.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sbom:
+    # Generate a CycloneDX SBOM per shipped image and keep it as a build
+    # artifact, so what actually went into each image is auditable after the
+    # fact. Non-PR only: it builds every image first (like trivy-image).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service
+      - run: mkdir -p sbom
+      - name: SBOM for ingestion-api
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          image: nexus-rag-ingestion-api
+          format: cyclonedx-json
+          output-file: sbom/ingestion-api.cdx.json
+          upload-artifact: false
+      - name: SBOM for ingestion-worker
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          image: nexus-rag-ingestion-worker
+          format: cyclonedx-json
+          output-file: sbom/ingestion-worker.cdx.json
+          upload-artifact: false
+      - name: SBOM for orchestration-mcp
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          image: nexus-rag-orchestration-mcp
+          format: cyclonedx-json
+          output-file: sbom/orchestration-mcp.cdx.json
+          upload-artifact: false
+      - name: SBOM for reranker-service
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          image: nexus-rag-reranker-service
+          format: cyclonedx-json
+          output-file: sbom/reranker-service.cdx.json
+          upload-artifact: false
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
