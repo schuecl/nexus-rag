@@ -60,8 +60,13 @@ from common.qdrant_store import (
     get_qdrant_client,
 )
 from common.sparse_embedding import embed_sparse
+from common.tracing import get_tracer
 
 logger = logging.getLogger("orchestration-mcp")
+
+# #134: spans carry counts/limits/flags only -- never query text or chunk
+# text (see common/tracing.py's constraint note).
+tracer = get_tracer("orchestration-mcp")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
@@ -236,6 +241,29 @@ async def run_rag_search(
     *,
     content_type_boosts: dict[str, float] | None = None,
 ) -> dict:
+    """#134: the root span of the retrieval trace; the stage spans
+    (embed.query / qdrant.query / rerank) inside _run_rag_search nest under
+    it. A thin wrapper rather than a decorator so the result's shape can be
+    summarized onto the span (counts only -- never the query text)."""
+    with tracer.start_as_current_span(
+        "rag_search", attributes={"rag.top_k": top_k}
+    ) as span:
+        result = await _run_rag_search(
+            bearer_token, query, top_k, content_type_boosts=content_type_boosts
+        )
+        span.set_attribute("rag.results", len(result.get("results", [])))
+        if "error" in result:
+            span.set_attribute("rag.error", True)
+        return result
+
+
+async def _run_rag_search(
+    bearer_token: str,
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    *,
+    content_type_boosts: dict[str, float] | None = None,
+) -> dict:
     """content_type_boosts (issue #89): optional {content_type: multiplier}
     preference hint -- e.g. {"table": 1.2} to prefer table chunks for a query
     that's plausibly asking about tabular data. Applied to cross-encoder
@@ -294,29 +322,39 @@ async def run_rag_search(
     timings: dict[str, float] = {}
 
     try:
-        dense_vector = await _embed_query(query)
-        sparse_vector = embed_sparse([query])[0]
+        # #134: named stage spans at the same boundaries #72's timings
+        # measure, so a slow query attributes to a leg instead of being four
+        # loose numbers. Attributes are counts/limits only -- never the query
+        # text (the same rule #125 applies to the audit log and #72 to
+        # metric labels; see common/tracing.py).
+        with tracer.start_as_current_span("embed.query"):
+            dense_vector = await _embed_query(query)
+            sparse_vector = embed_sparse([query])[0]
         timings["embed"] = perf_counter() - started
         retrieval_started = perf_counter()
-        hits = get_qdrant_client().query_points(
-            collection_name=QDRANT_COLLECTION,
-            prefetch=[
-                Prefetch(
-                    query=dense_vector,
-                    using=DENSE_VECTOR,
-                    filter=access_filter,
-                    limit=hybrid_limit,
-                ),
-                Prefetch(
-                    query=sparse_vector,
-                    using=SPARSE_VECTOR,
-                    filter=access_filter,
-                    limit=hybrid_limit,
-                ),
-            ],
-            query=FusionQuery(fusion=Fusion.RRF),
-            limit=hybrid_limit,
-        ).points
+        with tracer.start_as_current_span(
+            "qdrant.query", attributes={"qdrant.prefetch_limit": hybrid_limit}
+        ) as qdrant_span:
+            hits = get_qdrant_client().query_points(
+                collection_name=QDRANT_COLLECTION,
+                prefetch=[
+                    Prefetch(
+                        query=dense_vector,
+                        using=DENSE_VECTOR,
+                        filter=access_filter,
+                        limit=hybrid_limit,
+                    ),
+                    Prefetch(
+                        query=sparse_vector,
+                        using=SPARSE_VECTOR,
+                        filter=access_filter,
+                        limit=hybrid_limit,
+                    ),
+                ],
+                query=FusionQuery(fusion=Fusion.RRF),
+                limit=hybrid_limit,
+            ).points
+            qdrant_span.set_attribute("qdrant.candidates", len(hits))
         timings["retrieve"] = perf_counter() - retrieval_started
     except (UnexpectedResponse, httpx.HTTPError) as exc:
         result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
@@ -369,9 +407,15 @@ async def run_rag_search(
 
     candidates = [{"id": str(h.id), "score": h.score, "payload": h.payload} for h in hits]
     rerank_started = perf_counter()
-    reranked, rerank_note = await rerank(
-        query, candidates, top_k, content_type_boosts=content_type_boosts
-    )
+    # #134: the httpx instrumentation propagates this span's context to
+    # reranker-service, whose own spans (FastAPI request + model.predict)
+    # nest under it -- the reranker's internal time stops being opaque.
+    with tracer.start_as_current_span(
+        "rerank", attributes={"rerank.candidates": len(candidates), "rerank.top_k": top_k}
+    ):
+        reranked, rerank_note = await rerank(
+            query, candidates, top_k, content_type_boosts=content_type_boosts
+        )
     timings["rerank"] = perf_counter() - rerank_started
     result["reranking"] = rerank_note
     # FR-25 degrades to fused order rather than failing when reranker-service

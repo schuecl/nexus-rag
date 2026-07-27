@@ -36,9 +36,14 @@ from common.metadata import DocumentMetadataIn, MetadataValidationError, validat
 from common.models import AuditLogEntry, Document
 from common.object_store import document_object_key, get_object_store
 from common.purge import PurgeError, purge_document
+from common.tracing import get_tracer
 from common.versioning import SupersedeValidationError, validate_supersede_target
 
 router = APIRouter(prefix="/documents", tags=["ingestion"])
+
+# #134: spans carry ids, counts, and byte sizes only -- never file content or
+# filenames (the purge path treats filenames as content; see common/purge.py).
+tracer = get_tracer("ingestion-api")
 
 # FR-9/NFR-7: "a configurable size limit" -- was a hardcoded constant despite
 # the comment's own claim; now actually reads from the environment, default
@@ -205,7 +210,15 @@ async def submit_document(
     # drives doc.status through processing -> embedded -> pending_review (or
     # failed). request.app.state.jetstream is set up once at startup
     # (app/main.py's lifespan), not reconnected per request.
-    await publish_ingestion_job(request.app.state.jetstream, str(doc.id))
+    #
+    # #134: publish inside a named ingest.submit span so the traceparent
+    # riding the NATS message headers points here, and ingestion-worker's
+    # ingest.process span continues this trace across the queue.
+    with tracer.start_as_current_span(
+        "ingest.submit",
+        attributes={"document.id": str(doc.id), "document.bytes": len(contents)},
+    ):
+        await publish_ingestion_job(request.app.state.jetstream, str(doc.id))
     return doc
 
 

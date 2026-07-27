@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "Shared claims parsing, metadata schema, Qdrant filter building, and DB models for nexus-rag services"
 requires-python = ">=3.11"
 dependencies = [
+    # #134: distributed tracing (common/tracing.py); the exporter only
+    # activates when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
     "pydantic>=2.7",
     "PyJWT>=2.8",
     "cryptography>=42.0",

@@ -10,6 +10,13 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder
 
@@ -23,6 +30,33 @@ logging.basicConfig(
     level=_level if _level in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} else "INFO",
     format="%(asctime)s %(levelname)s [reranker-service] %(name)s: %(message)s",
 )
+
+
+def _setup_tracing() -> None:
+    """#134: minimal inline equivalent of common/tracing.py's setup (this
+    service doesn't depend on services/common). Same standard env vars, same
+    posture: disabled unless OTEL_EXPORTER_OTLP_ENDPOINT is set, ParentBased
+    sampling so this service simply follows orchestration-mcp's per-request
+    decision -- the incoming rerank span is what makes the cross-encoder's
+    time visible instead of opaque (#134's stated goal for this hop)."""
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip():
+        return
+    try:
+        ratio = float(os.environ.get("OTEL_TRACES_SAMPLER_ARG", "0.05"))
+    except ValueError:
+        ratio = 0.05
+    provider = TracerProvider(
+        resource=Resource.create(
+            {"service.name": os.environ.get("OTEL_SERVICE_NAME", "nexus-rag-reranker-service")}
+        ),
+        sampler=ParentBased(TraceIdRatioBased(min(max(ratio, 0.0), 1.0))),
+    )
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+
+
+_setup_tracing()
+tracer = trace.get_tracer("reranker-service")
 
 MODEL_NAME = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
 
@@ -53,6 +87,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="nexus-rag reranker-service", lifespan=lifespan)
+# #134: request spans that honor the traceparent orchestration-mcp's httpx
+# instrumentation sends, so this service's spans nest under the caller's
+# `rerank` span.
+FastAPIInstrumentor.instrument_app(app)
 
 
 @app.get("/health")
@@ -87,7 +125,12 @@ def rerank(body: RerankRequest):
             f"batch of {len(body.chunks)} chunks exceeds the {MAX_RERANK_CHUNKS}-chunk limit",
         )
     pairs = [(body.query, chunk.text) for chunk in body.chunks]
-    scores = _model.predict(pairs)
+    # #134: the CPU-bound stage this service exists for, as its own span --
+    # batch size only, never query/chunk text (common/tracing.py's rule).
+    with tracer.start_as_current_span(
+        "model.predict", attributes={"rerank.pairs": len(pairs)}
+    ):
+        scores = _model.predict(pairs)
     ranked = sorted(
         zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True
     )

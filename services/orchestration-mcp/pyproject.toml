@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Claims-filtered retrieval MCP server exposed to LibreChat (FR-24..FR-29)"
 requires-python = ">=3.11"
 dependencies = [
+    # #134: Ollama + reranker hops as child spans, with context
+    # propagation to reranker-service (app/server.py).
+    "opentelemetry-instrumentation-httpx>=0.51b0",
     "mcp>=1.6",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",

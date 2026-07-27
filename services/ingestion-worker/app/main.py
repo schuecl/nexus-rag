@@ -28,17 +28,26 @@ from fastapi.responses import JSONResponse
 # whichever instance existed at import time. Production only ever mutates it
 # in place so either form would work there, but the indirection keeps the two
 # modules from disagreeing about which object is current.
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
 from app import processing
 from app.processing import consume_forever
 from common.db import init_db
 from common.logging_setup import setup_logging
 from common.siem import enable_siem_export
+from common.tracing import setup_tracing
 
 # #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
 # SIEM export of the audit events the pipeline writes (document.embedded,
 # document.failed, ...).
 setup_logging("ingestion-worker")
 enable_siem_export("ingestion-worker")
+# #134: the ingest.process span tree (processing.py), joined to
+# ingestion-api's ingest.submit via NATS message headers. httpx
+# instrumentation adds the Ollama embedding call as a child span. Disabled
+# (no-op spans) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_tracing("ingestion-worker")
+HTTPXClientInstrumentor().instrument()
 
 
 def _log_consumer_exit(task: asyncio.Task) -> None:

@@ -553,6 +553,25 @@ the docs, not a silent "it works" — flag it if you find one.
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.
+- **Distributed tracing across the queue and the retrieval fan-out
+  (issue #134)** — every service emits OpenTelemetry spans when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` points at an OTLP/HTTP collector
+  (otel-collector, Tempo, ...); unset, tracing is a no-op. The deliberate
+  piece is the queue boundary: `ingest.submit` (ingestion-api) and
+  `ingest.process` (ingestion-worker, with parse/chunk/embed/qdrant.upsert
+  children) form one trace because the W3C traceparent rides in the NATS
+  *message headers* — the body stays a bare document id, so the #109
+  malformed-payload guard and in-flight messages are untouched, and
+  JetStream redelivery carries the same context (validated against a real
+  NATS: nak → redelivery, headers byte-identical). Retrieval traces as
+  `rag_search` → embed.query / qdrant.query / rerank, with the context
+  propagating over httpx into reranker-service, whose request +
+  `model.predict` spans nest under the caller's — the cross-encoder's time
+  is no longer opaque. Span attributes are ids/counts/sizes only, never
+  query or chunk text (#125's rule), and head sampling defaults to 5%
+  (`OTEL_TRACES_SAMPLER_ARG`; ParentBased, so one decision covers a whole
+  request tree). Helm: `observability.tracing.*`. Unit-tested with a real
+  in-memory TracerProvider; not yet validated against a live Tempo.
 - **SIEM export of audit events, and level-configurable structured logging
   (NFR-2, issue #73)** — every `audit_log` row (FR-31 funnels each ingestion,
   curation, retrieval, and purge event from every service through that one

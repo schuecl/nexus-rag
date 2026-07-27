@@ -16,6 +16,7 @@ from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, ReleasabilityValue
 from common.siem import enable_siem_export
+from common.tracing import setup_tracing
 
 # #73: level-configurable structured logging (LOG_LEVEL/LOG_FORMAT), and NFR-2
 # SIEM export of every audit event this service writes (upload, curation,
@@ -23,6 +24,11 @@ from common.siem import enable_siem_export
 # is already formatted and filtered.
 setup_logging("ingestion-api")
 enable_siem_export("ingestion-api")
+# #134: request spans (FastAPI auto-instrumentation, applied to the app after
+# it is created below) plus the manual ingest.submit span in routes/upload.py
+# whose context rides the NATS headers to ingestion-worker. Disabled unless
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_tracing("ingestion-api")
 
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),
@@ -67,6 +73,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
+# #134: one request span per route, with incoming traceparent honored; the
+# import lives here rather than at the top so the app object exists first.
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
+
+FastAPIInstrumentor.instrument_app(app)
 templates = Jinja2Templates(directory="app/templates")
 
 app.include_router(auth.router)

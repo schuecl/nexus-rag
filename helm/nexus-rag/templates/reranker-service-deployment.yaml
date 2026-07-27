@@ -39,6 +39,12 @@ spec:
             # #73: log verbosity, matching the other custom services.
             - name: LOG_LEVEL
               value: {{ .Values.observability.logLevel | quote }}
+            {{- if .Values.observability.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.tracing.samplerRatio | quote }}
+            {{- end }}
             - name: RERANKER_MODEL
               value: {{ .Values.rerankerService.model | quote }}
           volumeMounts:

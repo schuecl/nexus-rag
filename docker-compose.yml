@@ -198,6 +198,11 @@ services:
     environment:
       # #73: log verbosity, matching the other custom services.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
     volumes:
       - reranker-cache:/srv/.cache/huggingface
     ports:
@@ -223,6 +228,11 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -300,6 +310,11 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -349,6 +364,11 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}

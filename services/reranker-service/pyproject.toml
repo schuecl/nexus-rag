@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "Cross-encoder reranking pass over hybrid retrieval candidates (FR-25)"
 requires-python = ">=3.11"
 dependencies = [
+    # #134: inline tracing setup + request spans (see app/main.py).
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sentence-transformers>=3.0",

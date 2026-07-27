@@ -32,6 +32,14 @@ observability:
   # (DEBUG|INFO|WARNING|ERROR|CRITICAL, and text|json).
   logLevel: INFO
   logFormat: text
+  # #134: distributed tracing. Disabled while otlpEndpoint is empty; point it
+  # at the environment's OTLP/HTTP collector (otel-collector, Tempo, ...).
+  # samplerRatio is head sampling 0..1 -- keep it low in production (the
+  # retrieval path is latency-sensitive and NFR-4 has no budget yet);
+  # ParentBased propagation means one decision covers a whole request tree.
+  tracing:
+    otlpEndpoint: ""
+    samplerRatio: "0.05"
   # NFR-2: forward every audit event as RFC 5424 syslog to the environment's
   # existing SIEM collector. Leave syslogHost empty to disable the export.
   # In-cluster this is typically a syslog forwarder Service/sidecar the

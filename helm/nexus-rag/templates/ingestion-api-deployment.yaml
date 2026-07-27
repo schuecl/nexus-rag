@@ -56,6 +56,12 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
+            {{- if .Values.observability.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.tracing.samplerRatio | quote }}
+            {{- end }}
             {{- if .Values.observability.siem.syslogHost }}
             - name: SIEM_SYSLOG_HOST
               value: {{ .Values.observability.siem.syslogHost | quote }}

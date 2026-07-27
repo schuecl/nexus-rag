@@ -111,7 +111,9 @@ jobs:
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
             "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \
-            "fastapi>=0.115" "httpx>=0.27" "python-multipart>=0.0.9" "jinja2>=3.1"
+            "fastapi>=0.115" "httpx>=0.27" "python-multipart>=0.0.9" "jinja2>=3.1" \
+            "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30" \
+            "opentelemetry-instrumentation-fastapi>=0.51b0" "opentelemetry-instrumentation-httpx>=0.51b0"
           # ingestion-worker's parsers; harmless (and cached) for the others.
           pip install "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
             "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
@@ -147,7 +149,8 @@ jobs:
           pip install mypy==2.3.0
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \
+            "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30"
       - name: mypy on services/common (enforced)
         run: mypy services/common/common
 
