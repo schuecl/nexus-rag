@@ -95,7 +95,7 @@ MAX_TOP_K = 50
 DEFAULT_TOP_K = 5
 
 
-def _audit_query_detail(query: str, **extra) -> dict:
+def _audit_query_detail(query: str, **extra: object) -> dict:
     """The FR-31 detail payload for a retrieval attempt.
 
     Issue #125: deliberately does NOT carry the query text. FR-31 exists to

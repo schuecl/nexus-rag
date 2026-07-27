@@ -27,3 +27,23 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.mypy]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# Issue #79: third app service promoted from types-apps (report-only) to
+# the enforced `types` job in ci.yml. Scoped to app.* (not the whole config)
+# because MYPYPATH=../common pulls services/common into this run too, and
+# that package has its own separately-enforced (and currently looser) mypy
+# settings -- this must not tighten them as a side effect.
+module = ["app.*"]
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# common is already its own separately-enforced gate (`mypy services/common/
+# common` in ci.yml's `types` job). follow_imports=silent still uses its real
+# signatures to check app.* call sites, but stops this job from re-reporting
+# common's own findings under different settings here.
+module = ["common.*"]
+follow_imports = "silent"
