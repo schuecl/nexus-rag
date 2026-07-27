@@ -9,7 +9,7 @@ pytest==8.4.2
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-bdd==8.1.0
-respx==0.22.0
+respx==0.23.1
 httpx==0.28.1
 beautifulsoup4==4.13.4
 # ingestion-worker parser dependencies exercised by tests/unit/ingestion_worker
