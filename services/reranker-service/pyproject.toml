@@ -20,3 +20,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.mypy]
+# Issue #79: first app service promoted from types-apps (report-only) to the
+# enforced `types` job in ci.yml.
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# sentence-transformers ships no stubs; fastapi/pydantic/opentelemetry do and
+# stay fully checked.
+module = ["sentence_transformers.*"]
+ignore_missing_imports = true

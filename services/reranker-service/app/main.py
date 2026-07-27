@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
@@ -76,7 +77,7 @@ _model: CrossEncoder | None = None
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # The module-level singleton is deliberate: the model is loaded once at
     # startup and read by both /health and /rerank, neither of which takes a
     # Request, so app.state isn't reachable from them without changing both
@@ -94,7 +95,7 @@ FastAPIInstrumentor.instrument_app(app)
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str | bool]:
     return {"status": "ok", "model": MODEL_NAME, "loaded": _model is not None}
 
 
@@ -114,7 +115,7 @@ class RerankedChunk(BaseModel):
 
 
 @app.post("/rerank", response_model=list[RerankedChunk])
-def rerank(body: RerankRequest):
+def rerank(body: RerankRequest) -> list[RerankedChunk]:
     if _model is None:
         raise RuntimeError("model not loaded")
     if not body.chunks:
