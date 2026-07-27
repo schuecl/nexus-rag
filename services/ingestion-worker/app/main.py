@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -65,7 +66,7 @@ def _log_consumer_exit(task: asyncio.Task) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()  # idempotent -- ingestion-api already does this too (common/db.py)
     consumer_task = asyncio.create_task(consume_forever())
     consumer_task.add_done_callback(_log_consumer_exit)
@@ -78,8 +79,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="nexus-rag ingestion-worker", lifespan=lifespan)
 
 
-@app.get("/health")
-def health():
+@app.get("/health", response_model=None)
+def health() -> JSONResponse | Mapping[str, object]:
     """503 whenever the consumer isn't running, so a k8s liveness probe
     restarts the pod and a readiness probe takes it out of service instead of
     both reporting a worker that stopped working. The body carries the

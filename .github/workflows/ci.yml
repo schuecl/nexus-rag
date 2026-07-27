@@ -159,14 +159,22 @@ jobs:
             "opentelemetry-instrumentation-fastapi>=0.51b0"
       - name: mypy on reranker-service (enforced, issue #79)
         run: cd services/reranker-service && mypy app
+      - name: Install ingestion-worker dependencies
+        run: |
+          pip install "fastapi>=0.115" "httpx>=0.27" \
+            "opentelemetry-instrumentation-httpx>=0.51b0" \
+            "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
+            "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
+      - name: mypy on ingestion-worker (enforced, issue #79)
+        run: cd services/ingestion-worker && MYPYPATH=../common mypy app
 
   types-apps:
     # The remaining app services predate the type gate; keep their mypy
     # output visible but non-blocking until their annotations are tightened.
     # Kept separate from the enforced gates above, and exits 0 by design so
     # the report stays in the logs without putting a red X on every PR.
-    # reranker-service graduated to the enforced `types` job above (#79);
-    # ingestion-api, ingestion-worker, and orchestration-mcp are next.
+    # reranker-service and ingestion-worker graduated to the enforced `types`
+    # job above (#79); ingestion-api and orchestration-mcp are next.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -184,7 +192,7 @@ jobs:
       - name: mypy on the remaining app services (report-only)
         run: |
           status=0
-          for svc in ingestion-api ingestion-worker orchestration-mcp; do
+          for svc in ingestion-api orchestration-mcp; do
             (cd "services/$svc" && MYPYPATH=../common mypy app) || status=1
           done
           if [ "$status" -ne 0 ]; then

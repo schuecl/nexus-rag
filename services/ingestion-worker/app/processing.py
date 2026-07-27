@@ -20,6 +20,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from nats.aio.msg import Msg
 from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.api import ConsumerConfig
 from qdrant_client.models import PointStruct
@@ -134,6 +135,13 @@ async def process_document(document_id: uuid.UUID) -> bool:
         session.commit()
 
         try:
+            if doc.original_object_key is None:
+                # A document can be purged (common/purge.py) while still
+                # queued/processing -- original_object_key is cleared as part
+                # of that. Same permanent-failure handling as a missing
+                # object-store key below: retrying can't produce a key that
+                # was deliberately destroyed.
+                raise FileNotFoundError("original_object_key is unset (document was purged)")
             contents = get_object_store().get(doc.original_object_key)
             # #134's ingest.process stage spans: attribute values are counts
             # and byte sizes only, never the text they describe.
@@ -302,7 +310,7 @@ def _mark_undeliverable(document_id: uuid.UUID, attempts: int) -> None:
         )
 
 
-async def _handle_message(msg) -> None:
+async def _handle_message(msg: Msg) -> None:
     """One message, start to finish. Every failure mode here is contained:
     nothing raised while handling a single message may unwind consume_forever
     and take the whole consumer down with it."""

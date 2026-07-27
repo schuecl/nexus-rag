@@ -63,6 +63,7 @@ done
 ruff check services scripts tests       # lint gate
 mypy services/common/common             # type gate (enforced scope)
 (cd services/reranker-service && mypy app)  # type gate (enforced, issue #79)
+(cd services/ingestion-worker && MYPYPATH=../common mypy app)  # ditto
 python scripts/check_pinned_images.py   # NFR-16 floating-tag gate
 bandit -r services scripts              # security static analysis
 helm lint helm/nexus-rag                # chart gate
@@ -77,9 +78,9 @@ docker compose --profile eval run --rm eval-retrieval
 - **`.github/workflows/ci.yml`** (PR + push to main): unit + BDD on Python
   3.11/3.12 with an enforced **≥85% line+branch coverage** floor (scope
   below), `ruff check`, `mypy` (enforced on `services/common` and, as of
-  issue #79, `reranker-service`; report-only on the remaining three app
-  services until their annotations catch up), the NFR-16 image-pin check,
-  and a full `docker compose build` of all custom images.
+  issue #79, `reranker-service` and `ingestion-worker`; report-only on the
+  remaining two app services until their annotations catch up), the NFR-16
+  image-pin check, and a full `docker compose build` of all custom images.
 - **`.github/workflows/e2e.yml`** (nightly, manual, and PRs touching
   `services/`, `scripts/`, `infra/`, `docker-compose.yml`): full-stack
   golden-query e2e; mutation testing (advisory, see below). Reports uploaded
@@ -177,8 +178,8 @@ baseline, on any of:
   append-only audit enforcement are only covered live/manually today).
 - `ruff format --check` is not enforced; adopting it would reformat most of
   the repo in one pass and was kept out of the initial CI change.
-- mypy enforcement is scoped to `services/common` and `reranker-service`
-  (issue #79); `ingestion-api`, `ingestion-worker`, and `orchestration-mcp`
-  still run report-only (`types-apps`), smallest next.
+- mypy enforcement is scoped to `services/common`, `reranker-service`, and
+  `ingestion-worker` (issue #79); `ingestion-api` and `orchestration-mcp`
+  still run report-only (`types-apps`), smallest (`orchestration-mcp`) next.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
