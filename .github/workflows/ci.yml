@@ -46,13 +46,15 @@ jobs:
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
             "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
       # The repo-root tree covers services/common (which has no service
-      # directory of its own) plus the cross-cutting BDD scenarios. Per-service
-      # unit tests live next to their service and run in the service-tests job
-      # below -- see issue #113 and docs/testing.md for why they aren't merged
-      # into one invocation.
+      # directory of its own), the cross-cutting BDD scenarios, and the
+      # standalone scripts (e.g. the retrieval-eval trend/baseline logic,
+      # issue #71). Per-service unit tests live next to their service and run in
+      # the service-tests job below -- see issue #113 and docs/testing.md for
+      # why they aren't merged into one invocation. The coverage gate stays
+      # scoped to `common`; the script tests run but don't count toward it.
       - name: Unit tests + BDD security scenarios (services/common)
         run: >
-          pytest tests/unit/common tests/e2e
+          pytest tests/unit tests/e2e
           --cov=common --cov-branch --cov-fail-under=85
           --cov-report=xml:coverage-common.xml --cov-report=term-missing -q
       - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
@@ -109,7 +111,9 @@ jobs:
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
             "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \
-            "fastapi>=0.115" "httpx>=0.27" "python-multipart>=0.0.9" "jinja2>=3.1"
+            "fastapi>=0.115" "httpx>=0.27" "python-multipart>=0.0.9" "jinja2>=3.1" \
+            "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30" \
+            "opentelemetry-instrumentation-fastapi>=0.51b0" "opentelemetry-instrumentation-httpx>=0.51b0"
           # ingestion-worker's parsers; harmless (and cached) for the others.
           pip install "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
             "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
@@ -130,6 +134,8 @@ jobs:
       - run: pip install ruff==0.16.0
       - name: ruff check
         run: ruff check --output-format=github services scripts tests
+      - name: ruff format --check
+        run: ruff format --check services scripts tests
 
   types:
     runs-on: ubuntu-latest
@@ -145,39 +151,36 @@ jobs:
           pip install mypy==2.3.0
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34" \
+            "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30"
       - name: mypy on services/common (enforced)
         run: mypy services/common/common
-
-  types-apps:
-    # The app services predate the type gate; keep their mypy output visible
-    # but non-blocking until their annotations are tightened. Kept separate
-    # from the enforced services/common gate, and exits 0 by design so the
-    # report stays in the logs without putting a red X on every PR.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install mypy and services/common dependencies
+      - name: Install reranker-service dependencies
         run: |
-          pip install mypy==2.3.0
-          pip install --no-deps -e services/common
-          pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
-      - name: mypy on the four app services (report-only)
+          pip install "fastapi>=0.115" \
+            "opentelemetry-instrumentation-fastapi>=0.51b0"
+      - name: mypy on reranker-service (enforced, issue #79)
+        run: cd services/reranker-service && mypy app
+      - name: Install ingestion-worker dependencies
         run: |
-          status=0
-          for svc in ingestion-api ingestion-worker orchestration-mcp reranker-service; do
-            (cd "services/$svc" && MYPYPATH=../common mypy app) || status=1
-          done
-          if [ "$status" -ne 0 ]; then
-            echo "::notice::app-service mypy findings (report-only; see docs/testing.md)"
-          fi
-          exit 0
+          pip install "fastapi>=0.115" "httpx>=0.27" \
+            "opentelemetry-instrumentation-httpx>=0.51b0" \
+            "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
+            "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
+      - name: mypy on ingestion-worker (enforced, issue #79)
+        run: cd services/ingestion-worker && MYPYPATH=../common mypy app
+      - name: Install orchestration-mcp dependencies
+        run: |
+          pip install "mcp>=1.6" "httpx>=0.27" "prometheus-client>=0.20" \
+            "opentelemetry-instrumentation-httpx>=0.51b0"
+      - name: mypy on orchestration-mcp (enforced, issue #79)
+        run: cd services/orchestration-mcp && MYPYPATH=../common mypy app
+      - name: Install ingestion-api dependencies
+        run: |
+          pip install "fastapi>=0.115" "httpx>=0.27" "jinja2>=3.1" \
+            "python-multipart>=0.0.9" "opentelemetry-instrumentation-fastapi>=0.51b0"
+      - name: mypy on ingestion-api (enforced, issue #79)
+        run: cd services/ingestion-api && MYPYPATH=../common mypy app
 
   pin-check:
     runs-on: ubuntu-latest

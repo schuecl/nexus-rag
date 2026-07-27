@@ -195,6 +195,14 @@ services:
     build:
       context: .
       dockerfile: services/reranker-service/Dockerfile
+    environment:
+      # #73: log verbosity, matching the other custom services.
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
     volumes:
       - reranker-cache:/srv/.cache/huggingface
     ports:
@@ -212,6 +220,19 @@ services:
       context: .
       dockerfile: services/ingestion-api/Dockerfile
     environment:
+      # #73: process-log verbosity/format, and NFR-2 SIEM export -- leaving
+      # SIEM_SYSLOG_HOST unset keeps the export disabled (dev default).
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      SIEM_SYSLOG_HOST: ${SIEM_SYSLOG_HOST:-}
+      SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
+      SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
+      SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -281,6 +302,19 @@ services:
       context: .
       dockerfile: services/ingestion-worker/Dockerfile
     environment:
+      # #73: process-log verbosity/format, and NFR-2 SIEM export -- leaving
+      # SIEM_SYSLOG_HOST unset keeps the export disabled (dev default).
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      SIEM_SYSLOG_HOST: ${SIEM_SYSLOG_HOST:-}
+      SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
+      SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
+      SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -322,6 +356,19 @@ services:
       context: .
       dockerfile: services/orchestration-mcp/Dockerfile
     environment:
+      # #73: process-log verbosity/format, and NFR-2 SIEM export -- leaving
+      # SIEM_SYSLOG_HOST unset keeps the export disabled (dev default).
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      SIEM_SYSLOG_HOST: ${SIEM_SYSLOG_HOST:-}
+      SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
+      SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
+      SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #134: distributed tracing -- disabled unless an OTLP endpoint is set
+      # (e.g. a Tempo/otel-collector on the compose network). Dev default
+      # samples everything when enabled; production should stay low.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -363,6 +410,45 @@ services:
         condition: service_started
       reranker-service:
         condition: service_healthy
+
+  syslog-collector:
+    # #73/NFR-2 validation only: a stand-in SIEM that prints every syslog
+    # message it receives to stdout, tagged [udp]/[tcp]/[tls], so the export
+    # path can be watched end to end. Opt-in via the siem-debug profile --
+    # production points SIEM_SYSLOG_HOST at the environment's real collector
+    # (any IP/port/protocol, TLS certificates via SIEM_SYSLOG_CA_CERT /
+    # _CLIENT_CERT / _CLIENT_KEY) and never runs this.
+    #
+    #   docker compose --profile siem-debug up -d syslog-collector
+    #   SIEM_SYSLOG_HOST=syslog-collector docker compose up -d
+    #   docker compose logs -f syslog-collector
+    #
+    # TLS (RFC 5425, port 6514) activates automatically when infra/certs has
+    # been generated (generate-dev-certs.sh -- same certs Keycloak uses).
+    profiles: ["siem-debug"]
+    image: python:3.11-slim
+    command: ["python3", "/collector.py"]
+    environment:
+      # All-interfaces by default, scoped to this container's own network
+      # namespace: the services reach it over the compose network, and what
+      # leaves the host is governed by the port bindings below. Overridable
+      # like everything else (the script itself defaults to 127.0.0.1 when
+      # run outside a container).
+      BIND_HOST: ${SIEM_DEBUG_BIND_HOST:-0.0.0.0}
+    volumes:
+      - ./infra/syslog-collector/collector.py:/collector.py:ro
+      # Certs for the TLS listener; point elsewhere to test against different
+      # material (the script's TLS_CERT/TLS_KEY env picks them up at /certs).
+      - ${SIEM_DEBUG_CERTS_DIR:-./infra/certs}:/certs:ro
+    ports:
+      # Published on the host's loopback by default: this debug collector
+      # prints every audit event it receives, so it should not be reachable
+      # from the LAN unless that is an explicit choice -- override
+      # SIEM_DEBUG_HOST_IP (e.g. 0.0.0.0) to expose it deliberately. Host
+      # ports are overridable too if 5514/6514 are taken.
+      - "${SIEM_DEBUG_HOST_IP:-127.0.0.1}:${SIEM_DEBUG_UDP_PORT:-5514}:514/udp"
+      - "${SIEM_DEBUG_HOST_IP:-127.0.0.1}:${SIEM_DEBUG_TCP_PORT:-5514}:514/tcp"
+      - "${SIEM_DEBUG_HOST_IP:-127.0.0.1}:${SIEM_DEBUG_TLS_PORT:-6514}:6514/tcp"
 
   harden-audit-log:
     # NFR-2: audit_log must be append-only from the app's own DB credentials

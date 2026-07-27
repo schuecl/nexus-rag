@@ -28,13 +28,14 @@ class _FakeJWKClient:
 @pytest.fixture
 def verified_env(monkeypatch, rsa_public_key):
     """Point claims parsing at the test keypair and issuer/audience constants."""
-    monkeypatch.setattr(claims_module, "OIDC_ISSUERS", ["http://keycloak:8080/realms/nexus-rag",
-                                                        "http://localhost:8080/realms/nexus-rag"])
+    monkeypatch.setattr(
+        claims_module,
+        "OIDC_ISSUERS",
+        ["http://keycloak:8080/realms/nexus-rag", "http://localhost:8080/realms/nexus-rag"],
+    )
     monkeypatch.setattr(claims_module, "OIDC_AUDIENCE", "rag-app")
     monkeypatch.setattr(claims_module, "OIDC_SKIP_VERIFY", False)
-    monkeypatch.setattr(
-        claims_module, "_jwk_client", lambda: _FakeJWKClient(rsa_public_key)
-    )
+    monkeypatch.setattr(claims_module, "_jwk_client", lambda: _FakeJWKClient(rsa_public_key))
 
 
 class TestParseClaims:
@@ -93,8 +94,9 @@ class TestParseClaims:
 
     def test_missing_optional_claims_default(self, verified_env, mint_token):
         # Keycloak omits unmapped optional claims; defaults must kick in.
-        token = mint_token(clearance=None, releasability=None, groups=None,
-                           org=None, rag_roles=None)
+        token = mint_token(
+            clearance=None, releasability=None, groups=None, org=None, rag_roles=None
+        )
         parsed = parse_claims(token)
         assert parsed.clearance == ""
         assert parsed.releasability == []
@@ -111,18 +113,20 @@ class TestParseClaims:
 
 class TestUserClaimsProperties:
     def test_can_ingest_and_query(self):
-        assert UserClaims(sub="u", preferred_username="u",
-                          rag_roles=["rag-ingest"]).can_ingest
-        assert not UserClaims(sub="u", preferred_username="u",
-                              rag_roles=["rag-query"]).can_ingest
-        assert UserClaims(sub="u", preferred_username="u",
-                          rag_roles=["rag-query"]).can_query
+        assert UserClaims(sub="u", preferred_username="u", rag_roles=["rag-ingest"]).can_ingest
+        assert not UserClaims(sub="u", preferred_username="u", rag_roles=["rag-query"]).can_ingest
+        assert UserClaims(sub="u", preferred_username="u", rag_roles=["rag-query"]).can_query
 
     def test_curatable_orgs_extracts_prefixed_roles(self):
         claims = UserClaims(
-            sub="d", preferred_username="dave-admin",
-            rag_roles=["rag-ingest", "rag-query",
-                       "rag-curate:USAREUR-AF", "rag-curate:Signal-Corps"],
+            sub="d",
+            preferred_username="dave-admin",
+            rag_roles=[
+                "rag-ingest",
+                "rag-query",
+                "rag-curate:USAREUR-AF",
+                "rag-curate:Signal-Corps",
+            ],
         )
         assert sorted(claims.curatable_orgs) == ["Signal-Corps", "USAREUR-AF"]
         assert claims.can_curate_org("USAREUR-AF")
@@ -130,8 +134,7 @@ class TestUserClaimsProperties:
         assert not claims.can_curate_org("OTHER-ORG")
 
     def test_curate_role_does_not_partial_match(self):
-        claims = UserClaims(sub="c", preferred_username="c",
-                            rag_roles=["rag-curate:USAREUR-AF"])
+        claims = UserClaims(sub="c", preferred_username="c", rag_roles=["rag-curate:USAREUR-AF"])
         # Exact-org match only -- no prefix/suffix bleed between org names.
         assert not claims.can_curate_org("USAREUR")
         assert not claims.can_curate_org("USAREUR-AF-East")

@@ -33,8 +33,9 @@ class _Metadata:
 class _Msg:
     """Records which JetStream disposition the loop chose for a message."""
 
-    def __init__(self, data: bytes, num_delivered: int = 1):
+    def __init__(self, data: bytes, num_delivered: int = 1, headers: dict | None = None):
         self.data = data
+        self.headers = headers  # #134: nats-py's Msg always has this attribute
         self.metadata = _Metadata(num_delivered)
         self.acked = False
         self.termed = False

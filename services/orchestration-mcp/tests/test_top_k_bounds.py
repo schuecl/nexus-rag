@@ -67,9 +67,7 @@ class TestDebugEndpointValidation:
         assert resp.status_code == 400
 
     async def test_missing_authorization_takes_precedence_over_a_bad_top_k(self):
-        resp = await server.debug_rag_search(
-            _request("query=hello&top_k=abc", authorized=False)
-        )
+        resp = await server.debug_rag_search(_request("query=hello&top_k=abc", authorized=False))
 
         # The auth check runs first: an unauthenticated caller learns nothing
         # about which other parameters would also have been rejected.

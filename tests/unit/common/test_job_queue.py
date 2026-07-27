@@ -20,6 +20,7 @@ class _FakeJetStream:
         self.stream_exists = stream_exists
         self.added_streams: list[dict] = []
         self.published: list[tuple[str, bytes]] = []
+        self.published_headers: list[dict | None] = []
 
     async def stream_info(self, name: str):
         if not self.stream_exists:
@@ -30,17 +31,18 @@ class _FakeJetStream:
         self.added_streams.append({"name": config.name, "subjects": config.subjects})
         self.stream_exists = True
 
-    async def publish(self, subject: str, payload: bytes):
+    async def publish(self, subject: str, payload: bytes, headers=None):
+        # #134: the traceparent rides in headers; the body must stay a bare
+        # document id (asserted below).
         self.published.append((subject, payload))
+        self.published_headers.append(headers)
 
 
 class TestEnsureStream:
     async def test_creates_stream_when_missing(self):
         js = _FakeJetStream(stream_exists=False)
         await ensure_stream(js)
-        assert js.added_streams == [
-            {"name": INGESTION_STREAM, "subjects": [INGESTION_SUBJECT]}
-        ]
+        assert js.added_streams == [{"name": INGESTION_STREAM, "subjects": [INGESTION_SUBJECT]}]
 
     async def test_idempotent_when_present(self):
         js = _FakeJetStream(stream_exists=True)

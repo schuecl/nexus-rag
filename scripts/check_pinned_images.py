@@ -58,9 +58,7 @@ def main() -> int:
         for lineno, line in enumerate(compose_file.read_text().splitlines(), 1):
             match = IMAGE_LINE.match(line)
             if match:
-                problem = _violations(
-                    match.group("ref"), f"{compose_file.name}:{lineno}"
-                )
+                problem = _violations(match.group("ref"), f"{compose_file.name}:{lineno}")
                 if problem:
                     problems.append(problem)
 

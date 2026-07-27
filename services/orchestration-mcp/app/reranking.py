@@ -73,8 +73,7 @@ async def rerank(
                 json={
                     "query": query,
                     "chunks": [
-                        {"id": c["id"], "text": c["payload"].get("text", "")}
-                        for c in candidates
+                        {"id": c["id"], "text": c["payload"].get("text", "")} for c in candidates
                     ],
                 },
             )

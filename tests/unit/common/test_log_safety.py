@@ -84,9 +84,7 @@ class TestPurgeLogging:
             db.commit()
 
             with caplog.at_level(logging.WARNING, logger="purge"):
-                purge_mod.purge_document(
-                    db, d.id, actor_sub="m", actor_username=FORGED, reason="r"
-                )
+                purge_mod.purge_document(db, d.id, actor_sub="m", actor_username=FORGED, reason="r")
 
         record = next(r for r in caplog.records if r.name == "purge")
         assert "\n" not in record.getMessage(), "a claim value must not break the log line"

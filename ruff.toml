@@ -1,7 +1,5 @@
-# Ruff configuration for the lint gate (.github/workflows/ci.yml).
-# Existing code style is ~100 columns; format-check is intentionally NOT
-# enforced yet (would reformat most of the repo in one noisy pass) -- see
-# docs/testing.md.
+# Ruff configuration for the lint gate (.github/workflows/ci.yml), which
+# runs both `ruff check` and `ruff format --check` (issue #80).
 line-length = 100
 target-version = "py311"
 

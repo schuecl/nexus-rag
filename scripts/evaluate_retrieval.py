@@ -18,6 +18,14 @@ Revisit once end-to-end generation is wired and a judge model is available.
 Run manually or on a schedule (FR-32's "periodically re-evaluate") --
 `docker compose --profile eval run --rm eval-retrieval`, or directly with
 Python once services are reachable. See docs/dev-setup.md.
+
+FR-30's "over time" clause: pass `--history-dir` to persist each run's report
+under a timestamped filename (the trend store), and `--baseline` (or the
+auto-selected latest prior report in the history dir) to diff this run's
+recall@K/precision@K against it and fail on regression. That is what makes a
+quality drop visible rather than silent. See docs/testing.md for the
+re-evaluation trigger policy (mandatory on any embedding/reranker model pin
+change, NFR-16).
 """
 
 from __future__ import annotations
@@ -108,11 +116,119 @@ def print_report(report: dict) -> None:
         print(f"  [{status}] {q['query']!r} -> {q['returned']}{note}")
 
 
+def persist_report(report: dict, history_dir: Path) -> Path:
+    """Write `report` to `history_dir` under a timestamped, sortable filename.
+
+    The accumulated directory of these files is FR-30's trend store: each run is
+    kept rather than overwritten, so retrieval quality over time is inspectable
+    instead of being a single point-in-time snapshot that makes degradation
+    "silent". Returns the path written.
+    """
+    history_dir.mkdir(parents=True, exist_ok=True)
+    # Colons aren't portable in filenames; strip the ISO separators but keep the
+    # stamp lexicographically sortable so latest_prior_report() can pick newest.
+    stamp = report["timestamp"].replace(":", "").replace("-", "")
+    path = history_dir / f"retrieval-eval-{stamp}.json"
+    path.write_text(json.dumps(report, indent=2))
+    return path
+
+
+def latest_prior_report(history_dir: Path, exclude: Path | None = None) -> Path | None:
+    """The most recent persisted report in `history_dir`, excluding `exclude`
+    (typically the run just written). Filenames are timestamp-sortable, so the
+    last by name is the newest.
+    """
+    reports = sorted(p for p in history_dir.glob("retrieval-eval-*.json") if p != exclude)
+    return reports[-1] if reports else None
+
+
+# The headline quality metrics a regression is judged on. The forbidden-leak
+# count is handled separately -- any leak is a hard FR-26 failure, not a
+# tolerance-gated regression.
+_COMPARED_METRICS = ("mean_recall_at_k", "mean_precision_at_k")
+
+
+def compare_to_baseline(current: dict, baseline: dict, tolerance: float = 0.0) -> dict:
+    """Diff `current`'s headline metrics against `baseline` (FR-30/FR-32).
+
+    A metric regresses when it drops more than `tolerance` below the baseline.
+    A metric that is None on either side (no scored queries that run) is
+    reported but never counted as a regression. `tolerance` absorbs benign
+    run-to-run noise; set it to 0 to fail on any decrease.
+    """
+    metrics: dict[str, dict] = {}
+    regressed = False
+    for name in _COMPARED_METRICS:
+        cur = current.get(name)
+        base = baseline.get(name)
+        if cur is None or base is None:
+            metrics[name] = {"current": cur, "baseline": base, "delta": None, "regressed": False}
+            continue
+        delta = cur - base
+        is_regression = delta < -tolerance
+        regressed = regressed or is_regression
+        metrics[name] = {
+            "current": cur,
+            "baseline": base,
+            "delta": delta,
+            "regressed": is_regression,
+        }
+    return {
+        "regressed": regressed,
+        "tolerance": tolerance,
+        "baseline_timestamp": baseline.get("timestamp"),
+        "metrics": metrics,
+    }
+
+
+def print_comparison(comparison: dict, baseline_path: Path) -> None:
+    print(
+        f"\nBaseline comparison vs {baseline_path} "
+        f"(@ {comparison['baseline_timestamp']}, tolerance={comparison['tolerance']}):"
+    )
+    for name, m in comparison["metrics"].items():
+        if m["delta"] is None:
+            print(f"  {name}: {m['current']} (baseline {m['baseline']}) -- not comparable")
+            continue
+        verdict = "REGRESSION" if m["regressed"] else "ok"
+        print(
+            f"  {name}: {m['current']:.4f} vs {m['baseline']:.4f} "
+            f"(delta {m['delta']:+.4f}) [{verdict}]"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden-set", type=Path, default=DEFAULT_GOLDEN_SET)
     parser.add_argument(
         "--output", type=Path, default=None, help="also write the JSON report to this path"
+    )
+    parser.add_argument(
+        "--history-dir",
+        type=Path,
+        default=None,
+        help="persist this run's JSON report here under a timestamped name (FR-30 trend "
+        "store). When set and --baseline is not given, the most recent prior report in this "
+        "directory is used as the baseline.",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="compare this run's metrics against this JSON report and fail on regression "
+        "(FR-32); overrides the baseline auto-selected from --history-dir",
+    )
+    parser.add_argument(
+        "--regression-tolerance",
+        type=float,
+        default=0.0,
+        help="allowed drop in a mean metric before it counts as a regression (default 0.0)",
+    )
+    parser.add_argument(
+        "--fail-on-regression",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="exit non-zero if a metric regresses against the baseline (default: enabled)",
     )
     args = parser.parse_args()
 
@@ -121,14 +237,47 @@ def main() -> None:
     report = evaluate(golden_set, token, EVAL_PERSONA)
     print_report(report)
 
+    saved: Path | None = None
+    if args.history_dir:
+        saved = persist_report(report, args.history_dir)
+        print(f"\nPersisted report to {saved}")
+
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2))
-        print(f"\nWrote report to {args.output}")
+        print(f"Wrote report to {args.output}")
 
+    baseline_path = args.baseline
+    if baseline_path is None and args.history_dir:
+        baseline_path = latest_prior_report(args.history_dir, exclude=saved)
+
+    regressed = False
+    if baseline_path and baseline_path.exists():
+        baseline = json.loads(baseline_path.read_text())
+        comparison = compare_to_baseline(report, baseline, args.regression_tolerance)
+        print_comparison(comparison, baseline_path)
+        regressed = comparison["regressed"]
+    elif args.baseline:
+        print(
+            f"\nBaseline {args.baseline} not found -- skipping regression check",
+            file=sys.stderr,
+        )
+
+    failed = False
     if report["total_forbidden_leaks"] > 0:
-        print("\nFAILED: forbidden (unapproved/rejected/superseded) content leaked into "
-              "results -- this is a FR-26 regression, not just a quality miss", file=sys.stderr)
+        print(
+            "\nFAILED: forbidden (unapproved/rejected/superseded) content leaked into "
+            "results -- this is a FR-26 regression, not just a quality miss",
+            file=sys.stderr,
+        )
+        failed = True
+    if regressed and args.fail_on_regression:
+        print(
+            "\nFAILED: retrieval quality regressed against the baseline (FR-30/FR-32)",
+            file=sys.stderr,
+        )
+        failed = True
+    if failed:
         sys.exit(1)
 
 

@@ -32,6 +32,18 @@ spec:
             - name: http
               containerPort: 8004
           volumeMounts:
+            {{- if and .Values.observability.siem.syslogHost (eq .Values.observability.siem.syslogProtocol "tls") }}
+            {{- if .Values.observability.siem.tls.caCertSecret }}
+            - name: siem-ca
+              mountPath: /etc/nexus-rag/siem-ca
+              readOnly: true
+            {{- end }}
+            {{- if .Values.observability.siem.tls.clientCertSecret }}
+            - name: siem-client
+              mountPath: /etc/nexus-rag/siem-client
+              readOnly: true
+            {{- end }}
+            {{- end }}
             - name: tmp
               mountPath: /tmp
             # common.sparse_embedding's BM25 model cache (HF_HOME in the
@@ -40,6 +52,42 @@ spec:
             - name: hf-cache
               mountPath: /srv/.cache/huggingface
           env:
+            # #73: log verbosity/format, and NFR-2 SIEM export (disabled when
+            # syslogHost is empty).
+            - name: LOG_LEVEL
+              value: {{ .Values.observability.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.observability.logFormat | quote }}
+            {{- if .Values.observability.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.tracing.samplerRatio | quote }}
+            {{- end }}
+            {{- if .Values.observability.siem.syslogHost }}
+            - name: SIEM_SYSLOG_HOST
+              value: {{ .Values.observability.siem.syslogHost | quote }}
+            - name: SIEM_SYSLOG_PORT
+              value: {{ .Values.observability.siem.syslogPort | quote }}
+            - name: SIEM_SYSLOG_PROTOCOL
+              value: {{ .Values.observability.siem.syslogProtocol | quote }}
+            - name: SIEM_SYSLOG_FACILITY
+              value: {{ .Values.observability.siem.facility | quote }}
+            {{- if eq .Values.observability.siem.syslogProtocol "tls" }}
+            - name: SIEM_SYSLOG_TLS_VERIFY
+              value: {{ .Values.observability.siem.tls.verify | quote }}
+            {{- if .Values.observability.siem.tls.caCertSecret }}
+            - name: SIEM_SYSLOG_CA_CERT
+              value: /etc/nexus-rag/siem-ca/ca.crt
+            {{- end }}
+            {{- if .Values.observability.siem.tls.clientCertSecret }}
+            - name: SIEM_SYSLOG_CLIENT_CERT
+              value: /etc/nexus-rag/siem-client/tls.crt
+            - name: SIEM_SYSLOG_CLIENT_KEY
+              value: /etc/nexus-rag/siem-client/tls.key
+            {{- end }}
+            {{- end }}
+            {{- end }}
             # NFR-3: non-superuser app role, distinct from POSTGRES_USER.
             - name: DATABASE_URL
               valueFrom:
@@ -108,6 +156,18 @@ spec:
           resources:
             {{- toYaml .Values.ingestionWorker.resources | nindent 12 }}
       volumes:
+        {{- if and .Values.observability.siem.syslogHost (eq .Values.observability.siem.syslogProtocol "tls") }}
+        {{- if .Values.observability.siem.tls.caCertSecret }}
+        - name: siem-ca
+          secret:
+            secretName: {{ .Values.observability.siem.tls.caCertSecret }}
+        {{- end }}
+        {{- if .Values.observability.siem.tls.clientCertSecret }}
+        - name: siem-client
+          secret:
+            secretName: {{ .Values.observability.siem.tls.clientCertSecret }}
+        {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
         - name: hf-cache

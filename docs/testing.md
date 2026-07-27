@@ -62,6 +62,10 @@ done
 
 ruff check services scripts tests       # lint gate
 mypy services/common/common             # type gate (enforced scope)
+(cd services/reranker-service && mypy app)  # type gate (enforced, issue #79)
+(cd services/ingestion-worker && MYPYPATH=../common mypy app)  # ditto
+(cd services/orchestration-mcp && MYPYPATH=../common mypy app)  # ditto
+(cd services/ingestion-api && MYPYPATH=../common mypy app)  # ditto
 python scripts/check_pinned_images.py   # NFR-16 floating-tag gate
 bandit -r services scripts              # security static analysis
 helm lint helm/nexus-rag                # chart gate
@@ -75,9 +79,9 @@ docker compose --profile eval run --rm eval-retrieval
 
 - **`.github/workflows/ci.yml`** (PR + push to main): unit + BDD on Python
   3.11/3.12 with an enforced **≥85% line+branch coverage** floor (scope
-  below), `ruff check`, `mypy` (enforced on `services/common`; report-only on
-  the four app services until their annotations catch up), the NFR-16
-  image-pin check, and a full `docker compose build` of all custom images.
+  below), `ruff check`, `mypy` (enforced across `services/common` and all
+  four app services as of issue #79), the NFR-16 image-pin check, and a full
+  `docker compose build` of all custom images.
 - **`.github/workflows/e2e.yml`** (nightly, manual, and PRs touching
   `services/`, `scripts/`, `infra/`, `docker-compose.yml`): full-stack
   golden-query e2e; mutation testing (advisory, see below). Reports uploaded
@@ -87,8 +91,91 @@ docker compose --profile eval run --rm eval-retrieval
   dev-only and excluded), `helm lint` + `helm template`, Trivy filesystem
   scan (HIGH/CRITICAL, unfixed ignored); weekly: Trivy image scans of the
   four built images.
+- **`.github/workflows/codeql.yml`** (PR + push to main + weekly): checked-in
+  ("advanced setup") CodeQL analysis with the `security-extended` query
+  suite, replacing GitHub's implicit default setup. It deliberately triggers
+  on `pull_request` rather than `pull_request_target` — the default setup
+  does not run at all on PRs opened from a fork, which left every
+  fork-authored PR permanently unable to satisfy a required `CodeQL` check
+  (hit in practice on #64-#67). Triggering here gives fork PRs the same
+  scoped, read-only-plus-`security-events:write` token GitHub grants for this
+  case, without widening what fork-authored code can otherwise touch.
 - **`.github/dependabot.yml`**: weekly pip (per service + test toolchain),
   GitHub Actions, and Docker base-image updates.
+
+## Branch protection (merge gates)
+
+Two repository rulesets, both targeting `refs/heads/main` and both `active`,
+jointly enforce PR-only, non-fast-forward merges and a set of required status
+checks — the mechanism that makes the gates above actually *block* a merge
+rather than being advisory-only (issue #81; #60's premise that verification
+is enforced, not just available). Applied 2026-07-27.
+
+- `Protect-Main` — the original ruleset: PR required, no fast-forward/deletion,
+  the required-checks list below, non-strict.
+- `Protect-Main-Strict-Status-Checks` — added alongside it (not merged into
+  it) to carry `strict_required_status_checks_policy: true` plus the same
+  checks list, for the reason in "Applying ruleset changes" below. GitHub
+  enforces multiple matching rulesets additively, so the net effect is one
+  set of required checks, now with strict enforcement, from two rulesets.
+  Verified against a currently-open PR: one behind `main` shows
+  `mergeStateStatus: BEHIND` and is blocked from merging even though its
+  checks already passed.
+
+**Required checks** (every job below runs unconditionally on every PR, no path
+filter, so a required check can never be left permanently "waiting"):
+
+- `CodeQL` (GitHub code-scanning integration check, distinct from the
+  `Analyze (python)` workflow job it's derived from)
+- `unit (3.11)`, `unit (3.12)`
+- `service-tests (ingestion-api)`,
+  `service-tests (ingestion-worker, --cov=app.chunking --cov=app.parsing)`,
+  `service-tests (orchestration-mcp, --cov=app.reranking)`
+- `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
+- `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
+
+Branches must be up to date with `main` before merging (strict status
+checks) — enabled via `Protect-Main-Strict-Status-Checks` above, per the
+issue's suggested direction. This adds rebase friction to every Dependabot
+PR that isn't first in the merge queue; if that friction outweighs the
+value in practice, disable it there rather than reintroducing a second
+source of truth for the checks list.
+
+**Deliberately not required: `golden-query` and `mutation`.** Both live in
+`e2e.yml`, which is path-filtered (`services/**`, `scripts/**`, `infra/**`,
+`docker-compose.yml`, the workflow file itself) and also runs on a nightly
+schedule. A required status check that never fires for a given PR (e.g. a
+docs-only or workflow-only change that doesn't touch those paths) leaves
+GitHub's merge button permanently stuck on "Expected — waiting for status to
+be reported" — the same class of bug the fork-PR CodeQL fix above addresses,
+just triggered by a path filter instead of a fork-token limitation. `mutation`
+is additionally still advisory pending a baseline (see below). Making
+`golden-query` a merge gate would mean either dropping its path filter (paying
+its ~5-6 minute full-stack-compose cost on every PR, including doc-only ones)
+or accepting that gap — worth revisiting once there's an owner for that
+tradeoff, but out of scope here.
+
+**Fork-PR CodeQL reporting, confirmed working.** Issue #81's comment flagged
+an open question: does the default CodeQL setup produce a check run on
+fork-originated PRs at all? It didn't at the time (#64-#67 hit exactly this).
+The checked-in `codeql.yml` above already fixes it: five current
+fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
+`Analyze (python)` passing, so no further action was needed on that half of
+the issue.
+
+**Applying ruleset changes.** The ruleset REST API's `PATCH` endpoint 404s
+for at least one token type (an OAuth-app token with `repo` scope) even with
+admin permission on the repo — `GET`, `POST` (create), and `DELETE` all work
+fine against that same token. It works as a classic/fine-grained PAT or via
+the Settings → Rules UI, which is how `Protect-Main`'s required-checks list
+was applied. `Protect-Main-Strict-Status-Checks` was instead added as a
+second ruleset via `POST`, specifically to enable strict mode *without*
+`PATCH` or a delete-then-recreate of the already-active `Protect-Main` —
+deleting a live branch-protection ruleset, even to immediately recreate it,
+is a destructive action on shared infrastructure that's better avoided than
+risked on a token-quirk workaround. If a `PATCH`-capable credential becomes
+available later, folding both rulesets back into one is a cleanup, not a
+requirement.
 
 ## Coverage policy
 
@@ -126,14 +213,52 @@ spuriously survives. Two related gotchas, both encoded in the repo:
 installed package would shadow the mutated copy), and `tests/conftest.py`'s
 sys.path shim disables itself when `MUTANT_UNDER_TEST` is set.
 
+## Retrieval-quality tracking & re-evaluation policy (FR-30/FR-32)
+
+`scripts/evaluate_retrieval.py` runs the golden-query set through the real
+`rag_search` pipeline and reports recall@K / precision@K plus the forbidden-leak
+check. On its own that is a point-in-time snapshot; FR-30 wants quality tracked
+*over time* so degradation is visible rather than silent, and FR-32 wants
+re-evaluation tied to the changes that can cause it.
+
+**Trend store + regression gate.** The harness supports this directly:
+
+```bash
+# Persist each run under a timestamped filename (the trend store) and fail if
+# recall@K/precision@K drop below the most recent prior run.
+python scripts/evaluate_retrieval.py --history-dir eval-history
+
+# Or diff against an explicit committed baseline, allowing a small noise band.
+python scripts/evaluate_retrieval.py \
+  --baseline eval-history/retrieval-eval-<stamp>.json --regression-tolerance 0.02
+```
+
+With `--history-dir`, each run is kept (not overwritten) and the previous run is
+used as the baseline; a drop beyond `--regression-tolerance` exits non-zero, the
+same way a forbidden leak already does. The pure history/baseline logic is unit
+tested in `tests/unit/test_evaluate_retrieval.py`; the scoring itself is covered
+by the golden-query e2e job.
+
+**Re-evaluation triggers (FR-32).** Re-run the harness, and refresh the
+baseline, on any of:
+
+- **A change to the embedding or reranker model pin (NFR-16)** — a different
+  embedding model changes the vector space and a different cross-encoder changes
+  ranking, either of which can move recall silently. This is mandatory: treat a
+  model-pin PR as incomplete until the golden-query run is green against the
+  prior baseline.
+- **A change to chunking or retrieval logic** (`ingestion-worker` chunking,
+  `orchestration-mcp` fusion/rerank).
+- **The nightly `e2e.yml` schedule**, which covers the "periodic" cadence.
+
 ## Known gaps / follow-ups
 
+- Wiring the trend store into CI so nightly runs retain history *across* runs
+  (download the prior artifact or commit a baseline) and gate on it — the
+  harness supports it (issue #71); the cross-run persistence in `e2e.yml` is the
+  remaining step.
 - Integration layer with containerized Postgres/Qdrant/NATS/Keycloak
   (NFR-11 crash-redelivery, NFR-13 revert-on-partial-failure, NFR-2
   append-only audit enforcement are only covered live/manually today).
-- `ruff format --check` is not enforced; adopting it would reformat most of
-  the repo in one pass and was kept out of the initial CI change.
-- mypy enforcement is scoped to `services/common`; the app services run
-  report-only.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
