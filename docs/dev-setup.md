@@ -823,7 +823,8 @@ the docs, not a silent "it works" — flag it if you find one.
   `ObjectStore` interface, with a filesystem-backed dev implementation
   (`FilesystemObjectStore`, `OBJECT_STORE_PATH=/srv/object-store`, a new `object-store-data`
   Compose volume) and an S3-compatible one (`S3ObjectStore`, any endpoint — existing
-  enterprise S3, Ceph RGW, MinIO — via `boto3`'s generic client, for production). Wired into
+  enterprise S3, Ceph RGW, or another validated S3-compatible platform — via `boto3`'s
+  generic client, for production). Wired into
   `app/routes/upload.py`: the raw uploaded bytes are written to the store (key
   `documents/{document_id}/original`, `common/object_store.document_object_key`) and the key
   recorded on the `Document` row *before* the 202 response returns — durable independent of

@@ -20,8 +20,9 @@ dependencies = [
     "pymilvus>=2.5",
     "fastembed>=0.6",
     # NFR-12: S3ObjectStore backend (common/object_store.py) -- generic
-    # S3-compatible client (existing enterprise S3, Ceph RGW, MinIO, ...),
-    # not AWS-specific despite the package name.
+    # S3-compatible client (existing enterprise S3, Ceph RGW, or another
+    # validated S3-compatible platform), not AWS-specific despite the
+    # package name.
     "boto3>=1.34",
     # NFR-11: durable ingestion job queue (common/job_queue.py).
     "nats-py>=2.7",
