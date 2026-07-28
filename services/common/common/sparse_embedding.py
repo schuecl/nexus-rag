@@ -11,18 +11,27 @@ importing this module never triggers a network call.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from qdrant_client.models import SparseVector
 
 MODEL_NAME = "Qdrant/bm25"
 
+# #210: fastembed forwards unknown kwargs straight through to
+# huggingface_hub.snapshot_download, so `revision=` here pins the download
+# the same way `revision=` pins sentence-transformers in reranker-service.
+# Env-overridable to match RERANKER_MODEL_REVISION's pattern, but a mutable
+# override still has to be an explicit, deliberate act rather than the
+# silent default drift this pin exists to prevent.
+MODEL_REVISION = os.environ.get("BM25_MODEL_REVISION", "e499a1f8d6bec960aab5533a0941bf914e70faf9")
+
 
 @lru_cache(maxsize=1)
 def _model():
     from fastembed import SparseTextEmbedding
 
-    return SparseTextEmbedding(model_name=MODEL_NAME)
+    return SparseTextEmbedding(model_name=MODEL_NAME, revision=MODEL_REVISION)
 
 
 def embed_sparse(texts: list[str]) -> list[SparseVector]:

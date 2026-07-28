@@ -62,6 +62,15 @@ _setup_tracing()
 tracer = trace.get_tracer("reranker-service")
 
 MODEL_NAME = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
+# #210: pin the revision so a silent upstream update to MODEL_NAME's weights
+# can't change retrieval ranking with no signal, and so an air-gapped
+# deployment mirroring this model internally has a fixed commit to mirror to.
+# Only meaningful for the default above -- overriding RERANKER_MODEL to a
+# different repo without also overriding this is a deliberate unpin, not a
+# silent one.
+MODEL_REVISION = os.environ.get(
+    "RERANKER_MODEL_REVISION", "c5ee24cb16019beea0893ab7796b1df96625c6b8"
+)
 
 # Hard ceiling on one /rerank call's batch. _model.predict() scores every
 # (query, chunk) pair synchronously on CPU against a single shared
@@ -85,7 +94,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Request, so app.state isn't reachable from them without changing both
     # signatures. One process, one model, assigned exactly here.
     global _model  # noqa: PLW0603
-    _model = CrossEncoder(MODEL_NAME)
+    _model = CrossEncoder(MODEL_NAME, revision=MODEL_REVISION)
     metrics.model_loaded.set(1)
     yield
     metrics.model_loaded.set(0)

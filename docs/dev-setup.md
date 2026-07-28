@@ -270,6 +270,14 @@ the tiny (~10MB) `Qdrant/bm25` sparse model on first use — all from Hugging Fa
 finally `seed-sample-data` submits and curates 7 sample documents through the real API
 once everything above is healthy.
 
+Both HF model downloads are pinned to a commit revision (issue #210), not just a
+mutable model name, and enforced in CI by `scripts/check_pinned_models.py`:
+`cross-encoder/ms-marco-MiniLM-L6-v2` resolves to `c5ee24cb16019beea0893ab7796b1df96625c6b8`
+(`RERANKER_MODEL_REVISION`, reranker-service), `Qdrant/bm25` to
+`e499a1f8d6bec960aab5533a0941bf914e70faf9` (`BM25_MODEL_REVISION`, shared by
+`ingestion-worker`/`orchestration-mcp` via `services/common`). An air-gapped deployment
+mirroring these models internally should mirror exactly these revisions.
+
 | Service | URL | Notes |
 |---|---|---|
 | Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
