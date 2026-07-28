@@ -814,7 +814,11 @@ services:
       # #133: SVG flowchart panel (draw.io-style live topology). Downloaded
       # at startup; in an air-gapped install, pre-seed the plugin into
       # /var/lib/grafana/plugins instead and drop this line.
-      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel"
+      # grafana-graphviz-panel renders the system-flow diagram from DOT
+      # (#133). Listed here rather than installed by hand so a fresh
+      # `docker compose up` has it -- a panel whose plugin is missing
+      # renders as an empty box with no explanation.
+      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel,grafana-graphviz-panel,jdbranham-diagram-panel"
       # #133: consumed by the provisioned Postgres datasource (documents dashboard).
       GRAFANA_DB_USER: ${GRAFANA_DB_USER:-grafana_ro}
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}
