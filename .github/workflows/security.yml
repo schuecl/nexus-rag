@@ -54,6 +54,7 @@ jobs:
             -e services/common -e services/ingestion-api \
             -e services/ingestion-worker -e services/orchestration-mcp \
             -e services/reranker-service
+          # mcp held <2.0: 2.0.0 removed/renamed mcp.server.fastmcp (#205).
           pip install \
             "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" "sqlmodel>=0.0.21" \
             "psycopg[binary]>=3.1" "qdrant-client>=1.10" "pymilvus>=2.5" "fastembed>=0.6" \
@@ -61,7 +62,7 @@ jobs:
             "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" \
             "pypdf>=6.14.2" "python-docx>=1.1" "python-pptx>=1.0" \
             "openpyxl>=3.1" "beautifulsoup4>=4.12" \
-            "mcp>=1.6" "sentence-transformers>=3.0" \
+            "mcp>=1.6,<2.0" "sentence-transformers>=3.0" \
             "opentelemetry-api>=1.30" "opentelemetry-sdk>=1.30" "opentelemetry-exporter-otlp-proto-http>=1.30" \
             "opentelemetry-instrumentation-fastapi>=0.51b0" "opentelemetry-instrumentation-httpx>=0.51b0"
       - name: Audit for known vulnerabilities
@@ -170,7 +171,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           # No org licence required for a public repo; this keeps the action
           # from probing for one. GITHUB_TOKEN lets it annotate the PR.
@@ -220,7 +221,7 @@ jobs:
           upload-artifact: false
       - name: Upload SBOMs
         if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: sbom/
