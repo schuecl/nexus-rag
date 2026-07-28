@@ -47,6 +47,36 @@ def _timestamp(record: logging.LogRecord) -> str:
     return datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds")
 
 
+def _trace_context() -> dict[str, str]:
+    """#133: the ``trace_id``/``span_id`` Grafana's provisioned Loki datasource
+    needs to link a log line to its trace in Tempo. Without these the
+    trace-to-logs and logs-to-trace buttons that datasource enables have
+    nothing to match on, so the correlation the observability stack is for
+    silently does not work.
+
+    Returns an empty dict rather than null ids when tracing is off (#134
+    leaves it off unless OTEL_EXPORTER_OTLP_ENDPOINT is set), so a log line
+    from an untraced process doesn't carry a field of all zeroes that looks
+    like a real, permanently-broken link. opentelemetry-api is a dependency of
+    every service that calls setup_logging, but the import is guarded anyway:
+    a missing tracing package must degrade logging, not disable it.
+    """
+    try:
+        from opentelemetry import trace
+    except ImportError:  # pragma: no cover - opentelemetry is always installed
+        return {}
+    context = trace.get_current_span().get_span_context()
+    if not context.is_valid:
+        return {}
+    # Hex, zero-padded to the widths the OTLP/Tempo convention uses -- Grafana
+    # matches on the literal string, so `format(id, "x")` would fail to link
+    # any id with a leading zero.
+    return {
+        "trace_id": format(context.trace_id, "032x"),
+        "span_id": format(context.span_id, "016x"),
+    }
+
+
 class _TextFormatter(logging.Formatter):
     def __init__(self, service: str) -> None:
         super().__init__()
@@ -75,6 +105,7 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
+        payload.update(_trace_context())
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=True, default=str)

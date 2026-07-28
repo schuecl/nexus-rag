@@ -35,12 +35,15 @@ def _stub(monkeypatch, *, hits, audits: list) -> None:
     def _session():
         yield object()
 
-    class _Client:
-        def query_points(self, **_kwargs):
-            class _R:
-                points = hits
+    class _Store:  # #160: rag_search goes through the vector-store seam now
+        def hybrid_query(self, **_kwargs):
+            return hits
 
-            return _R()
+        def access_filter_summary(self, _claims, _allowed):
+            return {"backend": "fake"}
+
+        def stored_embedding_model(self):
+            return None
 
     async def _embed(_q):
         return [0.0]
@@ -52,7 +55,7 @@ def _stub(monkeypatch, *, hits, audits: list) -> None:
     monkeypatch.setattr(
         rag_search, "embed_sparse", lambda _t: [SparseVector(indices=[0], values=[1.0])]
     )
-    monkeypatch.setattr(rag_search, "get_qdrant_client", _Client)
+    monkeypatch.setattr(rag_search, "get_store", _Store)
     monkeypatch.setattr(
         rag_search, "_audit", lambda claims, action, detail: audits.append((action, detail))
     )

@@ -23,6 +23,7 @@ a lightweight approach, not a guarantee of perfect table recall.
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -48,6 +49,18 @@ class ParsingError(Exception):
 # libraries.
 MAX_ZIP_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200MB decompressed, well over any real OOXML doc
 MAX_ZIP_COMPRESSION_RATIO = 200  # legitimate OOXML XML parts rarely exceed the low double digits
+
+# Issue #208: the ZIP guard above covers OOXML only. PDF has its own
+# amplification shape -- a small file can declare an enormous number of pages,
+# and pdfplumber's per-page work (find_tables in particular, which is
+# heuristic and geometric) is expensive enough that page count alone is a
+# usable denial-of-service lever well inside MAX_UPLOAD_BYTES.
+#
+# 5000 pages is far above any real document in this corpus (the largest DoD
+# policy PDFs run to the low hundreds) and cheap to check: PdfReader reads the
+# page tree without rendering anything, so the count is known before any
+# per-page work begins.
+MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", "5000"))
 
 
 def _check_zip_bomb(content: bytes) -> None:
@@ -211,6 +224,17 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
     # encrypted PDFs); anything else is reported as password-protected.
     if reader.is_encrypted and reader.decrypt("") == 0:
         raise ParsingError("password-protected PDF")
+
+    # Checked before pdfplumber opens the file, so a page-count bomb is
+    # rejected without doing any per-page geometry work. This bounds one
+    # amplification shape, not all of them -- a single page can still hold
+    # pathological content, which is what the worker's
+    # PROCESSING_TIMEOUT_SECONDS budget is for. The two are complementary:
+    # this one gives a precise, actionable FR-8 message, the timeout is the
+    # catch-all.
+    page_count = len(reader.pages)
+    if page_count > MAX_PDF_PAGES:
+        raise ParsingError(f"PDF has {page_count} pages, over the {MAX_PDF_PAGES}-page limit")
 
     import pdfplumber
 

@@ -40,6 +40,25 @@ observability:
   tracing:
     otlpEndpoint: ""
     samplerRatio: "0.05"
+  # #133: let the cluster's existing Prometheus Operator discover the
+  # /metrics endpoints ingestion-api, orchestration-mcp, and reranker-service
+  # expose. Off by default and deliberately so -- the chart does not ship a
+  # monitoring stack (a DoD cluster already runs one inside the accreditation
+  # boundary), and rendering a ServiceMonitor where the operator's CRDs are
+  # absent fails the install on an unknown kind.
+  #
+  # Enabling this is not sufficient on its own: the chart's NetworkPolicies
+  # deny by default, so the monitoring namespace also needs allowing through.
+  serviceMonitor:
+    enabled: false
+    # Leave empty to create the ServiceMonitors alongside the release. Set it
+    # when the operator only watches a specific namespace.
+    namespace: ""
+    # Extra labels the operator's serviceMonitorSelector matches on -- most
+    # installs require one (commonly `release: <prometheus-release>`).
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
   # NFR-2: forward every audit event as RFC 5424 syslog to the environment's
   # existing SIEM collector. Leave syslogHost empty to disable the export.
   # In-cluster this is typically a syslog forwarder Service/sidecar the
@@ -127,6 +146,11 @@ externalObjectStore:
 # need its own air-gapped mirroring step)
 # ---------------------------------------------------------------------------
 
+# #160: either/or vector backend. "qdrant" (default) keeps today's path
+# byte-for-byte; "milvus" points every service at the Milvus StatefulSet
+# below instead. One backend per deployment -- never both.
+vectorBackend: qdrant
+
 qdrant:
   enabled: true
   image:
@@ -172,6 +196,27 @@ qdrant:
 # avoids depending on an external Helm chart repo, which would need its own
 # air-gapped mirroring step.
 # ---------------------------------------------------------------------------
+
+# #160: rendered only when vectorBackend is "milvus". Standalone with
+# embedded etcd and local storage -- the single-node evaluation deployment,
+# matching the chart's single-node Qdrant posture.
+milvus:
+  image:
+    repository: milvusdb/milvus
+    # NFR-16: pinned to a specific, recent release -- never :latest.
+    tag: "v2.4.17"
+  replicas: 1
+  # NFR-15: authenticated access required. Pre-created Secret carrying one
+  # key whose value is the "user:password" token the services present
+  # (Milvus bootstrap credentials are root:Milvus; change them and this
+  # Secret together).
+  auth:
+    existingSecret: ""
+    secretKey: token
+  persistence:
+    size: 16Gi
+    storageClassName: ""
+  resources: {}
 
 nats:
   enabled: true

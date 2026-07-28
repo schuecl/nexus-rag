@@ -4,7 +4,17 @@ WORKDIR /srv
 
 COPY services/reranker-service/pyproject.toml /srv/pyproject.toml
 COPY services/reranker-service/app /srv/app
-RUN pip install --no-cache-dir .
+# Torch is installed first, from a configurable index, so
+# sentence-transformers' dependency is already satisfied when the package
+# installs. The default is the CPU wheel: the bare PyPI torch is the CUDA
+# build (~6 GB of NVIDIA libraries), and this service runs the cross-encoder
+# on CPU in the dev stack -- shipping dead CUDA libs also inflates the NFR-1
+# air-gapped mirror. A GPU deployment overrides the arg with its CUDA index
+# (e.g. https://download.pytorch.org/whl/cu124), and an air-gapped build
+# points it at the internal mirror of whichever variant it runs.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch --index-url "${TORCH_INDEX_URL}" \
+    && pip install --no-cache-dir .
 
 # First run downloads the model from Hugging Face into HF_HOME; mount a
 # volume there (see docker-compose.yml) so it persists across restarts and

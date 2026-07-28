@@ -48,7 +48,7 @@ from sqlmodel import Session
 from .log_safety import log_safe
 from .models import AuditLogEntry, Document
 from .object_store import get_object_store
-from .qdrant_store import delete_document_chunks, get_qdrant_client
+from .vector_store import get_store
 
 logger = logging.getLogger("purge")
 
@@ -104,7 +104,7 @@ def purge_document(
     # 2. Vector store. Idempotent by filter -- deleting no-longer-present
     #    chunks succeeds.
     try:
-        delete_document_chunks(get_qdrant_client(), str(doc.id))
+        get_store().delete_document_chunks(str(doc.id))
     except Exception as exc:
         raise PurgeError(
             f"could not delete chunks for {document_id}: {exc}. The document is "

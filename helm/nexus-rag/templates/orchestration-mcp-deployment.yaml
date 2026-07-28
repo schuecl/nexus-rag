@@ -58,6 +58,21 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
+            # #160: either/or vector backend; qdrant is the default and the
+            # MILVUS_* env only renders when the deployment opts in.
+            - name: VECTOR_BACKEND
+              value: {{ .Values.vectorBackend | quote }}
+            {{- if eq .Values.vectorBackend "milvus" }}
+            - name: MILVUS_URL
+              value: http://{{ include "nexus-rag.fullname" . }}-milvus:19530
+            {{- if .Values.milvus.auth.existingSecret }}
+            - name: MILVUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.milvus.auth.existingSecret }}
+                  key: {{ .Values.milvus.auth.secretKey }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.observability.tracing.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.observability.tracing.otlpEndpoint | quote }}

@@ -1,0 +1,94 @@
+{{- if eq .Values.vectorBackend "milvus" }}
+# #160: rendered only when vectorBackend is "milvus" -- the either/or
+# alternative to the Qdrant StatefulSet, never deployed alongside it as the
+# active backend. Standalone mode with embedded etcd and local storage: the
+# single-node evaluation posture, matching the chart's single-node Qdrant.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-milvus
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+spec:
+  serviceName: {{ include "nexus-rag.fullname" . }}-milvus
+  replicas: {{ .Values.milvus.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "milvus") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: milvus
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: milvus
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.milvus.image) }}
+          args: ["milvus", "run", "standalone"]
+          env:
+            - name: ETCD_USE_EMBED
+              value: "true"
+            - name: ETCD_DATA_DIR
+              value: /var/lib/milvus/etcd
+            - name: COMMON_STORAGETYPE
+              value: local
+            # NFR-15: authenticated access required in every environment;
+            # the services present the token from milvus.auth.existingSecret.
+            - name: COMMON_SECURITY_AUTHORIZATIONENABLED
+              value: "true"
+          ports:
+            - name: grpc
+              containerPort: 19530
+            - name: metrics
+              containerPort: 9091
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 40
+            periodSeconds: 20
+          {{- with .Values.milvus.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/milvus
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.milvus.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.milvus.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-milvus
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+spec:
+  selector:
+    {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "milvus") | nindent 4 }}
+  ports:
+    - name: grpc
+      port: 19530
+      targetPort: grpc
+{{- end }}

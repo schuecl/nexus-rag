@@ -1,0 +1,15 @@
+# #133: HTTP health probes for services that expose no Prometheus /metrics
+# (Ollama, LibreChat) or don't ship one in this stack (LiteLLM). Prometheus
+# scrapes the exporter, which makes the request and reports probe_success.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: [200, 201, 202, 204, 301, 302, 401, 403]
+      method: GET
+      fail_if_not_ssl: false
+      # Accept the dev self-signed cert (LibreChat proxy is HTTPS).
+      tls_config:
+        insecure_skip_verify: true
+      preferred_ip_protocol: ip4

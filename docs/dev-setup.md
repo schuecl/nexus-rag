@@ -86,6 +86,91 @@ search was added, run `docker compose down -v` first -- `ensure_collection` only
 configures a collection when it doesn't already exist, so a stale volume won't pick up
 the new schema on its own.
 
+## Running on a GPU host (optional)
+
+Everything defaults to CPU so `docker compose up` works with no drivers. Two
+pieces can use an NVIDIA GPU when one is present:
+
+- **reranker-service** bakes its torch wheel at build time from
+  `TORCH_INDEX_URL` (`.env`). CPU by default; for GPU set it to the matching
+  CUDA index (e.g. `https://download.pytorch.org/whl/cu124`) and uncomment the
+  service's `deploy.resources` GPU reservation in `docker-compose.yml`.
+- **Ollama** uses the GPU automatically once its GPU reservation is uncommented.
+
+Host prerequisites for the GPU path: an NVIDIA driver, the
+`nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
+Air-gapped (NFR-1): mirror the chosen torch index internally and point
+`TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## Observability stack (optional, #133)
+
+Off by default. Bring it up alongside the app stack:
+
+```bash
+docker compose --profile observability up -d
+```
+
+**The profile alone does not enable tracing or JSON logs.** Uncomment both of
+these in `.env` first, or Tempo stays empty and the trace-to-logs links have
+nothing to match on:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+LOG_FORMAT=json
+```
+
+Put them in `.env` rather than inline on the `up` command — an inline variable
+is lost as soon as a container is recreated from Docker Desktop or a plain
+`docker compose up`, and the only symptom is a `tracing disabled` line at
+startup that is easy to scroll past.
+
+- **Grafana** http://localhost:3000 (`admin` / `nexus-rag-admin`) -- dashboards
+  and datasources are auto-provisioned (Prometheus, Loki, Tempo).
+- **Prometheus** http://127.0.0.1:9090 scrapes every service's `/metrics`.
+- **Tempo** (traces) and **Loki** (logs) are wired as Grafana datasources.
+- Every port except Grafana is published loopback-only.
+- **Trace-to-log correlation works**: with `LOG_FORMAT=json` and tracing
+  enabled, every log line carries `trace_id`/`span_id`, which is what
+  Grafana's provisioned Loki datasource matches on to jump between a log line
+  and its trace in Tempo.
+- **Grafana's service map is populated** by Tempo's metrics-generator, which
+  derives span metrics and service graphs as spans arrive and remote-writes
+  them to Prometheus (`--web.enable-remote-write-receiver`).
+
+### What holds the Docker socket, and why
+
+Alloy discovers containers and tails their stdout through
+**docker-socket-proxy**, not through a direct `/var/run/docker.sock` mount. A
+`:ro` bind on the socket restricts the file, not the daemon API behind it —
+anything that can talk to the socket can create a privileged container, so it
+is root on the host. The proxy allows only the `GET /containers` endpoints
+Alloy needs and refuses container creation and exec.
+
+This reduces the exposure, it does not remove it: the proxy itself holds the
+socket. It is a dev-only profile, never started by a bare `docker compose up`,
+and the Helm chart has no equivalent (pods log to the node's collector).
+
+### Postgres metrics
+
+`postgres-exporter` scrapes as `MONITORING_DB_USER` (`nexus_rag_monitor` by
+default), a dedicated role with `pg_monitor` and `CONNECT` and no table
+privileges. Not `APP_DB_USER`: most of the exporter's collectors return
+nothing without `pg_monitor`, and granting it to the application credential
+would give the whole app cluster-wide read of every session's queries, which
+is the separation NFR-3 exists to keep. The role is created by
+`infra/postgres/init-app-roles.sh`, which runs **once**, on the first boot of a
+fresh data directory — on a pre-existing volume, create it by hand or recreate
+the volume.
+
+### Kubernetes
+
+The chart does not deploy a monitoring stack; a cluster inside the
+accreditation boundary already runs one. Set
+`observability.serviceMonitor.enabled=true` (off by default, since rendering a
+ServiceMonitor without the Prometheus Operator's CRDs fails the install) to
+let that stack discover the services' `/metrics` endpoints — and allow the
+monitoring namespace through the chart's default-deny NetworkPolicies, which
+otherwise block the scrape.
+
 ## Prerequisites
 
 - Docker with Compose v2 (`docker compose version`)
@@ -148,6 +233,7 @@ once everything above is healthy.
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
 | ingestion-worker | http://localhost:8004 | `/health` only -- its real work is the NATS consumer loop, not an HTTP API (NFR-11) |
 | Qdrant | http://localhost:6333/dashboard | |
+| Attu (Milvus profile only) | http://127.0.0.1:8000 | connect to `milvus:19530` with the dev Milvus credentials; host port is `ATTU_PORT` |
 | LibreChat | https://localhost:3080 | throwaway, log in via Keycloak. HTTPS is real (issue #75) via the `librechat-proxy` nginx service, not just a config label -- see "One-time host setup" above |
 | LiteLLM | http://localhost:4000 | throwaway gateway in front of Ollama |
 
@@ -553,6 +639,27 @@ the docs, not a silent "it works" — flag it if you find one.
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.
+- **Optional Milvus vector backend, either/or with Qdrant (issue #160)** —
+  `VECTOR_BACKEND=qdrant` (the default, and the absence of the variable) is
+  today's path byte-for-byte; `VECTOR_BACKEND=milvus` runs the same pipeline
+  against Milvus Standalone (`docker compose --profile milvus up -d` plus
+  `MILVUS_URL`/`MILVUS_TOKEN`; Helm: `vectorBackend` + `milvus.*`). One
+  backend per deployment — never both. The FR-26 mandatory filter is built
+  as a Milvus boolean expression with the exact clause-for-clause semantics
+  of the Qdrant filter, applied to both hybrid legs, with string values
+  escaped so a hostile claim value cannot widen the filter. The sparse leg
+  deliberately reuses the same client-side fastembed BM25 vectors as Qdrant
+  (not Milvus's server-side BM25 Function) so an A/B measures the engine,
+  not the tokenizer. The collection uses Strong consistency because the
+  curation flow relies on read-your-writes — surfaced by live validation,
+  where bounded staleness made an approve flip invisible to the next query.
+  Validated against a real Milvus v2.4.17 container: approved-only,
+  classification ceiling, releasability holdings, cross-org isolation,
+  curation status flip, provenance stamp, and chunk deletion all pass; not
+  yet exercised by the golden-query e2e (the comparison harness run is the
+  follow-up the issue defines). For local inspection (issue #163), Qdrant
+  keeps its bundled dashboard while the Milvus profile adds the compatible
+  Apache-2.0 Attu v2.4.12 UI; neither UI is exposed beyond host loopback.
 - **Distributed tracing across the queue and the retrieval fan-out
   (issue #134)** — every service emits OpenTelemetry spans when
   `OTEL_EXPORTER_OTLP_ENDPOINT` points at an OTLP/HTTP collector

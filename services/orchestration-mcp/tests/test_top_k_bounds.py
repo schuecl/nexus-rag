@@ -91,11 +91,17 @@ def _stub_retrieval(monkeypatch, captured: dict) -> None:
     def _session():
         yield object()
 
-    class _Client:
-        def query_points(self, **kwargs):
+    class _Store:  # #160: the seam receives one limit for both legs
+        def hybrid_query(self, **kwargs):
             captured["limit"] = kwargs["limit"]
-            captured["prefetch_limits"] = [p.limit for p in kwargs["prefetch"]]
+            captured["prefetch_limits"] = [kwargs["limit"], kwargs["limit"]]
             raise _StopHere
+
+        def access_filter_summary(self, _claims, _allowed):
+            return {}
+
+        def stored_embedding_model(self):
+            return None
 
     async def _embed(_query):
         return [0.0]
@@ -110,8 +116,7 @@ def _stub_retrieval(monkeypatch, captured: dict) -> None:
     monkeypatch.setattr(
         rag_search, "embed_sparse", lambda _texts: [SparseVector(indices=[0], values=[1.0])]
     )
-    # _Client, not `lambda: _Client()` -- calling the class is the construction.
-    monkeypatch.setattr(rag_search, "get_qdrant_client", _Client)
+    monkeypatch.setattr(rag_search, "get_store", _Store)
 
 
 class TestRunRagSearchClamp:

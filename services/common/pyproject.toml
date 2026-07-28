@@ -15,6 +15,9 @@ dependencies = [
     "sqlmodel>=0.0.21",
     "psycopg[binary]>=3.1",
     "qdrant-client>=1.10",
+    # #160: optional Milvus backend (common/milvus_store.py); imported only
+    # when VECTOR_BACKEND=milvus, but shipped so the toggle is config-only.
+    "pymilvus>=2.5",
     "fastembed>=0.6",
     # NFR-12: S3ObjectStore backend (common/object_store.py) -- generic
     # S3-compatible client (existing enterprise S3, Ceph RGW, MinIO, ...),
