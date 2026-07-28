@@ -55,3 +55,20 @@ datasources:
     editable: false
     jsonData:
       implementation: prometheus
+
+  # #133: metadata-only Postgres datasource for the Documents dashboard.
+  # Connects as grafana_ro, which can read the document_metrics view only.
+  - name: Documents (Postgres)
+    uid: documents-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: nexus_rag
+    user: ${GRAFANA_DB_USER}
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    editable: false

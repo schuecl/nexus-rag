@@ -689,6 +689,9 @@ services:
       # at startup; in an air-gapped install, pre-seed the plugin into
       # /var/lib/grafana/plugins instead and drop this line.
       GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel"
+      # #133: consumed by the provisioned Postgres datasource (documents dashboard).
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER:-grafana_ro}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro

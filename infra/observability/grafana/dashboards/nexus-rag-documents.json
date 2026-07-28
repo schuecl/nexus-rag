@@ -1,0 +1,83 @@
+{
+  "title": "Nexus RAG / Documents",
+  "uid": "nexus-rag-documents",
+  "tags": ["nexus-rag", "documents", "governance"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-30d", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Total documents",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS total FROM document_metrics" } ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/.*/" }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 2, "type": "piechart", "title": "By classification",
+      "gridPos": { "h": 8, "w": 7, "x": 4, "y": 0 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT classification AS metric, count(*) AS value FROM document_metrics GROUP BY classification ORDER BY value DESC" } ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "pieType": "donut", "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }, "displayLabels": ["name", "value"] },
+      "fieldConfig": { "defaults": {}, "overrides": [
+        { "matcher": { "id": "byName", "options": "UNCLASSIFIED" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+        { "matcher": { "id": "byName", "options": "CUI" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] },
+        { "matcher": { "id": "byName", "options": "SECRET" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+      ] }
+    },
+    {
+      "id": 3, "type": "piechart", "title": "By status (lifecycle)",
+      "gridPos": { "h": 8, "w": 7, "x": 11, "y": 0 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT status AS metric, count(*) AS value FROM document_metrics GROUP BY status ORDER BY value DESC" } ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "pieType": "pie", "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }, "displayLabels": ["name", "value"] },
+      "fieldConfig": { "defaults": {}, "overrides": [
+        { "matcher": { "id": "byName", "options": "approved" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+        { "matcher": { "id": "byName", "options": "pending_review" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] },
+        { "matcher": { "id": "byName", "options": "rejected" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+        { "matcher": { "id": "byName", "options": "superseded" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } } ] }
+      ] }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Approved / Pending / Rejected",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 4 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [
+        { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) FILTER (WHERE status='approved') AS \"approved\", count(*) FILTER (WHERE status='pending_review') AS \"pending\", count(*) FILTER (WHERE status='rejected') AS \"rejected\" FROM document_metrics" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/.*/" }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "orientation": "horizontal" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 5, "type": "barchart", "title": "By document type",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT doc_type AS metric, count(*) AS value FROM document_metrics GROUP BY doc_type ORDER BY value DESC" } ],
+      "options": { "orientation": "horizontal", "showValue": "always", "legend": { "showLegend": false }, "xTickLabelRotation": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "continuous-BlPu" } }, "overrides": [] }
+    },
+    {
+      "id": 6, "type": "table", "title": "Classification × type × status",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "table", "rawQuery": true, "rawSql": "SELECT classification, doc_type, status, count(*) AS documents FROM document_metrics GROUP BY classification, doc_type, status ORDER BY classification, doc_type, status" } ],
+      "options": { "showHeader": true },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "filterable": true } }, "overrides": [
+        { "matcher": { "id": "byName", "options": "documents" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } }, { "id": "color", "value": { "mode": "continuous-GrYlRd" } } ] }
+      ] }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Uploads over time (by classification)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "uid": "documents-pg" },
+      "targets": [ { "refId": "A", "datasource": { "uid": "documents-pg" }, "format": "time_series", "rawQuery": true, "rawSql": "SELECT $__timeGroupAlias(created_at, '1h', 0), classification AS metric, count(*) AS value FROM document_metrics WHERE $__timeFilter(created_at) GROUP BY 1, classification ORDER BY 1" } ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } }, "unit": "short" }, "overrides": [] }
+    }
+  ]
+}
