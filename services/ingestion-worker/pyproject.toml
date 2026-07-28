@@ -25,7 +25,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.24"]
+# pytest floor is 9.0.3, where PYSEC-2026-1845 is fixed (#188). These
+# suites carry no BDD tests, so the pytest-bdd<9.1 ceiling that
+# requirements-test.txt documents does not apply here.
+test = ["pytest>=9.0.3", "pytest-asyncio>=0.24"]
 
 # The consumer loop is async (app/processing.py), so its tests are too --
 # same configuration orchestration-mcp already uses.
