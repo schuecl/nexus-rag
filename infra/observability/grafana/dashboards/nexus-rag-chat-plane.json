@@ -257,7 +257,7 @@
       "id": 218,
       "type": "stat",
       "title": "MCP tool calls (1h)",
-      "description": "Every rag_search reaching orchestration-mcp, whether from LibreChat over MCP or from /debug/rag_search.",
+      "description": "rag_search invocations (MCP tool + /debug) in the last hour. 0 means no one has queried via chat recently -- expected on an idle stack, not a fault.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -384,7 +384,7 @@
       "id": 224,
       "type": "timeseries",
       "title": "Ollama inference requests",
-      "description": "Parsed from Ollama's access log, since it exposes no metrics endpoint. Embeddings come from ingestion and retrieval; generate/chat from LiteLLM.",
+      "description": "Parsed from Ollama's GIN access log. Embeddings = /api/embed(dings); generation = /api/generate|chat. Zero when the chat plane is idle.",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -397,43 +397,26 @@
       },
       "targets": [
         {
+          "refId": "A",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(rate({service=\"ollama\"} |= `/api/embeddings` [5m]))",
+          "expr": "sum(rate({service=\"ollama\"} |= `/api/embed` [5m]))",
           "legendFormat": "embeddings",
-          "range": true,
-          "instant": false,
-          "format": "time_series",
-          "refId": "N"
+          "queryType": "range"
         },
         {
+          "refId": "B",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(rate({service=\"ollama\"} |= `/api/generate` [5m]))",
-          "legendFormat": "generate",
-          "range": true,
-          "instant": false,
-          "format": "time_series",
-          "refId": "O"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate({service=\"ollama\"} |= `/api/chat` [5m]))",
-          "legendFormat": "chat",
-          "range": true,
-          "instant": false,
-          "format": "time_series",
-          "refId": "P"
+          "expr": "sum(rate({service=\"ollama\"} |~ `/api/(generate|chat)` [5m]))",
+          "legendFormat": "generation",
+          "queryType": "range"
         }
       ],
       "fieldConfig": {
@@ -476,7 +459,7 @@
       "id": 225,
       "type": "logs",
       "title": "LibreChat",
-      "description": "",
+      "description": "LibreChat app + its reverse proxy (the proxy carries per-request access logs; the app itself logs mostly on activity).",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -489,17 +472,15 @@
       },
       "targets": [
         {
+          "refId": "A",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{service=\"librechat\"}",
-          "legendFormat": "",
-          "range": true,
-          "instant": false,
-          "format": "time_series",
-          "refId": "S"
+          "expr": "{service=~\"librechat|librechat-proxy\"}",
+          "queryType": "range",
+          "direction": "backward"
         }
       ],
       "options": {
@@ -568,6 +549,6 @@
   "timezone": "utc",
   "title": "Nexus RAG / Chat plane (LibreChat, LiteLLM, Ollama)",
   "uid": "nexus-rag-chat-plane",
-  "version": 1,
+  "version": 3,
   "weekStart": ""
 }

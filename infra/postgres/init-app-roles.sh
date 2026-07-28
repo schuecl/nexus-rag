@@ -57,14 +57,17 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     GRANT ALL ON SCHEMA public TO "$APP_DB_USER";
 EOSQL
 
-# #133: metadata-only view + scoped read-only role for the Grafana "Documents"
-# dashboard. grafana_ro can SELECT this view and nothing else -- it exposes
-# governance metadata (classification/doc_type/status/org/timestamps) but NOT
-# filenames (content, per the purge path) or the base tables.
+# #133: scoped read-only role for the Grafana "Documents" dashboard. Only the
+# role, its CONNECT and its schema USAGE are created here -- they need no
+# application tables. The document_metrics VIEW it reads (governance metadata
+# only: classification/doc_type/status/org/timestamps + file-format extension,
+# never filenames or base tables) and the GRANT on that view are created later
+# by the provision-metrics-view one-shot: the `documents` table does not exist
+# yet at initdb time -- SQLModel's create_all() builds it when ingestion-api
+# first starts -- exactly the constraint harden-audit-log works around. Creating
+# the view here made postgres init fail with "relation documents does not exist"
+# and, under ON_ERROR_STOP, abort the whole first boot.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    CREATE OR REPLACE VIEW document_metrics AS
-      SELECT classification, doc_type, status, owner_org, created_at, updated_at
-      FROM documents;
     DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'grafana_ro') THEN
         CREATE ROLE grafana_ro LOGIN PASSWORD '${GRAFANA_DB_PASSWORD:-grafana_ro}';
@@ -72,5 +75,4 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     END \$\$;
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO grafana_ro;
     GRANT USAGE ON SCHEMA public TO grafana_ro;
-    GRANT SELECT ON document_metrics TO grafana_ro;
 EOSQL

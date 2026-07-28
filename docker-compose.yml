@@ -135,6 +135,14 @@ services:
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      # #133: surface Keycloak login/logout/token and admin events in the
+      # container log (→ Loki) for user-activity monitoring. The realm export
+      # enables the jboss-logging events listener; by default it logs successful
+      # events at DEBUG, so they never appear. Raise the success level to INFO
+      # (errors stay a level up) so LOGIN / LOGIN_ERROR / LOGOUT / CODE_TO_TOKEN
+      # and admin operations are visible without turning on DEBUG globally.
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: info
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_ERROR_LEVEL: warn
       # Issue #75: LibreChat's openid-client discovery call refuses a plain
       # HTTP issuer outright ("only requests to HTTPS are allowed") -- adding
       # HTTPS here, alongside the existing HTTP listener (still used
@@ -827,6 +835,37 @@ services:
         ALTER TABLE audit_log OWNER TO "${POSTGRES_USER:-nexus_rag}";
         REVOKE ALL ON audit_log FROM "${APP_DB_USER:-nexus_rag_app}";
         GRANT SELECT, INSERT ON audit_log TO "${APP_DB_USER:-nexus_rag_app}";
+    depends_on:
+      ingestion-api:
+        condition: service_healthy
+    restart: "no"
+
+  provision-metrics-view:
+    # #133: create the document_metrics view + grant it to grafana_ro, once
+    # ingestion-api is healthy (so SQLModel has built the `documents` table this
+    # view reads -- it cannot be created in postgres's initdb scripts, same as
+    # harden-audit-log). Only needed by the Grafana Documents dashboard, so it
+    # rides the observability profile; grafana_ro itself is created
+    # unconditionally by init-app-roles.sh. Connects as the bootstrap superuser
+    # to a mounted .sql file (no compose/shell interpolation of the regex).
+    profiles: ["observability"]
+    image: postgres:16.14
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - postgres
+      - -U
+      - ${POSTGRES_USER:-nexus_rag}
+      - -d
+      - ${POSTGRES_DB:-nexus_rag}
+      - -f
+      - /sql/document-metrics-view.sql
+    volumes:
+      - ./infra/postgres/document-metrics-view.sql:/sql/document-metrics-view.sql:ro
     depends_on:
       ingestion-api:
         condition: service_healthy

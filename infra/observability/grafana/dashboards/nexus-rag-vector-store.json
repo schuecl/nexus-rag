@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Qdrant collection health, and the Milvus alternative backend (#160).",
+  "description": "Qdrant collection health (points, queue, I/O, CPU). Milvus (the #160 either/or alternative backend) has its own dashboard: Nexus RAG / Milvus.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -702,162 +702,6 @@
           "sort": "desc"
         }
       }
-    },
-    {
-      "id": 100,
-      "type": "row",
-      "title": "Milvus (only when VECTOR_BACKEND=milvus)",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 20
-      },
-      "panels": []
-    },
-    {
-      "id": 102,
-      "type": "stat",
-      "title": "Milvus up",
-      "description": "#160 makes Milvus an either/or alternative to Qdrant behind a seam. This panel reads 0 on a Qdrant deployment, which is the expected state -- one backend per deployment, never both.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 21
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "max(up{job=~\"milvus.*\"}) or vector(0)",
-          "legendFormat": "",
-          "range": false,
-          "instant": true,
-          "format": "time_series",
-          "refId": "X"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "DOWN"
-                },
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "UP"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "textMode": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        }
-      }
-    },
-    {
-      "id": 104,
-      "type": "timeseries",
-      "title": "Milvus request latency p95",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 18,
-        "x": 6,
-        "y": 21
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "max(histogram_quantile(0.95, sum by (le) (rate(milvus_proxy_req_latency_bucket[5m])))) or vector(0)",
-          "legendFormat": "p95",
-          "range": true,
-          "instant": false,
-          "format": "time_series",
-          "refId": "Z"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "pointSize": 8,
-            "spanNulls": true,
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
     }
   ],
   "refresh": "30s",
@@ -875,7 +719,7 @@
   },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Nexus RAG / Vector store",
+  "title": "Nexus RAG / Vector store (Qdrant)",
   "uid": "nexus-rag-vector-store",
   "version": 1,
   "weekStart": ""

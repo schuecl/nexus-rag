@@ -613,6 +613,6 @@
   "timezone": "utc",
   "title": "Nexus RAG / Logs and traces",
   "uid": "nexus-rag-logs-traces",
-  "version": 1,
+  "version": 3,
   "weekStart": ""
 }

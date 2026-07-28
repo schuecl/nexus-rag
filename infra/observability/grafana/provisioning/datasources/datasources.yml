@@ -68,6 +68,12 @@ datasources:
     secureJsonData:
       password: ${GRAFANA_DB_PASSWORD}
     jsonData:
+      # Grafana 11+ reads the database from jsonData.database; the top-level
+      # `database` above is honoured by the backend but the panel query path
+      # needs it here, otherwise every panel reads "No data" with a
+      # "no default database configured" notice even though the datasource
+      # connects fine.
+      database: nexus_rag
       sslmode: disable
       postgresVersion: 1600
       timescaledb: false

@@ -51,6 +51,16 @@ scrape_configs:
     static_configs:
       - targets: ["qdrant:6333"]
 
+  # #160: Milvus Standalone metrics, the either/or alternative to Qdrant. Only
+  # reachable when the stack is started with the milvus profile; on a Qdrant
+  # deployment this target simply stays DOWN, which is the expected state (one
+  # backend per deployment, never both). Milvus exposes Prometheus metrics on
+  # 9091/metrics -- the same port as its healthz.
+  - job_name: milvus
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["milvus:9091"]
+
   - job_name: keycloak
     metrics_path: /metrics
     static_configs:
