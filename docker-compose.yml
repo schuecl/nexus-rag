@@ -1023,6 +1023,14 @@ services:
       # Generated with `openssl rand -hex 32` / `openssl rand -hex 16`.
       CREDS_KEY: ${LIBRECHAT_CREDS_KEY:-b981603e3853e792749bd57a37263dcac98f05e9bcc3221b28ea9ce1d31407f6}
       CREDS_IV: ${LIBRECHAT_CREDS_IV:-59ac382baf239caa9f8bb22863d45e41}
+      # #193: the API key LibreChat presents to the LiteLLM custom endpoint.
+      # infra/librechat/librechat.yaml has `apiKey: "${LITELLM_MASTER_KEY}"` and
+      # LibreChat only substitutes that from *this container's* environment, so
+      # without this line the substitution is empty and every LiteLLM-backed
+      # model fails with "Missing API Key for LiteLLM" -- a message about the
+      # LiteLLM service key, not the user's (working) Keycloak login. Matches
+      # LiteLLM's own master_key default.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-dev-litellm-master-key}
     # No host port mapping here anymore -- librechat-proxy below is what the
     # host's :3080 actually reaches (issue #75: this container has no HTTPS
     # listener of its own).
