@@ -85,6 +85,21 @@ MIN_HYBRID_CANDIDATES = 20
 MAX_TOP_K = 50
 DEFAULT_TOP_K = 5
 
+# Issue #208: top_k was bounded on every entry point (#106) but the query
+# string itself was not, and it drives the same expensive fan-out -- an
+# embedding call to Ollama, a sparse encode via fastembed, and then one
+# (query, chunk) pair per candidate through the shared cross-encoder. Bounding
+# the *count* of chunks without bounding the *size* of each pair left the
+# availability hole half open.
+#
+# 4000 characters is far beyond any real question (the golden queries are
+# 30-60) and still well inside the embedding model's context, so this rejects
+# abuse without truncating legitimate use. Rejecting rather than truncating is
+# deliberate and matches reranker-service's MAX_RERANK_CHUNKS reasoning: a
+# silently shortened query returns results for a question the user did not
+# ask, with no signal that it happened.
+MAX_QUERY_CHARS = int(os.environ.get("MAX_QUERY_CHARS", "4000"))
+
 
 def _audit_query_detail(query: str, **extra: object) -> dict:
     """The FR-31 detail payload for a retrieval attempt.
@@ -265,6 +280,13 @@ async def _run_rag_search(
     # See MAX_TOP_K: both current callers validate before reaching this, so a
     # value outside the range means a new transport skipped that check.
     top_k = max(1, min(top_k, MAX_TOP_K))
+    # #208: same defence-in-depth position as the top_k clamp -- both callers
+    # validate first, so reaching this means a transport added later skipped
+    # its own check. Rejected before parse_claims so an oversized query is
+    # refused without doing the JWKS work it was trying to make us do.
+    if len(query) > MAX_QUERY_CHARS:
+        metrics.queries_total.labels(outcome="rejected").inc()
+        return {"error": f"query exceeds {MAX_QUERY_CHARS} characters"}
     try:
         claims = parse_claims(bearer_token)
     except jwt.PyJWTError as exc:

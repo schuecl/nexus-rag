@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -52,6 +53,25 @@ tracer = get_tracer("ingestion-worker")
 # in flight -- redelivery is meant for "the worker actually died", not
 # "processing is still legitimately running".
 ACK_WAIT_SECONDS = 300.0
+
+# Issue #208: a wall-clock budget for one document's parse/chunk/embed. The
+# ZIP guard in parsing.py bounds decompression for OOXML formats, but nothing
+# bounded *time* -- a crafted PDF within the 50MB upload limit can expand
+# enormously inside pdfplumber and hold a worker indefinitely, and no format
+# is guarded against simply being pathologically slow.
+#
+# Deliberately below ACK_WAIT_SECONDS: a document that would outrun the ack
+# wait is exactly the case where JetStream starts a second attempt alongside
+# the first. Failing at 240s means this worker gives up and marks the document
+# `failed` before that happens, rather than two workers grinding on the same
+# input. #164's deterministic point ids keep a concurrent replay from
+# duplicating vectors; this keeps the concurrency from arising.
+#
+# Timeout is treated as permanent, not transient: the same input on the same
+# hardware will take the same time on redelivery, so retrying burns the budget
+# again and the uploader waits longer for the same FR-8 outcome.
+PROCESSING_TIMEOUT_SECONDS = float(os.environ.get("PROCESSING_TIMEOUT_SECONDS", "240"))
+
 DURABLE_CONSUMER_NAME = "ingestion-worker"
 FETCH_BATCH_SIZE = 1
 FETCH_TIMEOUT_SECONDS = 5.0
@@ -262,36 +282,49 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                 # object-store key below: retrying can't produce a key that
                 # was deliberately destroyed.
                 raise FileNotFoundError("original_object_key is unset (document was purged)")
-            contents = get_object_store().get(doc.original_object_key)
-            metrics.document_bytes.observe(len(contents))
-            # #134's ingest.process stage spans: attribute values are counts
-            # and byte sizes only, never the text they describe.
-            with (
-                metrics.stage_seconds.labels(stage="parse").time(),
-                tracer.start_as_current_span("parse") as span,
-            ):
-                span.set_attribute("document.bytes", len(contents))
-                sections = parse_document(doc.filename, contents)
-                span.set_attribute("document.sections", len(sections))
-            # Issue #138: advisory only, never blocks -- see _apply_tagging_advisory.
-            _apply_tagging_advisory(session, doc, sections)
-            with (
-                metrics.stage_seconds.labels(stage="chunk").time(),
-                tracer.start_as_current_span("chunk") as span,
-            ):
-                chunks = chunk_sections(sections)
-                span.set_attribute("document.chunks", len(chunks))
-            if not chunks:
-                raise ParsingError("document contained no extractable text")
-            metrics.chunks_produced.observe(len(chunks))
+            # #208: one wall-clock budget for the whole CPU-bound stretch
+            # -- fetch, parse, chunk, embed. The vector upsert is left
+            # outside it deliberately: a slow Qdrant write is a transient
+            # infrastructure failure that should be redelivered, not a
+            # pathological document that should be failed permanently.
+            async with asyncio.timeout(PROCESSING_TIMEOUT_SECONDS):
+                contents = get_object_store().get(doc.original_object_key)
+                metrics.document_bytes.observe(len(contents))
+                # #134's ingest.process stage spans: attribute values are counts
+                # and byte sizes only, never the text they describe.
+                with (
+                    metrics.stage_seconds.labels(stage="parse").time(),
+                    tracer.start_as_current_span("parse") as span,
+                ):
+                    span.set_attribute("document.bytes", len(contents))
+                    # #208: to_thread, not a direct call. parse_document is
+                    # synchronous and CPU-bound, so calling it inline blocks the
+                    # event loop for its whole duration -- which is both why
+                    # /health stops answering during a pathological parse and why
+                    # an asyncio timeout around it could never fire (there is no
+                    # await point to cancel at). Off the loop, the timeout below
+                    # is real and the consumer stays responsive.
+                    sections = await asyncio.to_thread(parse_document, doc.filename, contents)
+                    span.set_attribute("document.sections", len(sections))
+                # Issue #138: advisory only, never blocks -- see _apply_tagging_advisory.
+                _apply_tagging_advisory(session, doc, sections)
+                with (
+                    metrics.stage_seconds.labels(stage="chunk").time(),
+                    tracer.start_as_current_span("chunk") as span,
+                ):
+                    chunks = await asyncio.to_thread(chunk_sections, sections)
+                    span.set_attribute("document.chunks", len(chunks))
+                if not chunks:
+                    raise ParsingError("document contained no extractable text")
+                metrics.chunks_produced.observe(len(chunks))
 
-            with (
-                metrics.stage_seconds.labels(stage="embed").time(),
-                tracer.start_as_current_span("embed") as span,
-            ):
-                span.set_attribute("document.chunks", len(chunks))
-                dense_vectors = await embed_texts([c.text for c in chunks])
-                sparse_vectors = embed_sparse([c.text for c in chunks])
+                with (
+                    metrics.stage_seconds.labels(stage="embed").time(),
+                    tracer.start_as_current_span("embed") as span,
+                ):
+                    span.set_attribute("document.chunks", len(chunks))
+                    dense_vectors = await embed_texts([c.text for c in chunks])
+                    sparse_vectors = embed_sparse([c.text for c in chunks])
 
             points = [
                 ChunkPoint(
@@ -395,16 +428,31 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
             session.commit()
             metrics.jobs_total.labels(outcome="permanent_failure").inc()
             return True
-        except (ParsingError, EmbeddingError) as exc:
-            # Permanent failures -- corrupt/unsupported input, or the
-            # embedding service rejecting this exact request outright.
-            # Retrying the identical input wouldn't help, so land the
-            # document in `failed` and ack rather than let JetStream
-            # redeliver it forever.
+        except (ParsingError, EmbeddingError, TimeoutError) as exc:
+            # Permanent failures -- corrupt/unsupported input, the embedding
+            # service rejecting this exact request outright, or (#208) the
+            # document outrunning PROCESSING_TIMEOUT_SECONDS. Retrying the
+            # identical input wouldn't help, so land the document in `failed`
+            # and ack rather than let JetStream redeliver it forever.
+            #
+            # Timeout counts as permanent for the same reason: the same bytes
+            # on the same hardware take the same time on the next attempt, so
+            # redelivering only spends the budget again and delays the FR-8
+            # outcome the uploader is waiting for.
+            #
+            # Caveat worth stating: cancelling the await does not kill the
+            # worker thread parse_document is running in -- Python cannot
+            # interrupt a thread. The consumer is freed immediately and the
+            # orphaned thread's result is discarded when it eventually
+            # finishes. That bounds the *consumer*, not the process's CPU.
             doc.status = "failed"
             doc.processing_started_at = None
             doc.updated_at = _utcnow()
-            doc.processing_error = str(exc)
+            doc.processing_error = (
+                f"processing exceeded {PROCESSING_TIMEOUT_SECONDS:.0f}s"
+                if isinstance(exc, TimeoutError)
+                else str(exc)
+            )
             session.add(doc)
             session.add(
                 AuditLogEntry(
