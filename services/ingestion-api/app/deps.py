@@ -222,7 +222,7 @@ def require_curator(user: UserClaims = Depends(get_current_user)) -> UserClaims:
 
 
 def require_admin(user: UserClaims = Depends(get_current_user)) -> UserClaims:
-    if "rag-admin" not in user.rag_roles:
+    if not user.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-admin role")
     return user
 

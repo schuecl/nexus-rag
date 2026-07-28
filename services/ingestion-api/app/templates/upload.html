@@ -1,91 +1,344 @@
 {% extends "base.html" %}
-{% block title %}Upload — nexus-rag{% endblock %}
+{% block title %}Submit a document — Document Portal{% endblock %}
+{% block main_class %}upload-page{% endblock %}
+
 {% block content %}
-<h1>Submit a document</h1>
-<p>Fields marked * are mandatory per FR-2 -- submission is blocked without them.</p>
-<form id="uploadForm">
-  <label>File * <input type="file" name="file" required /></label>
+<section class="page-heading">
+  <div>
+    <span class="eyebrow">Document intake</span>
+    <h1>Submit a document</h1>
+    <p>
+      Fields marked <span class="required">*</span> are mandatory per FR-2 --
+      submission is blocked without them.
+    </p>
+  </div>
+  <div class="policy-badge" aria-label="Mandatory metadata is enforced">
+    <span>FR-2</span>
+    Mandatory metadata enforced
+  </div>
+</section>
 
-  <label>Classification *
-    <select name="classification" required>
-      {% for value, rank in classifications %}
-      <option value="{{ value }}">{{ value }}</option>
-      {% endfor %}
-    </select>
-  </label>
+<div class="submission-layout">
+  <form class="submission-card" id="uploadForm" novalidate>
+    <section class="form-section" aria-labelledby="file-section-title">
+      <div class="section-heading">
+        <span class="section-number">1</span>
+        <div>
+          <h2 id="file-section-title">File <span class="required">*</span></h2>
+          <p>Drag and drop one file, or browse from your device.</p>
+        </div>
+      </div>
 
-  <label>Releasability * <span class="hint">(ctrl/cmd-click for more than one, e.g. NATO + FVEY)</span>
-    <select name="releasability" multiple required>
-      {% for value in releasability %}
-      <option value="{{ value }}"{% if value == no_releasability_restriction %} selected{% endif %}>{{ value }}</option>
-      {% endfor %}
-    </select>
-  </label>
+      <div
+        class="drop-zone"
+        id="dropZone"
+        role="button"
+        tabindex="0"
+        aria-describedby="fileSupport fileError"
+      >
+        <span class="upload-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"></path>
+            <path d="M5 14v4.25A1.75 1.75 0 0 0 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V14"></path>
+          </svg>
+        </span>
+        <strong>Drop your document here</strong>
+        <span>or choose it manually from your computer</span>
+        <button class="browse-button" id="browseFile" type="button">Browse files</button>
+        <small id="fileSupport">
+          PDF, DOCX, PPTX, XLSX, TXT, Markdown, or HTML · Maximum 50 MB
+        </small>
+      </div>
+      <input
+        class="visually-hidden"
+        id="fileInput"
+        name="file"
+        type="file"
+        accept=".pdf,.docx,.pptx,.xlsx,.txt,.md,.markdown,.html,.htm"
+        aria-required="true"
+      />
+      <p class="field-error" id="fileError" role="alert"></p>
 
-  <label>Access scope * <span class="hint">(comma-separated orgs/groups/users, or ALL_AUTHENTICATED)</span>
-    <input type="text" name="access_scope" placeholder="ALL_AUTHENTICATED or USAREUR-AF, Signal-Corps" required />
-  </label>
+      <div class="selected-file" id="selectedFile" hidden>
+        <span class="file-extension" id="fileExtension">FILE</span>
+        <span class="file-details">
+          <strong id="fileName"></strong>
+          <small id="fileMeta"></small>
+        </span>
+        <span class="file-actions">
+          <button class="text-button" id="replaceFile" type="button">Replace</button>
+          <button class="text-button danger-button" id="removeFile" type="button">Remove</button>
+        </span>
+      </div>
+    </section>
 
-  <label>Source / Originator * <input type="text" name="source_originator" required /></label>
-  <label>Document type * <input type="text" name="doc_type" placeholder="Regulation, SOP, manual, data sheet..." required /></label>
-  <label>Program / community <input type="text" name="program_community" /></label>
-  <label>Effective date <input type="date" name="effective_date" /></label>
-  <label>Supersedes document ID <span class="hint">(optional, FR-7 -- paste an existing approved document's ID to submit this as a new version. Checked at approval time against your org/clearance/releasability, and again against the document's own.)</span>
-    <input type="text" name="supersedes_document_id" placeholder="leave blank for a new document" />
-  </label>
+    <section class="form-section" aria-labelledby="security-section-title">
+      <div class="section-heading">
+        <span class="section-number">2</span>
+        <div>
+          <h2 id="security-section-title">Security and access</h2>
+          <p>Define the document’s classification, releasability, and intended audience.</p>
+        </div>
+      </div>
 
-  <button type="submit">Submit</button>
-</form>
-<div id="result" class="msg"></div>
+      <div class="field-grid two-columns">
+        <div class="field">
+          <label for="classification">
+            Classification <span class="required">*</span>
+          </label>
+          <div class="select-shell">
+            <select id="classification" name="classification" required>
+              {% for value, rank in classifications %}
+              <option value="{{ value }}">{{ value }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <p class="field-help">Choose the highest classification appearing in the file.</p>
+        </div>
 
+        <fieldset class="field releasability-field">
+          <legend>Releasability <span class="required">*</span></legend>
+          <div class="choice-grid" id="releasabilityChoices">
+            {% for value in releasability %}
+            <label class="choice">
+              <input
+                type="checkbox"
+                name="releasability"
+                value="{{ value }}"
+                {% if value == no_releasability_restriction %}checked{% endif %}
+              />
+              <span>{{ value }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          <p class="field-help">
+            Select more than one when needed, e.g. NATO + FVEY.
+            {{ no_releasability_restriction }} cannot be combined with another marking.
+          </p>
+        </fieldset>
+      </div>
+
+      <div class="field">
+        <label for="accessScope">
+          Access scope <span class="required">*</span>
+          <span class="field-label-hint">
+            (comma-separated orgs/groups/users, or ALL_AUTHENTICATED)
+          </span>
+        </label>
+        <input
+          id="accessScope"
+          name="access_scope"
+          type="text"
+          placeholder="ALL_AUTHENTICATED or USAREUR-AF, Signal-Corps"
+          autocomplete="off"
+          required
+        />
+      </div>
+    </section>
+
+    <section class="form-section" aria-labelledby="metadata-section-title">
+      <div class="section-heading">
+        <span class="section-number">3</span>
+        <div>
+          <h2 id="metadata-section-title">Document metadata</h2>
+          <p>Add context used for discovery, review, and lifecycle management.</p>
+        </div>
+      </div>
+
+      <div class="field-grid two-columns">
+        <div class="field">
+          <label for="sourceOriginator">
+            Source / Originator <span class="required">*</span>
+          </label>
+          <input
+            id="sourceOriginator"
+            name="source_originator"
+            type="text"
+            placeholder="Office, unit, vendor, or author"
+            autocomplete="organization"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="documentType">
+            Document type <span class="required">*</span>
+          </label>
+          <input
+            id="documentType"
+            name="doc_type"
+            type="text"
+            placeholder="Regulation, SOP, manual, data sheet..."
+            autocomplete="off"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="programCommunity">
+            Program / community
+          </label>
+          <input
+            id="programCommunity"
+            name="program_community"
+            type="text"
+            placeholder="Program name or community of interest"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="field">
+          <label for="effectiveDate">
+            Effective date
+          </label>
+          <input id="effectiveDate" name="effective_date" type="date" />
+        </div>
+      </div>
+    </section>
+
+    <section class="form-section" aria-labelledby="version-section-title">
+      <div class="section-heading">
+        <span class="section-number">4</span>
+        <div>
+          <h2 id="version-section-title">Version relationship</h2>
+          <p>Complete this only when the upload replaces an approved document.</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="supersedesDocument">
+          Supersedes document ID
+          <span class="field-label-hint">
+            (optional, FR-7 -- paste an existing approved document's ID to submit this as
+            a new version. Checked at approval time against your
+            org/clearance/releasability, and again against the document's own.)
+          </span>
+        </label>
+        <input
+          id="supersedesDocument"
+          name="supersedes_document_id"
+          type="text"
+          placeholder="leave blank for a new document"
+          autocomplete="off"
+        />
+        <div class="info-callout">
+          <span aria-hidden="true">i</span>
+          <div>
+            <strong>FR-7 approval validation</strong>
+            <p>
+              The referenced document is checked against your organization, clearance,
+              releasability, and its own access restrictions.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="submission-result" id="submissionResult" role="status" aria-live="polite" hidden>
+      <span class="result-icon" aria-hidden="true"></span>
+      <div>
+        <strong id="resultTitle"></strong>
+        <p id="resultMessage"></p>
+        <details id="resultDetails" hidden>
+          <summary>Technical details</summary>
+          <pre id="resultBody"></pre>
+        </details>
+      </div>
+    </div>
+
+    <footer class="form-actions">
+      <p class="form-security-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.5 19 6v5.25c0 4.25-2.85 7.78-7 9.25-4.15-1.47-7-5-7-9.25V6z"></path>
+          <path d="m9.25 12 1.75 1.75 3.75-4"></path>
+        </svg>
+        Metadata is validated against your permissions.
+      </p>
+      <div class="action-buttons">
+        <button class="secondary-button" id="clearForm" type="button">Clear form</button>
+        <button class="primary-button" id="submitButton" type="submit">
+          <span>Submit</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m9 18 6-6-6-6"></path>
+          </svg>
+        </button>
+      </div>
+    </footer>
+  </form>
+
+  <aside class="submission-sidebar" aria-label="Submission guidance">
+    <section class="sidebar-card readiness-card">
+      <div class="sidebar-card-heading">
+        <div>
+          <span class="sidebar-kicker">Live checklist</span>
+          <h2>Submission readiness</h2>
+        </div>
+        <span class="readiness-count" id="readinessCount">2 of 5</span>
+      </div>
+      <div
+        class="readiness-progress"
+        role="progressbar"
+        aria-label="Required submission fields completed"
+        aria-valuemin="0"
+        aria-valuemax="5"
+        aria-valuenow="2"
+      >
+        <span id="readinessProgress"></span>
+      </div>
+      <ul class="check-list">
+        <li data-check="file"><span>✓</span>Document file selected</li>
+        <li class="done" data-check="classification"><span>✓</span>Classification assigned</li>
+        <li class="done" data-check="releasability"><span>✓</span>Releasability assigned</li>
+        <li data-check="scope"><span>✓</span>Access scope defined</li>
+        <li data-check="metadata"><span>✓</span>Originator and type added</li>
+      </ul>
+    </section>
+
+    <section class="sidebar-card workflow-card">
+      <h2>Curation workflow</h2>
+      <ol class="workflow-list">
+        <li>
+          <span>1</span>
+          <div><strong>Submit</strong><small>File and metadata validation</small></div>
+        </li>
+        <li>
+          <span>2</span>
+          <div><strong>Review</strong><small>Curator verifies handling rules</small></div>
+        </li>
+        <li>
+          <span>3</span>
+          <div><strong>Approve</strong><small>Document becomes discoverable</small></div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="sidebar-card guidance-card">
+      <span class="guidance-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 3.5 19 6v5.25c0 4.25-2.85 7.78-7 9.25-4.15-1.47-7-5-7-9.25V6z"></path>
+          <path d="m9.25 12 1.75 1.75 3.75-4"></path>
+        </svg>
+      </span>
+      <h2>Before you submit</h2>
+      <p>Verify markings, access scope, and document readability before curation.</p>
+    </section>
+  </aside>
+</div>
+
+<div class="mobile-action-bar">
+  <button class="secondary-button" id="mobileClearForm" type="button">Clear</button>
+  <button class="primary-button" type="submit" form="uploadForm">
+    Submit
+  </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
-document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const fd = new FormData();
-  fd.append('file', form.file.files[0]);
-  fd.append('classification', form.classification.value);
-  const releasability = Array.from(form.releasability.selectedOptions).map(o => o.value);
-  fd.append('releasability', JSON.stringify(releasability));
-  const scope = form.access_scope.value.split(',').map(s => s.trim()).filter(Boolean);
-  fd.append('access_scope', JSON.stringify(scope));
-  fd.append('source_originator', form.source_originator.value);
-  fd.append('doc_type', form.doc_type.value);
-  if (form.program_community.value) fd.append('program_community', form.program_community.value);
-  if (form.effective_date.value) fd.append('effective_date', form.effective_date.value);
-  if (form.supersedes_document_id.value) fd.append('supersedes_document_id', form.supersedes_document_id.value.trim());
-
-  const resultEl = document.getElementById('result');
-  try {
-    const res = await fetch('/documents', { method: 'POST', headers: authHeaders(), body: fd });
-    const body = await res.json();
-    resultEl.className = 'msg ' + (res.ok ? 'ok' : 'err');
-    resultEl.textContent = JSON.stringify(body, null, 2);
-    if (res.ok) {
-      form.reset();
-      pollStatus(body.id);
-    }
-  } catch (err) {
-    resultEl.className = 'msg err';
-    resultEl.textContent = String(err);
-  }
-});
-
-// FR-8: submission returns 202 with status "queued" before parse/chunk/embed
-// (FR-3..FR-6) has actually run; poll until it reaches a terminal state
-// (pending_review or failed) instead of just showing the initial response.
-const TERMINAL_STATUSES = ['pending_review', 'failed', 'approved', 'rejected', 'superseded'];
-
-async function pollStatus(docId, attempt = 0) {
-  const resultEl = document.getElementById('result');
-  const res = await fetch(`/documents/${docId}`, { headers: authHeaders() });
-  if (!res.ok) return;
-  const doc = await res.json();
-  resultEl.textContent = JSON.stringify(doc, null, 2);
-  resultEl.className = 'msg ' + (doc.status === 'failed' ? 'err' : 'ok');
-  if (!TERMINAL_STATUSES.includes(doc.status) && attempt < 30) {
-    setTimeout(() => pollStatus(docId, attempt + 1), 1000);
-  }
-}
+  window.portalUploadConfig = {
+    noReleasabilityRestriction: {{ no_releasability_restriction | tojson }},
+    maxUploadBytes: 52428800
+  };
 </script>
+<script src="{{ url_for('static', path='/upload.js') }}" defer></script>
 {% endblock %}

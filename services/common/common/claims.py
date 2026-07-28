@@ -81,6 +81,19 @@ class UserClaims(BaseModel):
         return "rag-query" in self.rag_roles
 
     @property
+    def is_admin(self) -> bool:
+        """C9 administration: the classification/releasability vocabularies and
+        the portal's classification banner (#166).
+
+        Note what this does *not* grant. rag-admin confers no data access --
+        no document read, no query, no curation. Managing the vocabulary a
+        document is tagged from is a different authority from seeing anything
+        tagged with it, and #127's privacy model depends on those staying
+        separate.
+        """
+        return "rag-admin" in self.rag_roles
+
+    @property
     def clearance(self) -> str:
         # FR-18/FR-26/FR-14: the user's Classification level, derived from a
         # rag-clearance:<value> client role -- same rag_roles-prefix pattern as

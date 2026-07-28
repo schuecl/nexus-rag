@@ -37,6 +37,46 @@ class ReleasabilityValue(SQLModel, table=True):
     active: bool = Field(default=True)
 
 
+class PortalSettings(SQLModel, table=True):
+    """Issue #166: deployment-wide portal settings -- the classification
+    banner, and the visual theme.
+
+    Admin-set, not derived. The banner states what this *system* is accredited
+    to hold, which is a deployment property an accrediting authority decides --
+    not something to infer from whoever happens to be signed in. Deriving it
+    from a user's clearance would make the same page carry different markings
+    for different viewers, which is exactly what a marking must not do.
+
+    A single row (id=1). Absent or inactive means no banner has been set, and
+    the portal says so explicitly rather than defaulting to UNCLASSIFIED --
+    "nobody has configured this" and "this system holds unclassified material"
+    are different statements, and quietly showing the second when the first is
+    true is how a wrong marking ends up on a screen.
+    """
+
+    __tablename__ = "portal_settings"
+
+    id: int | None = Field(default=None, primary_key=True)
+    # Free text rather than a foreign key to classification_levels: a banner
+    # is a full marking line ("SECRET//NOFORN"), not a single level, and the
+    # accreditation may word it in ways the ranked list does not contain.
+    text: str = Field(default="")
+    # Drives the banner colour. Matched case-insensitively against the CAPCO
+    # palette in portal.css; anything unrecognised falls back to a neutral
+    # style rather than guessing a colour, since a wrong colour on a marking
+    # is worse than no colour.
+    level: str = Field(default="")
+    active: bool = Field(default=False)
+    # Selected in Admin > Portal settings, applied as a data-theme attribute
+    # the stylesheet keys its token block off. Deployment-wide rather than
+    # per-user: two people looking at the same classified record should see
+    # the same page, and a per-user theme is a small step towards them not
+    # doing so. Empty means the built-in default.
+    theme: str = Field(default="")
+    updated_by: str | None = Field(default=None)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Document(SQLModel, table=True):
     """System of record for a document's status and metadata (Section 6.3).
     Chunk vectors + a copy of this payload live in Qdrant once FR-5/FR-6 are
