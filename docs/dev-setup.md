@@ -101,6 +101,75 @@ Host prerequisites for the GPU path: an NVIDIA driver, the
 `nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
 Air-gapped (NFR-1): mirror the chosen torch index internally and point
 `TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## Observability stack (optional, #133)
+
+Off by default. Bring it up alongside the app stack:
+
+```bash
+docker compose --profile observability up -d
+```
+
+**The profile alone does not enable tracing or JSON logs.** Uncomment both of
+these in `.env` first, or Tempo stays empty and the trace-to-logs links have
+nothing to match on:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+LOG_FORMAT=json
+```
+
+Put them in `.env` rather than inline on the `up` command — an inline variable
+is lost as soon as a container is recreated from Docker Desktop or a plain
+`docker compose up`, and the only symptom is a `tracing disabled` line at
+startup that is easy to scroll past.
+
+- **Grafana** http://localhost:3000 (`admin` / `nexus-rag-admin`) -- dashboards
+  and datasources are auto-provisioned (Prometheus, Loki, Tempo).
+- **Prometheus** http://127.0.0.1:9090 scrapes every service's `/metrics`.
+- **Tempo** (traces) and **Loki** (logs) are wired as Grafana datasources.
+- Every port except Grafana is published loopback-only.
+- **Trace-to-log correlation works**: with `LOG_FORMAT=json` and tracing
+  enabled, every log line carries `trace_id`/`span_id`, which is what
+  Grafana's provisioned Loki datasource matches on to jump between a log line
+  and its trace in Tempo.
+- **Grafana's service map is populated** by Tempo's metrics-generator, which
+  derives span metrics and service graphs as spans arrive and remote-writes
+  them to Prometheus (`--web.enable-remote-write-receiver`).
+
+### What holds the Docker socket, and why
+
+Alloy discovers containers and tails their stdout through
+**docker-socket-proxy**, not through a direct `/var/run/docker.sock` mount. A
+`:ro` bind on the socket restricts the file, not the daemon API behind it —
+anything that can talk to the socket can create a privileged container, so it
+is root on the host. The proxy allows only the `GET /containers` endpoints
+Alloy needs and refuses container creation and exec.
+
+This reduces the exposure, it does not remove it: the proxy itself holds the
+socket. It is a dev-only profile, never started by a bare `docker compose up`,
+and the Helm chart has no equivalent (pods log to the node's collector).
+
+### Postgres metrics
+
+`postgres-exporter` scrapes as `MONITORING_DB_USER` (`nexus_rag_monitor` by
+default), a dedicated role with `pg_monitor` and `CONNECT` and no table
+privileges. Not `APP_DB_USER`: most of the exporter's collectors return
+nothing without `pg_monitor`, and granting it to the application credential
+would give the whole app cluster-wide read of every session's queries, which
+is the separation NFR-3 exists to keep. The role is created by
+`infra/postgres/init-app-roles.sh`, which runs **once**, on the first boot of a
+fresh data directory — on a pre-existing volume, create it by hand or recreate
+the volume.
+
+### Kubernetes
+
+The chart does not deploy a monitoring stack; a cluster inside the
+accreditation boundary already runs one. Set
+`observability.serviceMonitor.enabled=true` (off by default, since rendering a
+ServiceMonitor without the Prometheus Operator's CRDs fails the install) to
+let that stack discover the services' `/metrics` endpoints — and allow the
+monitoring namespace through the chart's default-deny NetworkPolicies, which
+otherwise block the scrape.
 
 ## Prerequisites
 

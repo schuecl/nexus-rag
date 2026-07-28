@@ -21,6 +21,9 @@
 #   - LITELLM_DB_USER: owns its own separate LITELLM_DB_NAME database, same
 #     reasoning -- LiteLLM's Prisma migrations (virtual keys, spend tracking)
 #     stay isolated from both the app's and Keycloak's tables.
+#   - MONITORING_DB_USER: what postgres-exporter scrapes as under the opt-in
+#     observability profile (#133). pg_monitor + CONNECT only -- no table
+#     privileges, and deliberately not APP_DB_USER.
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
@@ -32,6 +35,18 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
 
     CREATE ROLE "$LITELLM_DB_USER" WITH LOGIN PASSWORD '$LITELLM_DB_PASSWORD';
     CREATE DATABASE "$LITELLM_DB_NAME" OWNER "$LITELLM_DB_USER";
+
+    -- #133: the role postgres-exporter scrapes with, when the opt-in
+    -- observability profile is running. Deliberately its own role rather than
+    -- APP_DB_USER: the exporter's collectors need pg_monitor (pg_stat_*,
+    -- pg_read_all_stats) to return anything at all, and pg_monitor is
+    -- cluster-wide read of every session's activity -- not something the
+    -- credential ingestion-api and orchestration-mcp run as should carry.
+    -- CONNECT only, no table privileges: it reads statistics views, never
+    -- corpus data.
+    CREATE ROLE "$MONITORING_DB_USER" WITH LOGIN PASSWORD '$MONITORING_DB_PASSWORD';
+    GRANT pg_monitor TO "$MONITORING_DB_USER";
+    GRANT CONNECT ON DATABASE "$POSTGRES_DB" TO "$MONITORING_DB_USER";
 EOSQL
 
 # Postgres 15+ restricts CREATE on the public schema to the database owner by
@@ -40,4 +55,24 @@ EOSQL
 # ingestion-api starts up and tries to create its tables.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     GRANT ALL ON SCHEMA public TO "$APP_DB_USER";
+EOSQL
+
+# #133: scoped read-only role for the Grafana "Documents" dashboard. Only the
+# role, its CONNECT and its schema USAGE are created here -- they need no
+# application tables. The document_metrics VIEW it reads (governance metadata
+# only: classification/doc_type/status/org/timestamps + file-format extension,
+# never filenames or base tables) and the GRANT on that view are created later
+# by the provision-metrics-view one-shot: the `documents` table does not exist
+# yet at initdb time -- SQLModel's create_all() builds it when ingestion-api
+# first starts -- exactly the constraint harden-audit-log works around. Creating
+# the view here made postgres init fail with "relation documents does not exist"
+# and, under ON_ERROR_STOP, abort the whole first boot.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    DO \$\$ BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'grafana_ro') THEN
+        CREATE ROLE grafana_ro LOGIN PASSWORD '${GRAFANA_DB_PASSWORD:-grafana_ro}';
+      END IF;
+    END \$\$;
+    GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO grafana_ro;
+    GRANT USAGE ON SCHEMA public TO grafana_ro;
 EOSQL
