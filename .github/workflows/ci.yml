@@ -57,7 +57,7 @@ jobs:
           pytest tests/unit tests/e2e
           --cov=common --cov-branch --cov-fail-under=85
           --cov-report=xml:coverage-common.xml --cov-report=term-missing -q
-      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-py${{ matrix.python-version }}
           path: coverage-*.xml
@@ -107,7 +107,8 @@ jobs:
           # respx backs the reranker HTTP stubs; mcp and prometheus-client are
           # orchestration-mcp's own runtime deps, imported transitively via
           # app/server.py (mcp) and app/metrics.py (prometheus-client, #72).
-          pip install pytest pytest-asyncio pytest-cov respx "mcp>=1.6" "prometheus-client>=0.20"
+          # mcp held <2.0: 2.0.0 removed/renamed mcp.server.fastmcp (#205).
+          pip install pytest pytest-asyncio pytest-cov respx "mcp>=1.6,<2.0" "prometheus-client>=0.20"
           pip install --no-deps -e services/common
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
             "sqlmodel>=0.0.21" "qdrant-client>=1.10" "pymilvus>=2.5" "nats-py>=2.7" "boto3>=1.34" \
@@ -172,7 +173,8 @@ jobs:
         run: cd services/ingestion-worker && MYPYPATH=../common mypy app
       - name: Install orchestration-mcp dependencies
         run: |
-          pip install "mcp>=1.6" "httpx>=0.27" "prometheus-client>=0.20" \
+          # mcp held <2.0: 2.0.0 removed/renamed mcp.server.fastmcp (#205).
+          pip install "mcp>=1.6,<2.0" "httpx>=0.27" "prometheus-client>=0.20" \
             "opentelemetry-instrumentation-httpx>=0.51b0"
       - name: mypy on orchestration-mcp (enforced, issue #79)
         run: cd services/orchestration-mcp && MYPYPATH=../common mypy app
@@ -193,6 +195,17 @@ jobs:
           python-version: "3.11"
       - name: NFR-16 -- no floating image tags
         run: python scripts/check_pinned_images.py
+      # #111: the Compose stack is what dev-setup.md and e2e.yml actually
+      # exercise, so its hardening is enforced here rather than left to
+      # review -- otherwise the chart's securityContext only ever runs in an
+      # environment nobody uses day to day.
+      - name: Issue #111 -- Compose hardening matches the chart
+        run: |
+          # This job installs no requirements file, so pyyaml comes in here.
+          # The `unit` job gets it from requirements-test.txt instead, which is
+          # what the guard's own tests need.
+          pip install "pyyaml==6.0.3"
+          python scripts/check_compose_hardening.py
 
   build:
     runs-on: ubuntu-latest
