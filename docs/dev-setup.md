@@ -110,13 +110,28 @@ exactly:
 | setting | Compose | chart (`_helpers.tpl`) |
 |---|---|---|
 | non-root uid | `user: "10001:10001"` | `runAsUser: 10001` |
-| read-only rootfs | `read_only: true` + `tmpfs: [/tmp]` | `readOnlyRootFilesystem: true` + `emptyDir` |
+| read-only rootfs | `read_only: true` + `tmpfs: [/tmp:size=64m]` | `readOnlyRootFilesystem: true` + `emptyDir` |
 | capabilities | `cap_drop: ["ALL"]` | `capabilities.drop: ["ALL"]` |
 | privilege escalation | `no-new-privileges:true` | `allowPrivilegeEscalation: false` |
 
 The point is that the settings gating production get exercised on every dev run
 and every `e2e.yml` run. `read_only` in particular is the kind of thing that
 works until some library wants a scratch path — better to find that here.
+
+**The `tmpfs` mount carries an explicit size (#209), unlike the table above
+suggests at a glance.** Compose's `tmpfs` is RAM-backed; Kubernetes' `emptyDir`
+is not automatically, but the chart already bounds it via the pod's
+`ephemeral-storage` resource limit. An unsized Compose `tmpfs` had no
+equivalent bound: Starlette's multipart parser spools an upload past 1MB to a
+temp file on disk *before* the route ever runs `_read_bounded`'s
+`MAX_UPLOAD_BYTES` check (`services/ingestion-api/app/routes/upload.py`), and
+in Compose that temp file lands on this RAM-backed mount. `size=64m` is
+headroom above legitimate scratch use, not a sizing of the largest accepted
+upload — the 50MB `MAX_UPLOAD_BYTES` check still runs after the parser hands
+control back, this only bounds what the parser itself can do first. Helm's
+equivalent bound is the ingress `proxy-body-size` annotation (#107) — Compose
+has no proxy in front of `ingestion-api`, so this is the closest available
+substitute, not a like-for-like replacement.
 
 `cap_drop: ["ALL"]` also applies to Qdrant, NATS, and Ollama. Postgres and
 Keycloak keep their default capability set: both drop privileges from root at
@@ -377,9 +392,21 @@ automated or for testing with your own file.
    against the debug endpoint:
 
    ```bash
-   curl -s -X POST "http://localhost:8002/debug/rag_search?query=<a+phrase+from+your+doc>&top_k=5" \
-     -H "Authorization: Bearer $TOKEN"
+   curl -s -X POST http://localhost:8002/debug/rag_search \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "<a phrase from your doc>", "top_k": 5}'
    ```
+
+   The query goes in the body, not the URL (#214): a question asked of a
+   classified corpus is itself sensitive, which is why #125 kept it out of the
+   audit log — and a `?query=` lands in every proxy and ingress access log in
+   the path. The query-string form still works so existing scripts don't
+   break, but it logs a warning.
+
+   This endpoint is a development convenience. Set
+   `DEBUG_RAG_SEARCH_ENABLED=false` to remove it from a deployed image;
+   authorization is enforced either way, so this is about surface, not a hole.
 
    The UI page is a thin proxy over this same endpoint (`app/routes/search.py`), forwarding
    your logged-in session's own token — same access filter either way.

@@ -48,6 +48,7 @@ from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
+from common.log_safety import log_safe
 from common.models import AuditLogEntry
 from common.sparse_embedding import embed_sparse
 from common.tracing import get_tracer
@@ -291,8 +292,17 @@ async def _run_rag_search(
         claims = parse_claims(bearer_token)
     except jwt.PyJWTError as exc:
         # No reliably-identified actor to key an audit entry on (the token
-        # itself didn't validate) -- nothing meaningful to log here.
-        return {"error": f"invalid token: {exc}"}
+        # itself didn't validate) -- nothing meaningful to *audit* here, but
+        # the operator still needs to know why, so it goes to the log.
+        #
+        # #214: the exception type, not its message. PyJWT's text names the
+        # expected issuer, audience, and algorithm, which maps the deployment
+        # for anyone probing with a junk token. The type still distinguishes
+        # the cases a caller legitimately needs to tell apart -- an expired
+        # token means "refresh and retry", anything else does not -- which is
+        # what #200 relies on at the transport boundary.
+        logger.warning("token rejected: %s: %s", type(exc).__name__, log_safe(exc))
+        return {"error": f"invalid token ({type(exc).__name__})"}
 
     if not claims.can_query:
         metrics.queries_total.labels(outcome="denied").inc()
@@ -368,8 +378,19 @@ async def _run_rag_search(
         result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
         result["reranking"] = "skipped, no candidates"
         result["results"] = []
+        # #214: no exception text in the note. It is returned to the caller
+        # and, through the MCP tool, into a model's context -- and a backend
+        # error string carries internal hostnames, ports, and collection
+        # names. The operational detail goes to the log instead, where the
+        # people who can act on it are.
+        logger.warning(
+            "vector backend %s unavailable: %s: %s",
+            backend_name(),
+            type(exc).__name__,
+            log_safe(exc),
+        )
         result["note"] = (
-            f"the {backend_name()} vector collection is not queryable ({exc}); it's "
+            f"the {backend_name()} vector collection is not queryable; it's "
             "created lazily on first ingestion, so this is expected if no document "
             "has been submitted yet"
         )

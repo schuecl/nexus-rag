@@ -24,15 +24,29 @@ async function loadNotifications() {
     const row = document.createElement('div');
     row.className = 'row';
     row.style.background = n.read ? '' : '#fff8e1';
-    row.innerHTML = `
-      <div>
-        <strong>${n.decision === 'approved' ? '✅ Approved' : '❌ Rejected'}</strong><br/>
-        ${n.message}<br/>
-        <span class="hint">${new Date(n.created_at).toLocaleString()}</span>
-      </div>
-      <div>
-        ${n.read ? '' : `<button onclick="markRead('${n.id}')">Mark read</button>`}
-      </div>`;
+
+    // Issue #207: n.message embeds the uploader's filename and the curator's
+    // free-text rejection reason. Both were interpolated into innerHTML here,
+    // so a crafted filename executed in the uploader's own session. Built as
+    // text nodes now -- the message is prose to read, never markup to parse.
+    const body = document.createElement('div');
+    const heading = document.createElement('strong');
+    heading.textContent = n.decision === 'approved' ? '✅ Approved' : '❌ Rejected';
+    const stamp = document.createElement('span');
+    stamp.className = 'hint';
+    stamp.textContent = new Date(n.created_at).toLocaleString();
+    body.append(heading, document.createElement('br'),
+                n.message, document.createElement('br'), stamp);
+
+    const actions = document.createElement('div');
+    if (!n.read) {
+      const btn = document.createElement('button');
+      btn.textContent = 'Mark read';
+      btn.addEventListener('click', () => markRead(n.id));
+      actions.append(btn);
+    }
+
+    row.append(body, actions);
     el.appendChild(row);
   }
 }

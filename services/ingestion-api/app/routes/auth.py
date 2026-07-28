@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, delete
 
@@ -26,10 +27,14 @@ from app.deps import (
     SESSION_COOKIE,
     SESSION_LIFETIME,
     _as_aware_utc,
+    verify_csrf,
 )
 from common.claims import OIDC_ISSUERS
 from common.db import get_session
+from common.log_safety import log_safe
 from common.models import OAuthState, UserSession
+
+logger = logging.getLogger("ingestion-api")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -170,7 +175,16 @@ def callback(
         timeout=10,
     )
     if token_resp.status_code != 200:
-        raise HTTPException(502, f"token exchange failed: {token_resp.text}")
+        # #214: Keycloak's raw error body goes to the log, not to the browser.
+        # It names the client id, the grant type, and often the realm's
+        # configuration problem verbatim -- useful to an operator, a free map
+        # of the identity provider to anyone who can reach the callback.
+        logger.warning(
+            "OIDC token exchange failed: HTTP %s: %s",
+            token_resp.status_code,
+            log_safe(token_resp.text[:500]),
+        )
+        raise HTTPException(502, "token exchange with the identity provider failed")
     tokens = token_resp.json()
 
     session_id = secrets.token_urlsafe(32)
@@ -211,8 +225,12 @@ def callback(
     return resp
 
 
-@router.get("/logout")
-def logout(request: Request, db: Session = Depends(get_session)) -> RedirectResponse:
+@router.post("/logout")
+def logout(
+    request: Request,
+    db: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> RedirectResponse:
     """Clears this app's session *and* redirects through Keycloak's
     RP-initiated logout (end_session_endpoint) so the browser's Keycloak SSO
     session ends too -- otherwise logging back in wouldn't re-prompt for
@@ -237,7 +255,17 @@ def logout(request: Request, db: Session = Depends(get_session)) -> RedirectResp
     else:
         target = "/"
 
-    resp = RedirectResponse(target)
+    # Issue #215: POST with the same CSRF check as every other state-changing
+    # route, so a third-party page can no longer log a user out by embedding
+    # the URL. SameSite=Lax already blocked the cross-site cookie from riding
+    # along, so this was nuisance rather than compromise -- but "logout is a
+    # state change" is the rule the rest of the app follows and there was no
+    # reason for this one to be the exception.
+    #
+    # 303, not the RedirectResponse default of 307: 307 preserves the method,
+    # which would POST to Keycloak's end_session_endpoint. 303 tells the
+    # browser to follow with GET, which is what RP-initiated logout expects.
+    resp = RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
     resp.delete_cookie(SESSION_COOKIE)
     resp.delete_cookie(CSRF_COOKIE)
     return resp

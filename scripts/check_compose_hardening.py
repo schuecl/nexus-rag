@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Issue #111 guard: keep the Compose stack's container hardening from drifting
 away from the Helm chart's securityContext, and keep internal services off the
-host's external interfaces.
+host's external interfaces. Also covers issue #209's tmpfs size bound.
 
 The Compose stack is not a toy here -- `docs/dev-setup.md` is the primary
 verification story and `e2e.yml`'s golden-query job runs against it. When it
@@ -10,16 +10,23 @@ one, and settings like `read_only` only fail at deploy time instead of in dev.
 So this is enforced mechanically, the same way NFR-16 image pinning is, rather
 than left to review.
 
-Three rules:
+Four rules:
 
 1. The four custom-built services must carry the Compose equivalents of
    `nexus-rag.podSecurityContext` / `nexus-rag.containerSecurityContext`:
    `user: "10001:10001"`, `read_only: true`, `cap_drop: [ALL]`, and
    `security_opt: [no-new-privileges:true]`.
-2. Every other long-running service must at least set `no-new-privileges`.
+2. Every `tmpfs` mount on those services must declare an explicit `size=`
+   (issue #209). Unlike Kubernetes' `emptyDir` (already bounded by the
+   chart's ephemeral-storage limits), Compose's `tmpfs` is RAM-backed --
+   an unsized mount lets Starlette's multipart parser spool an oversized
+   upload into host memory before `MAX_UPLOAD_BYTES` is ever checked
+   (`services/ingestion-api/app/routes/upload.py`'s `_read_bounded`
+   docstring).
+3. Every other long-running service must at least set `no-new-privileges`.
    `cap_drop: [ALL]` is not required of them -- postgres and keycloak both drop
    privileges from root at startup and need CAP_CHOWN/SETUID/SETGID to do it.
-3. Every published port must bind an explicit host address. A bare "8003:8003"
+4. Every published port must bind an explicit host address. A bare "8003:8003"
    listens on all interfaces; on a laptop on a shared network that is an open
    unauthenticated model-inference endpoint.
 
@@ -104,6 +111,21 @@ def _check_service(name: str, spec: dict[str, Any]) -> list[str]:
             )
         if spec.get("read_only") is True and not spec.get("tmpfs"):
             problems.append(f"{name}: read_only with no tmpfs -- /tmp will not be writable")
+        for mount in spec.get("tmpfs") or []:
+            # Long-form (a dict with a nested `tmpfs: {size: ...}`) isn't
+            # produced by anything in this file today -- flagged rather than
+            # silently passed, same as the long-form ports case below. Must
+            # check on the raw value: _as_list would stringify a dict entry
+            # into something that happens to contain "size=" and pass silently.
+            if not isinstance(mount, str):
+                problems.append(
+                    f"{name}: long-form tmpfs entries are not checked by this guard yet"
+                )
+            elif "size=" not in mount:
+                problems.append(
+                    f"{name}: tmpfs {mount!r} has no size= (issue #209 -- tmpfs is "
+                    f"RAM-backed and unsized, unlike the chart's bounded emptyDir)"
+                )
         if "ALL" not in cap_drop:
             problems.append(f"{name}: cap_drop must include ALL (the chart drops all)")
 

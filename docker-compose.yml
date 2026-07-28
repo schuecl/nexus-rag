@@ -245,8 +245,14 @@ services:
     # a Dockerfile change can't silently drop it.
     user: "10001:10001"
     read_only: true
+    # Issue #209: sized, unlike Kubernetes' emptyDir (which the chart already
+    # bounds via ephemeral-storage limits) -- tmpfs is RAM-backed, so an
+    # unsized mount lets Starlette's multipart spool (upload.py's
+    # _read_bounded docstring) consume host memory before MAX_UPLOAD_BYTES
+    # is ever checked. 64m is headroom above legitimate scratch use, not a
+    # sizing of the largest accepted upload.
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:
@@ -280,8 +286,14 @@ services:
     # a Dockerfile change can't silently drop it.
     user: "10001:10001"
     read_only: true
+    # Issue #209: sized, unlike Kubernetes' emptyDir (which the chart already
+    # bounds via ephemeral-storage limits) -- tmpfs is RAM-backed, so an
+    # unsized mount lets Starlette's multipart spool (upload.py's
+    # _read_bounded docstring) consume host memory before MAX_UPLOAD_BYTES
+    # is ever checked. 64m is headroom above legitimate scratch use, not a
+    # sizing of the largest accepted upload.
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:
@@ -377,8 +389,14 @@ services:
     # a Dockerfile change can't silently drop it.
     user: "10001:10001"
     read_only: true
+    # Issue #209: sized, unlike Kubernetes' emptyDir (which the chart already
+    # bounds via ephemeral-storage limits) -- tmpfs is RAM-backed, so an
+    # unsized mount lets Starlette's multipart spool (upload.py's
+    # _read_bounded docstring) consume host memory before MAX_UPLOAD_BYTES
+    # is ever checked. 64m is headroom above legitimate scratch use, not a
+    # sizing of the largest accepted upload.
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     build:
@@ -450,8 +468,14 @@ services:
     # a Dockerfile change can't silently drop it.
     user: "10001:10001"
     read_only: true
+    # Issue #209: sized, unlike Kubernetes' emptyDir (which the chart already
+    # bounds via ephemeral-storage limits) -- tmpfs is RAM-backed, so an
+    # unsized mount lets Starlette's multipart spool (upload.py's
+    # _read_bounded docstring) consume host memory before MAX_UPLOAD_BYTES
+    # is ever checked. 64m is headroom above legitimate scratch use, not a
+    # sizing of the largest accepted upload.
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:

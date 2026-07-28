@@ -7,6 +7,7 @@ is that single source of truth (see REQUIREMENTS.md Section 6.1).
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 
@@ -44,6 +45,24 @@ OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE", "rag-app")
 # Dev-only escape hatch: skip signature verification when running against a
 # throwaway local Keycloak without a reachable JWKS endpoint yet. Never set in prod.
 OIDC_SKIP_VERIFY = os.environ.get("OIDC_SKIP_VERIFY", "false").lower() == "true"
+
+if OIDC_SKIP_VERIFY:  # pragma: no cover - a startup-time side effect
+    # Issue #215: this used to take effect in complete silence. The other
+    # dev-credential fallbacks in this codebase degrade convenience if
+    # misapplied; this one disables the signature check that every
+    # Classification/Releasability/Access-scope decision ultimately rests on,
+    # and a stack running with it set looks entirely healthy.
+    #
+    # Deliberately CRITICAL rather than WARNING, and emitted at import rather
+    # than per-token: INFO/WARNING is the level real operational noise lives
+    # at, so it is the level this would be scrolled past at, and one line per
+    # verification would be noise nobody reads.
+    logging.getLogger("claims").critical(
+        "OIDC_SKIP_VERIFY=true -- JWT signatures are NOT being verified. Every "
+        "identity, clearance, and releasability claim is accepted unchecked. "
+        "This is a local-development escape hatch and must never be set in a "
+        "deployed environment."
+    )
 
 
 class UserClaims(BaseModel):

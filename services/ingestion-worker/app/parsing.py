@@ -23,6 +23,7 @@ a lightweight approach, not a guarantee of perfect table recall.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import zipfile
 from collections.abc import Iterator
@@ -30,10 +31,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from common.log_safety import log_safe
+
 if TYPE_CHECKING:
     from docx.document import Document as DocxDocument
     from docx.table import Table as DocxTable
     from docx.text.paragraph import Paragraph as DocxParagraph
+
+
+logger = logging.getLogger("ingestion-worker")
 
 
 class ParsingError(Exception):
@@ -130,9 +136,30 @@ def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
             _check_zip_bomb(content)
             return _parse_xlsx(content)
     except ParsingError:
+        # Raised deliberately by this module -- "password-protected PDF",
+        # "unsupported file type", the page/zip bounds. Those messages are
+        # written for the uploader and are exactly what FR-8 should return.
         raise
     except Exception as exc:
-        raise ParsingError(f"failed to parse {ext or 'file'}: {exc}") from exc
+        # #214: anything else is a parser library's own exception, and its
+        # text carries library internals, file offsets, and sometimes
+        # fragments of the document. It is persisted to
+        # Document.processing_error and re-served through the status endpoint,
+        # so it reaches whoever uploaded the file.
+        #
+        # The uploader needs to know their document could not be read and
+        # that re-uploading the same bytes will not help; they do not need
+        # pypdf's stack vocabulary. The detail goes to the log, where the
+        # operator who can act on it is.
+        logger.warning(
+            "parser failed on a %s document: %s: %s",
+            ext or "unknown-type",
+            type(exc).__name__,
+            log_safe(exc),
+        )
+        raise ParsingError(
+            f"could not read this {ext or 'file'} -- it may be corrupt or in an unexpected format"
+        ) from exc
 
     raise ParsingError(f"unsupported file type: {ext or filename}")
 
