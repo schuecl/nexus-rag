@@ -1,0 +1,50 @@
+// #133 review finding 3: both blocks below used to point at
+// unix:///var/run/docker.sock, bind-mounted into this container. `:ro` on
+// that mount restricts the file, not the daemon API behind it -- socket
+// access is equivalent to root on the host, which is far more authority than
+// a log shipper needs. They now talk to docker-socket-proxy, which permits
+// only the GET /containers endpoints this file uses and refuses container
+// creation and exec (see docker-compose.yml for the full deny list).
+
+discovery.docker "nexus_rag" {
+  host = "tcp://docker-socket-proxy:2375"
+}
+
+discovery.relabel "nexus_rag" {
+  targets = discovery.docker.nexus_rag.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "nexus-rag"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+loki.source.docker "nexus_rag" {
+  host       = "tcp://docker-socket-proxy:2375"
+  targets    = discovery.relabel.nexus_rag.output
+  labels     = {environment = "development"}
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
