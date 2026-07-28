@@ -27,7 +27,29 @@ const RELEASABILITY = {{ releasability | tojson }};
 // 404s for a curator looking up someone else's submission.
 let queuedDocs = {};
 
-function options(values, selected) {
+// Issue #207: every value rendered below reaches the page as JSON from
+// fetch(), so Jinja's autoescaping never sees it. This page previously built
+// rows with innerHTML and a template literal, which made an uploader-chosen
+// filename executable script in a *curator's* session -- and since the CSRF
+// cookie is deliberately readable by this page's own JS (auth.py), that
+// script could approve documents with the curator's authority.
+//
+// The fix is structural rather than "escape the fields we know about": these
+// helpers build DOM nodes and assign text through textContent, so a value can
+// never be parsed as markup no matter which field it arrives in. Adding a new
+// field here is safe by default; interpolating one into innerHTML is what was
+// unsafe by default.
+function el(tag, opts = {}) {
+  const node = document.createElement(tag);
+  if (opts.text !== undefined) node.textContent = opts.text;
+  if (opts.className) node.className = opts.className;
+  if (opts.id) node.id = opts.id;
+  for (const [k, v] of Object.entries(opts.attrs || {})) node.setAttribute(k, v);
+  for (const child of opts.children || []) node.append(child);
+  return node;
+}
+
+function optionNodes(values, selected) {
   // Guard against a document tagged with a value that's since been retired
   // from the admin-configurable list (C9) -- without this, the <select>
   // would silently default to its first option instead of the document's
@@ -35,45 +57,71 @@ function options(values, selected) {
   // *change* the document's classification/releasability, not leave it as
   // submitted.
   const all = values.includes(selected) ? values : [selected, ...values];
-  return all.map(v => `<option value="${v}"${v === selected ? ' selected' : ''}>${v}</option>`).join('');
+  return all.map(v => {
+    const opt = el('option', { text: v });
+    opt.value = v;
+    opt.selected = v === selected;
+    return opt;
+  });
 }
 
-function esc(s) {
-  // The advisory's evidence strings are verbatim excerpts of uploaded document
-  // text -- attacker-controlled -- so everything advisory-derived is escaped
-  // before being interpolated into row HTML.
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+function multiOptionNodes(values, selectedValues) {
+  // Same retired-value guard as optionNodes() above, but for a <select
+  // multiple> whose current value is a list (Releasability, FR-20/Section
+  // 6.3) rather than a single string.
+  const missing = selectedValues.filter(v => !values.includes(v));
+  return [...values, ...missing].map(v => {
+    const opt = el('option', { text: v });
+    opt.value = v;
+    opt.selected = selectedValues.includes(v);
+    return opt;
+  });
 }
 
-function advisoryHtml(doc) {
+function advisoryNode(doc) {
   // Issue #138 (PR #2 review): surface the worker-computed marking-mismatch
   // advisory in the review workflow itself, not just the queue JSON --
   // without this a curator using this page never sees an under_classified
   // finding and can approve the original tags unchanged. Advisory only: it
   // renders a warning beside the editable tags; the curator still decides.
+  //
+  // The evidence strings are verbatim excerpts of uploaded document text, so
+  // they are the most obviously attacker-controlled values on the page --
+  // they now go through textContent like everything else rather than through
+  // a hand-rolled escaper.
   const adv = doc.tagging_advisory;
-  if (!adv) return '';
+  if (!adv) return null;
   const findings = [];
   if (adv.under_classified) {
-    findings.push(`document's own markings read <strong>${esc(adv.detected_classification)}</strong> but it is tagged <strong>${esc(adv.assigned_classification)}</strong>`);
+    findings.push([
+      document.createTextNode("document's own markings read "),
+      el('strong', { text: adv.detected_classification }),
+      document.createTextNode(' but it is tagged '),
+      el('strong', { text: adv.assigned_classification }),
+    ]);
   }
   if ((adv.unassigned_caveats || []).length) {
-    findings.push(`markings carry caveat(s) <strong>${adv.unassigned_caveats.map(esc).join(', ')}</strong> not in the assigned releasability`);
+    findings.push([
+      document.createTextNode('markings carry caveat(s) '),
+      el('strong', { text: adv.unassigned_caveats.join(', ') }),
+      document.createTextNode(' not in the assigned releasability'),
+    ]);
   }
-  if (!findings.length) return '';
-  const evidence = (adv.evidence || []).length
-    ? `<br/><span class="hint">evidence: ${adv.evidence.map(esc).join(' · ')}</span>` : '';
-  return `<div class="advisory">⚠ <strong>Tagging advisory</strong> — ${findings.join('; ')}. Confirm or correct the tags before approving.${evidence}</div>`;
-}
+  if (!findings.length) return null;
 
-function multiOptions(values, selectedValues) {
-  // Same retired-value guard as options() above, but for a <select multiple>
-  // whose current value is a list (Releasability, FR-20/Section 6.3) rather
-  // than a single string.
-  const missing = selectedValues.filter(v => !values.includes(v));
-  const all = [...values, ...missing];
-  return all.map(v => `<option value="${v}"${selectedValues.includes(v) ? ' selected' : ''}>${v}</option>`).join('');
+  const box = el('div', { className: 'advisory' });
+  box.append('⚠ ', el('strong', { text: 'Tagging advisory' }), ' — ');
+  findings.forEach((parts, i) => {
+    if (i) box.append('; ');
+    box.append(...parts);
+  });
+  box.append('. Confirm or correct the tags before approving.');
+  if ((adv.evidence || []).length) {
+    box.append(el('br'), el('span', {
+      className: 'hint', text: 'evidence: ' + adv.evidence.join(' · '),
+    }));
+  }
+  return box;
 }
 
 async function loadQueue() {
@@ -91,30 +139,55 @@ async function loadQueue() {
     return;
   }
   for (const doc of docs) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `
-      <div>
-        <strong>${doc.filename}</strong><br/>
-        org: ${doc.owner_org} · uploaded by ${doc.uploader_username}
-        ${doc.supersedes_document_id ? `<br/><strong>supersedes</strong>: ${doc.supersedes_document_id} (approving this will retire and delete that document's chunks)` : ''}
-        ${advisoryHtml(doc)}
-        <div>
-          <label>Classification
-            <select id="classification-${doc.id}">${options(CLASSIFICATIONS, doc.classification)}</select>
-          </label>
-          <label>Releasability <span class="hint">(ctrl/cmd-click for more than one)</span>
-            <select id="releasability-${doc.id}" multiple>${multiOptions(RELEASABILITY, doc.releasability)}</select>
-          </label>
-          <label>Access scope <span class="hint">(comma-separated)</span>
-            <input type="text" id="access_scope-${doc.id}" value="${doc.access_scope.join(', ')}" />
-          </label>
-        </div>
-      </div>
-      <div>
-        <button onclick="approve('${doc.id}')">Approve</button>
-        <button onclick="reject('${doc.id}')">Reject</button>
-      </div>`;
+    const row = el('div', { className: 'row' });
+    const info = el('div');
+
+    // doc.filename is whatever the uploader named the file (upload.py) -- the
+    // value that made this page a stored-XSS sink before #207.
+    info.append(el('strong', { text: doc.filename }), el('br'),
+                `org: ${doc.owner_org} · uploaded by ${doc.uploader_username}`);
+
+    if (doc.supersedes_document_id) {
+      info.append(el('br'), el('strong', { text: 'supersedes' }),
+                  `: ${doc.supersedes_document_id} (approving this will retire ` +
+                  `and delete that document's chunks)`);
+    }
+
+    const advisory = advisoryNode(doc);
+    if (advisory) info.append(advisory);
+
+    const classification = el('select', { id: `classification-${doc.id}`,
+                                          children: optionNodes(CLASSIFICATIONS, doc.classification) });
+    const releasability = el('select', { id: `releasability-${doc.id}`, attrs: { multiple: '' },
+                                         children: multiOptionNodes(RELEASABILITY, doc.releasability) });
+    const accessScope = el('input', { id: `access_scope-${doc.id}`, attrs: { type: 'text' } });
+    // .value, not a value= attribute: assigning the property never re-parses
+    // the string as markup.
+    accessScope.value = doc.access_scope.join(', ');
+
+    info.append(el('div', { children: [
+      el('label', { children: ['Classification', classification] }),
+      el('label', { children: [
+        'Releasability ',
+        el('span', { className: 'hint', text: '(ctrl/cmd-click for more than one)' }),
+        releasability,
+      ] }),
+      el('label', { children: [
+        'Access scope ',
+        el('span', { className: 'hint', text: '(comma-separated)' }),
+        accessScope,
+      ] }),
+    ] }));
+
+    // addEventListener rather than an inline onclick="approve('...')": the id
+    // is a server-generated UUID so string-building it was safe, but a
+    // listener keeps every value on this page out of a parsed context.
+    const approveBtn = el('button', { text: 'Approve' });
+    approveBtn.addEventListener('click', () => approve(doc.id));
+    const rejectBtn = el('button', { text: 'Reject' });
+    rejectBtn.addEventListener('click', () => reject(doc.id));
+
+    row.append(info, el('div', { children: [approveBtn, rejectBtn] }));
     queueEl.appendChild(row);
   }
 }
