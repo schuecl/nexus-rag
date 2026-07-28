@@ -57,7 +57,7 @@ jobs:
           pytest tests/unit tests/e2e
           --cov=common --cov-branch --cov-fail-under=85
           --cov-report=xml:coverage-common.xml --cov-report=term-missing -q
-      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-py${{ matrix.python-version }}
           path: coverage-*.xml
@@ -195,6 +195,17 @@ jobs:
           python-version: "3.11"
       - name: NFR-16 -- no floating image tags
         run: python scripts/check_pinned_images.py
+      # #111: the Compose stack is what dev-setup.md and e2e.yml actually
+      # exercise, so its hardening is enforced here rather than left to
+      # review -- otherwise the chart's securityContext only ever runs in an
+      # environment nobody uses day to day.
+      - name: Issue #111 -- Compose hardening matches the chart
+        run: |
+          # This job installs no requirements file, so pyyaml comes in here.
+          # The `unit` job gets it from requirements-test.txt instead, which is
+          # what the guard's own tests need.
+          pip install "pyyaml==6.0.3"
+          python scripts/check_compose_hardening.py
 
   build:
     runs-on: ubuntu-latest

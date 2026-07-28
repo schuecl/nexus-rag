@@ -10,6 +10,9 @@ pytest==9.0.3
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-bdd==8.1.0
+# #111: scripts/check_compose_hardening.py parses docker-compose.yml, and
+# tests/unit/test_check_compose_hardening.py imports it.
+pyyaml==6.0.3
 respx==0.23.1
 httpx==0.28.1
 beautifulsoup4==4.15.0

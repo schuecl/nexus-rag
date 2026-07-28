@@ -1,18 +1,37 @@
-# Throwaway dev LiteLLM config (NFR-9) -- routes a single small Ollama model
-# so the LibreChat -> LiteLLM -> Ollama generation path can be exercised
-# end to end locally. Not a production model selection.
+# Throwaway dev LiteLLM config (NFR-9) -- routes an Ollama model so the
+# LibreChat -> LiteLLM -> Ollama generation path can be exercised end to end
+# locally. Not a production model selection.
 #
-# qwen2.5:7b-instruct, not llama3.2:1b (issue #99 follow-up, 2026-07-26): confirmed live
-# that llama3.2:1b's tool-calling is unreliable (~1-in-5 success rate against rag_search's
-# actual schema, sometimes inventing a nonexistent function name), which makes MCP tool
-# testing through LibreChat non-viable. qwen2.5:7b-instruct got 5/5 clean tool calls in the
-# same test. Keep this model_name in sync by hand with GENERATION_MODEL (.env.example) and
-# librechat.yaml's models.default (see that file's comment for why it can't be templated).
+# Model size vs. tool-calling (#195, confirmed live 2026-07-28 against rag_search's
+# actual schema):
+#   - llama3.2:1b        -- ~1/5 tool calls, invents nonexistent function names. Unusable.
+#   - qwen2.5:0.5b/1.5b  -- format tool calls but hallucinate the tool NAME (e.g.
+#                           "get_password_policy") instead of calling rag_search, even
+#                           with tool_choice=required. Too small for this task.
+#   - qwen2.5:3b-instruct -- SMALLEST that calls rag_search correctly. With a system
+#                           prompt nudging tool use it is reliable; on bare tool_choice=auto
+#                           it may answer from parametric knowledge, so drive it from a
+#                           LibreChat Agent whose instructions say "always use rag_search"
+#                           (see docs/dev-setup.md).
+#   - qwen2.5:7b-instruct -- most reliable (5/5 on auto), but ~5 GB and slow on CPU.
+#
+# Dev default is the small 3b so a fresh laptop can pull (~1.9 GB) and run it quickly.
+# Uncomment the 7b block (and set GENERATION_MODEL=qwen2.5:7b-instruct) when you want the
+# most reliable automatic tool-calling. Keep model_name in sync by hand with
+# GENERATION_MODEL (.env.example) and librechat.yaml's models.default (see that file's
+# comment for why it can't be templated).
 model_list:
-  - model_name: qwen2.5:7b-instruct
+  - model_name: qwen2.5:3b-instruct
     litellm_params:
-      model: ollama/qwen2.5:7b-instruct
+      model: ollama/qwen2.5:3b-instruct
       api_base: http://ollama:11434
+
+  # Larger, most reliable automatic tool-calling, heavier (~5 GB, slow on CPU).
+  # Uncomment and set GENERATION_MODEL + librechat.yaml to match to use it instead.
+  # - model_name: qwen2.5:7b-instruct
+  #   litellm_params:
+  #     model: ollama/qwen2.5:7b-instruct
+  #     api_base: http://ollama:11434
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
