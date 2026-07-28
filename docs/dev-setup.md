@@ -101,6 +101,52 @@ Host prerequisites for the GPU path: an NVIDIA driver, the
 `nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
 Air-gapped (NFR-1): mirror the chosen torch index internally and point
 `TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## Container hardening (#111)
+
+Every Compose service runs with `security_opt: ["no-new-privileges:true"]`, and
+the four custom-built services mirror the Helm chart's `securityContext`
+exactly:
+
+| setting | Compose | chart (`_helpers.tpl`) |
+|---|---|---|
+| non-root uid | `user: "10001:10001"` | `runAsUser: 10001` |
+| read-only rootfs | `read_only: true` + `tmpfs: [/tmp:size=64m]` | `readOnlyRootFilesystem: true` + `emptyDir` |
+| capabilities | `cap_drop: ["ALL"]` | `capabilities.drop: ["ALL"]` |
+| privilege escalation | `no-new-privileges:true` | `allowPrivilegeEscalation: false` |
+
+The point is that the settings gating production get exercised on every dev run
+and every `e2e.yml` run. `read_only` in particular is the kind of thing that
+works until some library wants a scratch path — better to find that here.
+
+**The `tmpfs` mount carries an explicit size (#209), unlike the table above
+suggests at a glance.** Compose's `tmpfs` is RAM-backed; Kubernetes' `emptyDir`
+is not automatically, but the chart already bounds it via the pod's
+`ephemeral-storage` resource limit. An unsized Compose `tmpfs` had no
+equivalent bound: Starlette's multipart parser spools an upload past 1MB to a
+temp file on disk *before* the route ever runs `_read_bounded`'s
+`MAX_UPLOAD_BYTES` check (`services/ingestion-api/app/routes/upload.py`), and
+in Compose that temp file lands on this RAM-backed mount. `size=64m` is
+headroom above legitimate scratch use, not a sizing of the largest accepted
+upload — the 50MB `MAX_UPLOAD_BYTES` check still runs after the parser hands
+control back, this only bounds what the parser itself can do first. Helm's
+equivalent bound is the ingress `proxy-body-size` annotation (#107) — Compose
+has no proxy in front of `ingestion-api`, so this is the closest available
+substitute, not a like-for-like replacement.
+
+`cap_drop: ["ALL"]` also applies to Qdrant, NATS, and Ollama. Postgres and
+Keycloak keep their default capability set: both drop privileges from root at
+startup and need `CAP_CHOWN`/`SETUID`/`SETGID` to do it.
+
+`scripts/check_compose_hardening.py` enforces all of this in CI, alongside the
+NFR-16 pinning check, so the two definitions can't drift apart silently.
+
+**Every published port binds `127.0.0.1` explicitly.** A bare `8003:8003`
+listens on all interfaces, which on a laptop on a shared network makes
+`reranker-service` (which sees retrieved chunk text) and `ollama` open
+unauthenticated endpoints. Containers reach each other by service name on
+`nexus-rag-net` regardless, so nothing in the documented flow changes — the
+`http://localhost:PORT` URLs below all still work.
+
 ## Observability stack (optional, #133)
 
 Off by default. Bring it up alongside the app stack:
@@ -272,6 +318,30 @@ curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
 A token requested this way (via `localhost:8080`, i.e. from outside the Compose network) carries a different `iss` claim than one requested via `keycloak:8080` (i.e. from another container, like `scripts/_keycloak.py`) -- Keycloak's default (no fixed `KC_HOSTNAME`) behavior stamps `iss` with whichever hostname the request actually used. `ingestion-api`/`orchestration-mcp` accept both (`OIDC_ISSUERS`, a comma-separated allowlist -- see `common/claims.py`), found and fixed after a real "invalid token: Invalid issuer" error pasting a `localhost`-obtained token into the ingestion UI, which validated against only the `keycloak:8080` form at the time.
 
 Swap `username`/`password` for any seeded user above.
+
+### Chat plane troubleshooting (#193)
+
+A **successful Keycloak login followed by a chat error is not an auth failure** — the
+OIDC path (login, claims, `rag_search` access filtering) is independent of the
+LibreChat → LiteLLM → Ollama generation path. Two symptoms seen during testing:
+
+- **"Missing API Key for LiteLLM."** The LiteLLM endpoint's key comes from
+  `LITELLM_MASTER_KEY` in the `librechat` container's environment (substituted into
+  `infra/librechat/librechat.yaml`). It is wired in `docker-compose.yml`; if you see
+  this, confirm `docker exec <librechat> printenv LITELLM_MASTER_KEY` is non-empty and
+  matches LiteLLM's own value. It has nothing to do with the user's login.
+- **`400 "nomic-embed-text:latest" does not support chat`.** The generation model
+  (`qwen2.5:7b-instruct`, ~5 GB) is pulled by `ollama-model-init` on first boot, after
+  the embedding model. If that pull is interrupted (no internet, or a full disk — the
+  full first boot needs ~10 GB free), only the embedding model remains and the model
+  list offers it for chat, which it cannot do. Re-pull it:
+
+  ```bash
+  docker exec "$(docker compose ps -q ollama)" ollama pull qwen2.5:7b-instruct
+  docker exec "$(docker compose ps -q ollama)" ollama list   # confirm qwen is present
+  ```
+
+  Then pick the **LiteLLM** endpoint and the `qwen2.5:7b-instruct` model in LibreChat.
 
 ## Exercising the flow
 
