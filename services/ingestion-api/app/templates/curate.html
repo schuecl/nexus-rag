@@ -10,6 +10,14 @@ tags need fixing (FR-13) -- corrections are re-checked against your own curator 
 <div id="queue"></div>
 <div id="result" class="msg"></div>
 
+<style>
+  /* Issue #138: the advisory marking-mismatch warning. Deliberately loud --
+     it exists to stop an inattentive approve on a document whose own markings
+     disagree with its tags -- but visually distinct from .msg.err, which
+     reports the *outcome* of an action rather than advising before one. */
+  .advisory { background: #fff3cd; border: 1px solid #d4a017; padding: 0.5rem; margin-top: 0.5rem; }
+</style>
+
 <script>
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
 const RELEASABILITY = {{ releasability | tojson }};
@@ -28,6 +36,35 @@ function options(values, selected) {
   // submitted.
   const all = values.includes(selected) ? values : [selected, ...values];
   return all.map(v => `<option value="${v}"${v === selected ? ' selected' : ''}>${v}</option>`).join('');
+}
+
+function esc(s) {
+  // The advisory's evidence strings are verbatim excerpts of uploaded document
+  // text -- attacker-controlled -- so everything advisory-derived is escaped
+  // before being interpolated into row HTML.
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function advisoryHtml(doc) {
+  // Issue #138 (PR #2 review): surface the worker-computed marking-mismatch
+  // advisory in the review workflow itself, not just the queue JSON --
+  // without this a curator using this page never sees an under_classified
+  // finding and can approve the original tags unchanged. Advisory only: it
+  // renders a warning beside the editable tags; the curator still decides.
+  const adv = doc.tagging_advisory;
+  if (!adv) return '';
+  const findings = [];
+  if (adv.under_classified) {
+    findings.push(`document's own markings read <strong>${esc(adv.detected_classification)}</strong> but it is tagged <strong>${esc(adv.assigned_classification)}</strong>`);
+  }
+  if ((adv.unassigned_caveats || []).length) {
+    findings.push(`markings carry caveat(s) <strong>${adv.unassigned_caveats.map(esc).join(', ')}</strong> not in the assigned releasability`);
+  }
+  if (!findings.length) return '';
+  const evidence = (adv.evidence || []).length
+    ? `<br/><span class="hint">evidence: ${adv.evidence.map(esc).join(' · ')}</span>` : '';
+  return `<div class="advisory">⚠ <strong>Tagging advisory</strong> — ${findings.join('; ')}. Confirm or correct the tags before approving.${evidence}</div>`;
 }
 
 function multiOptions(values, selectedValues) {
@@ -61,6 +98,7 @@ async function loadQueue() {
         <strong>${doc.filename}</strong><br/>
         org: ${doc.owner_org} · uploaded by ${doc.uploader_username}
         ${doc.supersedes_document_id ? `<br/><strong>supersedes</strong>: ${doc.supersedes_document_id} (approving this will retire and delete that document's chunks)` : ''}
+        ${advisoryHtml(doc)}
         <div>
           <label>Classification
             <select id="classification-${doc.id}">${options(CLASSIFICATIONS, doc.classification)}</select>

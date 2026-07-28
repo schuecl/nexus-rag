@@ -1,0 +1,51 @@
+{{- /*
+#133, Helm half: the chart does not deploy Prometheus/Grafana. A DoD cluster
+already runs its own monitoring stack inside the accreditation boundary, and
+shipping a second one would duplicate it and put the corpus's operational
+telemetry in a place the platform team doesn't control. What the chart owes
+that stack is a way to find the /metrics endpoints the services expose.
+
+Off by default, exactly like the Compose profile: rendering a ServiceMonitor
+into a cluster with no Prometheus Operator installed fails on an unknown API
+kind, so this must be an explicit opt-in rather than something a bare
+`helm install` attempts.
+
+Note what this does NOT do: it makes the endpoints scrapeable, it does not
+make them safe to expose. app/metrics.py keeps label cardinality content-free
+(stage and outcome names, never a user, query, or document id), but aggregate
+query volume is still operational signal -- the NetworkPolicies in this chart
+deny scrapes by default, so enabling this also means allowing the monitoring
+namespace through (see networkpolicies.yaml).
+*/}}
+{{- if .Values.observability.serviceMonitor.enabled }}
+{{- range $component := list "ingestion-api" "orchestration-mcp" "reranker-service" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nexus-rag.fullname" $ }}-{{ $component }}
+  {{- with $.Values.observability.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "nexus-rag.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    {{- with $.Values.observability.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  {{- if $.Values.observability.serviceMonitor.namespace }}
+  namespaceSelector:
+    matchNames:
+      - {{ $.Release.Namespace }}
+  {{- end }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $.Values.observability.serviceMonitor.interval }}
+      scrapeTimeout: {{ $.Values.observability.serviceMonitor.scrapeTimeout }}
+{{- end }}
+{{- end }}

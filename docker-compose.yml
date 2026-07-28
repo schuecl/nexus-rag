@@ -5,8 +5,14 @@ networks:
     name: nexus-rag-net
 
 volumes:
+  alloy-data:
+  grafana-data:
+  loki-data:
+  milvus-data:
+  prometheus-data:
   postgres-data:
   qdrant-data:
+  tempo-data:
   ollama-data:
   reranker-cache:
   ingestion-worker-cache:
@@ -41,6 +47,13 @@ services:
       KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:-keycloak}
       LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm_app}
       LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm_app}
+      # #133: postgres-exporter's scrape role (pg_monitor + CONNECT only).
+      # Created unconditionally because init-app-roles.sh runs exactly once,
+      # on the first boot of a fresh data directory -- creating it lazily when
+      # the observability profile is first enabled would mean the script had
+      # already run and the role would never appear.
+      MONITORING_DB_USER: ${MONITORING_DB_USER:-nexus_rag_monitor}
+      MONITORING_DB_PASSWORD: ${MONITORING_DB_PASSWORD:-nexus_rag_monitor}
       LITELLM_DB_NAME: ${LITELLM_DB_NAME:-litellm}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -121,6 +134,15 @@ services:
       KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak_app}
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # #133: surface Keycloak login/logout/token and admin events in the
+      # container log (→ Loki) for user-activity monitoring. The realm export
+      # enables the jboss-logging events listener; by default it logs successful
+      # events at DEBUG, so they never appear. Raise the success level to INFO
+      # (errors stay a level up) so LOGIN / LOGIN_ERROR / LOGOUT / CODE_TO_TOKEN
+      # and admin operations are visible without turning on DEBUG globally.
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: info
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_ERROR_LEVEL: warn
       # Issue #75: LibreChat's openid-client discovery call refuses a plain
       # HTTP issuer outright ("only requests to HTTPS are allowed") -- adding
       # HTTPS here, alongside the existing HTTP listener (still used
@@ -195,6 +217,11 @@ services:
     build:
       context: .
       dockerfile: services/reranker-service/Dockerfile
+      args:
+        # CPU torch by default for local testing; a GPU host sets
+        # TORCH_INDEX_URL to its CUDA index, an air-gapped build to its
+        # internal mirror (see the Dockerfile's rationale).
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     environment:
       # #73: log verbosity, matching the other custom services.
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -228,11 +255,18 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #160: either/or vector backend -- qdrant (default) or milvus. One
+      # backend per deployment; enabling milvus requires the milvus profile.
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
+      MILVUS_URL: ${MILVUS_URL:-http://milvus:19530}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-root:Milvus}
       # #134: distributed tracing -- disabled unless an OTLP endpoint is set
       # (e.g. a Tempo/otel-collector on the compose network). Dev default
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      QUEUE_RECONCILE_INTERVAL_SECONDS: ${QUEUE_RECONCILE_INTERVAL_SECONDS:-15}
+      QUEUE_RECONCILE_BATCH_SIZE: ${QUEUE_RECONCILE_BATCH_SIZE:-100}
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -310,6 +344,11 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #160: either/or vector backend -- qdrant (default) or milvus. One
+      # backend per deployment; enabling milvus requires the milvus profile.
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
+      MILVUS_URL: ${MILVUS_URL:-http://milvus:19530}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-root:Milvus}
       # #134: distributed tracing -- disabled unless an OTLP endpoint is set
       # (e.g. a Tempo/otel-collector on the compose network). Dev default
       # samples everything when enabled; production should stay low.
@@ -364,6 +403,11 @@ services:
       SIEM_SYSLOG_PORT: ${SIEM_SYSLOG_PORT:-514}
       SIEM_SYSLOG_PROTOCOL: ${SIEM_SYSLOG_PROTOCOL:-udp}
       SIEM_SYSLOG_FACILITY: ${SIEM_SYSLOG_FACILITY:-13}
+      # #160: either/or vector backend -- qdrant (default) or milvus. One
+      # backend per deployment; enabling milvus requires the milvus profile.
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
+      MILVUS_URL: ${MILVUS_URL:-http://milvus:19530}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-root:Milvus}
       # #134: distributed tracing -- disabled unless an OTLP endpoint is set
       # (e.g. a Tempo/otel-collector on the compose network). Dev default
       # samples everything when enabled; production should stay low.
@@ -411,6 +455,265 @@ services:
       reranker-service:
         condition: service_healthy
 
+  # ---------------------------------------------------------- observability
+  # Metrics: Prometheus scrapes every Nexus RAG service plus the queue,
+  # database, identity provider, vector store, and telemetry backends.
+  blackbox-exporter:
+    # #133: HTTP health probes for services with no Prometheus /metrics
+    # (Ollama, LibreChat, LiteLLM). Prometheus scrapes it with the target as a
+    # param; it reports probe_success, which the chat-plane and flow dashboards
+    # use for up/down instead of a non-existent up{job=...}.
+    profiles: ["observability"]
+    image: prom/blackbox-exporter:v0.28.0
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./infra/observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"
+
+  nats-exporter:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: natsio/prometheus-nats-exporter:0.20.1
+    command:
+      - -varz
+      - -connz
+      - -healthz
+      # One mode, not a list: the exporter's -jsz flag accepts a single
+      # filter (all|streams|consumers|...); "streams,consumers" is rejected
+      # at startup ("invalid jsz filter"). `all` covers both.
+      - -jsz=all
+      - http://nats:8222
+    ports:
+      - "127.0.0.1:7777:7777"
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  postgres-exporter:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-nexus_rag}?sslmode=disable
+      # #133 review finding 6: a dedicated monitoring role, not the app role.
+      # The app role holds no pg_monitor membership, so most of the exporter's
+      # collectors silently returned nothing against it -- and granting it
+      # pg_monitor would have handed the credential the whole application uses
+      # cluster-wide read of every session's queries and stats, which is the
+      # separation NFR-3 exists to keep. init-app-roles.sh creates this role
+      # with pg_monitor and CONNECT only.
+      DATA_SOURCE_USER: ${MONITORING_DB_USER:-nexus_rag_monitor}
+      DATA_SOURCE_PASS: ${MONITORING_DB_PASSWORD:-nexus_rag_monitor}
+    ports:
+      - "127.0.0.1:9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: prom/prometheus:v3.11.3
+    # #133 review finding 2: the Qdrant scrape credential used to be a literal
+    # in the checked-in prometheus.yml, so rotating QDRANT_READ_ONLY_API_KEY
+    # in .env broke the scrape with a silent 401. Render it into the data
+    # volume (owned by the image's `nobody` user -- /etc/prometheus is not
+    # writable) and point prometheus.yml's `credentials_file` at it. Finding 5
+    # adds --web.enable-remote-write-receiver, which is what Tempo's
+    # metrics-generator writes span metrics and service graphs into.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s' "$${QDRANT_READ_ONLY_API_KEY:-dev-qdrant-readonly-key}" \
+          > /prometheus/qdrant-credentials
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --storage.tsdb.retention.time=15d \
+          --web.enable-lifecycle \
+          --web.enable-remote-write-receiver
+    environment:
+      QDRANT_READ_ONLY_API_KEY: ${QDRANT_READ_ONLY_API_KEY:-dev-qdrant-readonly-key}
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      alertmanager:
+        condition: service_started
+
+  alertmanager:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: prom/alertmanager:v0.32.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./infra/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+
+  # Traces: services emit OTLP/HTTP to the collector, which batches and
+  # forwards to Tempo. Grafana exposes the cross-service trace trees.
+  tempo:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: grafana/tempo:2.10.5
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./infra/observability/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+
+  otel-collector:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./infra/observability/otel-collector.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:13133:13133"
+    depends_on:
+      tempo:
+        condition: service_started
+
+  # Logs: Alloy discovers only containers in this Compose project and ships
+  # their stdout/stderr to Loki. The Docker socket is read-only and this
+  # collector is strictly a local-development component.
+  loki:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: grafana/loki:3.7.2
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./infra/observability/loki.yml:/etc/loki/local-config.yaml:ro
+      # /loki is the image's own data dir, already owned by loki's uid --
+      # a custom path mounts root-owned and kills the ruler on mkdir.
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+
+  docker-socket-proxy:
+    # #133 review finding 3: Alloy used to bind-mount /var/run/docker.sock
+    # directly. The `:ro` on that mount constrains the *file*, not the daemon
+    # API reached through it -- anything that can talk to the socket can
+    # create a privileged container and is therefore root on the host. That is
+    # a large amount of authority to hand a log shipper.
+    #
+    # This proxy sits in front of the socket and allows exactly the endpoints
+    # Alloy's discovery and log tailing need (GET /containers...), refusing
+    # everything else -- notably POST /containers/create and /exec. Alloy
+    # reaches it over the compose network instead of the socket, so its
+    # capability drops from "root on the host" to "read container metadata and
+    # stdout".
+    #
+    # It is not zero-risk: the proxy itself holds the socket, so a compromise
+    # of *it* is the same exposure. It is a dev-only profile, never started by
+    # a bare `docker compose up`, and the Helm chart has no equivalent (pods
+    # log to the node's collector, no socket involved).
+    profiles: ["observability"]
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      # Default-deny: the image refuses every endpoint that isn't set to 1.
+      CONTAINERS: 1
+      # GET /networks, needed by Alloy's discovery.docker to compute the
+      # network labels on each target. Found by running it: with this off,
+      # discovery failed every refresh with "error while computing network
+      # labels: 403 Forbidden" and Alloy shipped no container logs at all.
+      # Still read-only, and still far short of socket access.
+      NETWORKS: 1
+      # Everything else stays off, spelled out rather than omitted so that a
+      # future edit has to make an explicit decision to widen this.
+      POST: 0
+      EXEC: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      IMAGES: 0
+      INFO: 0
+      NODES: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Deliberately not published to the host: reachable only from the compose
+    # network, unlike the rest of the observability profile's UIs.
+    expose:
+      - "2375"
+
+  alloy:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: grafana/alloy:v1.16.1
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./infra/observability/alloy.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:12345:12345"
+    depends_on:
+      loki:
+        condition: service_started
+      docker-socket-proxy:
+        condition: service_started
+
+  grafana:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    profiles: ["observability"]
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-nexus-rag-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # #133: SVG flowchart panel (draw.io-style live topology). Downloaded
+      # at startup; in an air-gapped install, pre-seed the plugin into
+      # /var/lib/grafana/plugins instead and drop this line.
+      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel"
+      # #133: consumed by the provisioned Postgres datasource (documents dashboard).
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER:-grafana_ro}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+
   syslog-collector:
     # #73/NFR-2 validation only: a stand-in SIEM that prints every syslog
     # message it receives to stdout, tagged [udp]/[tcp]/[tls], so the export
@@ -450,6 +753,57 @@ services:
       - "${SIEM_DEBUG_HOST_IP:-127.0.0.1}:${SIEM_DEBUG_TCP_PORT:-5514}:514/tcp"
       - "${SIEM_DEBUG_HOST_IP:-127.0.0.1}:${SIEM_DEBUG_TLS_PORT:-6514}:6514/tcp"
 
+  milvus:
+    # #160: optional Milvus Standalone for the either/or vector-backend
+    # comparison. Opt-in via the milvus profile; the default stack keeps
+    # running Qdrant only. Standalone with embedded etcd and local storage --
+    # one container, no etcd/minio sidecars. Milvus Lite is NOT used: it
+    # lacks the sparse-vector path this project's hybrid retrieval needs.
+    #
+    #   VECTOR_BACKEND=milvus docker compose --profile milvus up -d
+    profiles: ["milvus"]
+    image: milvusdb/milvus:v2.4.17
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      COMMON_STORAGETYPE: local
+      # NFR-15: authenticated access in every environment; the services'
+      # MILVUS_TOKEN carries user:password. Milvus's bootstrap credentials
+      # are root:Milvus -- override both sides together in production.
+      COMMON_SECURITY_AUTHORIZATIONENABLED: "true"
+    volumes:
+      - milvus-data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9091/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  attu:
+    # #163: Milvus-only inspection UI, enabled with the same opt-in profile.
+    # Attu does not support Qdrant; Qdrant's Apache-2.0 dashboard is already
+    # bundled in its server image at http://127.0.0.1:6333/dashboard.
+    #
+    # v2.4.12 deliberately matches the Milvus 2.4.x compatibility line and
+    # is Apache-2.0 licensed. Attu v2.6.0+ uses a proprietary Zilliz license
+    # and must not be adopted without a separate dependency/license review.
+    profiles: ["milvus"]
+    image: zilliz/attu:v2.4.12
+    environment:
+      # Attu v2 expects host:port without a URL scheme. Credentials are
+      # entered in its connection form rather than embedded in Compose.
+      MILVUS_URL: milvus:19530
+    ports:
+      # This UI can inspect and mutate vector data, so keep it host-local.
+      - "127.0.0.1:${ATTU_PORT:-8000}:3000"
+    depends_on:
+      milvus:
+        condition: service_healthy
+
   harden-audit-log:
     # NFR-2: audit_log must be append-only from the app's own DB credentials
     # (APP_DB_USER, not the postgres superuser). Can't do this from
@@ -481,6 +835,37 @@ services:
         ALTER TABLE audit_log OWNER TO "${POSTGRES_USER:-nexus_rag}";
         REVOKE ALL ON audit_log FROM "${APP_DB_USER:-nexus_rag_app}";
         GRANT SELECT, INSERT ON audit_log TO "${APP_DB_USER:-nexus_rag_app}";
+    depends_on:
+      ingestion-api:
+        condition: service_healthy
+    restart: "no"
+
+  provision-metrics-view:
+    # #133: create the document_metrics view + grant it to grafana_ro, once
+    # ingestion-api is healthy (so SQLModel has built the `documents` table this
+    # view reads -- it cannot be created in postgres's initdb scripts, same as
+    # harden-audit-log). Only needed by the Grafana Documents dashboard, so it
+    # rides the observability profile; grafana_ro itself is created
+    # unconditionally by init-app-roles.sh. Connects as the bootstrap superuser
+    # to a mounted .sql file (no compose/shell interpolation of the regex).
+    profiles: ["observability"]
+    image: postgres:16.14
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - postgres
+      - -U
+      - ${POSTGRES_USER:-nexus_rag}
+      - -d
+      - ${POSTGRES_DB:-nexus_rag}
+      - -f
+      - /sql/document-metrics-view.sql
+    volumes:
+      - ./infra/postgres/document-metrics-view.sql:/sql/document-metrics-view.sql:ro
     depends_on:
       ingestion-api:
         condition: service_healthy

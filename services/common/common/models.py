@@ -91,6 +91,19 @@ class Document(SQLModel, table=True):
     reviewed_at: datetime | None = None
     chunk_count: int = Field(default=0)
 
+    # The submission row and original are committed before JetStream publish.
+    # This timestamp is the durable hand-off marker: null means the API's
+    # reconciliation loop must retry publishing this queued document. It is
+    # only set after JetStream acknowledges persistence, so a process crash or
+    # broker outage at the Postgres -> NATS boundary cannot strand the row.
+    queue_published_at: datetime | None = None
+
+    # A short processing lease makes duplicate publication safe without
+    # defeating crash recovery. A duplicate delivered while another worker is
+    # actively processing is acknowledged as redundant; once this timestamp is
+    # older than the JetStream ack wait, a redelivery may reclaim the job.
+    processing_started_at: datetime | None = None
+
     # FR-7: re-ingestion/versioning. Set at submission time (app/routes/upload.py)
     # when an uploader marks this as a new version of an existing approved
     # document; the swap (deleting the old document's Qdrant chunks, flipping

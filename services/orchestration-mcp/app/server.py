@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app import metrics
-from app.rag_search import DEFAULT_TOP_K, MAX_TOP_K, run_rag_search
+from app.rag_search import DEFAULT_TOP_K, MAX_QUERY_CHARS, MAX_TOP_K, run_rag_search
 from common.logging_setup import setup_logging
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
@@ -86,7 +86,11 @@ mcp_server = FastMCP(
 # description would just be redundant token cost, not a lost safeguard.
 @mcp_server.tool()
 async def rag_search(
-    query: str,
+    # #208: bounded like top_k, and as an Annotated Field for the same reason
+    # -- the constraint lands in the MCP tool schema the calling model sees,
+    # so an oversized query is refused before it costs an embedding call, a
+    # sparse encode, and a cross-encoder pass on the shared model.
+    query: Annotated[str, Field(max_length=MAX_QUERY_CHARS)],
     ctx: Context,
     # Bounded rather than a plain `int`: top_k drives the retrieval fan-out
     # (rag_search.py's hybrid_limit) and, through it, how many candidates the
@@ -143,6 +147,13 @@ async def debug_rag_search(request: Request) -> JSONResponse:
     query = request.query_params.get("query")
     if not query:
         return JSONResponse({"detail": "missing query parameter"}, status_code=400)
+    # #208: the MCP tool's schema bounds this; a raw query string has nothing
+    # validating it, exactly as was true of top_k before #106.
+    if len(query) > MAX_QUERY_CHARS:
+        return JSONResponse(
+            {"detail": f"query must be at most {MAX_QUERY_CHARS} characters, got {len(query)}"},
+            status_code=400,
+        )
     # Unlike the MCP tool above, nothing validates a raw query-string value for
     # us here -- a bare int() raised ValueError out of the route (a 500) on any
     # non-numeric input, and accepted arbitrarily large values on numeric ones.

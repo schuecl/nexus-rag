@@ -35,7 +35,9 @@ class _Session:
     def __init__(self, doc):
         self._doc = doc
 
-    def get(self, _model, _id):
+    def get(self, _model, _id, **_kwargs):
+        # **_kwargs so the row-lock the #164 lease takes
+        # (session.get(..., with_for_update=True)) doesn't break this fake.
         return self._doc
 
     def add(self, _obj):

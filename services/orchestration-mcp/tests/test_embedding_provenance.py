@@ -90,18 +90,26 @@ class TestCollectionEmbeddingModel:
         assert qdrant_store.collection_embedding_model(client) is None
 
 
+def _patch_store_model(monkeypatch, model_fn):
+    """#160: rag_search reads provenance via the vector-store seam."""
+
+    class _Store:
+        def stored_embedding_model(self):
+            return model_fn()
+
+    monkeypatch.setattr(rag_search, "get_store", _Store)
+
+
 class TestMismatchDetection:
     def test_matching_model_permits_the_query(self, monkeypatch):
         monkeypatch.setattr(rag_search, "EMBEDDING_MODEL", "nomic-embed-text")
-        monkeypatch.setattr(rag_search, "collection_embedding_model", lambda _c: "nomic-embed-text")
-        monkeypatch.setattr(rag_search, "get_qdrant_client", object)
+        _patch_store_model(monkeypatch, lambda: "nomic-embed-text")
 
         assert rag_search._embedding_model_mismatch() is None
 
     def test_differing_model_is_reported(self, monkeypatch):
         monkeypatch.setattr(rag_search, "EMBEDDING_MODEL", "all-minilm")
-        monkeypatch.setattr(rag_search, "collection_embedding_model", lambda _c: "nomic-embed-text")
-        monkeypatch.setattr(rag_search, "get_qdrant_client", object)
+        _patch_store_model(monkeypatch, lambda: "nomic-embed-text")
 
         msg = rag_search._embedding_model_mismatch()
 
@@ -110,8 +118,7 @@ class TestMismatchDetection:
 
     def test_unknown_provenance_does_not_block(self, monkeypatch):
         """Upgrading a deployment with an existing corpus must not break it."""
-        monkeypatch.setattr(rag_search, "collection_embedding_model", lambda _c: None)
-        monkeypatch.setattr(rag_search, "get_qdrant_client", object)
+        _patch_store_model(monkeypatch, lambda: None)
 
         assert rag_search._embedding_model_mismatch() is None
 
@@ -119,11 +126,10 @@ class TestMismatchDetection:
         """The check is a safety net, not a new dependency -- if Qdrant can't
         answer, retrieval proceeds and the normal error paths handle it."""
 
-        def _boom(_c):
-            raise RuntimeError("qdrant unreachable")
+        def _boom():
+            raise RuntimeError("vector store unreachable")
 
-        monkeypatch.setattr(rag_search, "collection_embedding_model", _boom)
-        monkeypatch.setattr(rag_search, "get_qdrant_client", object)
+        _patch_store_model(monkeypatch, _boom)
 
         assert rag_search._embedding_model_mismatch() is None
 
@@ -136,10 +142,14 @@ class TestQueryRefusal:
             rag_search, "_embedding_model_mismatch", lambda: "embedding model mismatch: ..."
         )
 
-        def _unreachable():
-            raise AssertionError("retrieval must not run on a mismatched collection")
+        class _Refuse:
+            def hybrid_query(self, **_kw):
+                raise AssertionError("retrieval must not run on a mismatched collection")
 
-        monkeypatch.setattr(rag_search, "get_qdrant_client", _unreachable)
+            def access_filter_summary(self, _claims, _allowed):
+                return {}
+
+        monkeypatch.setattr(rag_search, "get_store", _Refuse)
 
         result = await rag_search.run_rag_search("Bearer t", "a query")
 
@@ -155,12 +165,16 @@ class TestQueryRefusal:
         monkeypatch.setattr(rag_search, "_embedding_model_mismatch", lambda: None)
         reached = False
 
-        def _client():
-            nonlocal reached
-            reached = True
-            raise RuntimeError("stop here")
+        class _Store:
+            def access_filter_summary(self, _claims, _allowed):
+                return {}
 
-        monkeypatch.setattr(rag_search, "get_qdrant_client", _client)
+            def hybrid_query(self, **_kw):
+                nonlocal reached
+                reached = True
+                raise RuntimeError("stop here")
+
+        monkeypatch.setattr(rag_search, "get_store", _Store)
 
         async def _embed(_q):
             return [0.0]

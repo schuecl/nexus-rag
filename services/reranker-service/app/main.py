@@ -10,7 +10,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Response, status
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -20,6 +20,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder
+
+from app import metrics
 
 # #73: honor LOG_LEVEL like the other services. Deliberately stdlib-only
 # rather than common.logging_setup: this service has no dependency on
@@ -84,7 +86,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # signatures. One process, one model, assigned exactly here.
     global _model  # noqa: PLW0603
     _model = CrossEncoder(MODEL_NAME)
+    metrics.model_loaded.set(1)
     yield
+    metrics.model_loaded.set(0)
 
 
 app = FastAPI(title="nexus-rag reranker-service", lifespan=lifespan)
@@ -97,6 +101,12 @@ FastAPIInstrumentor.instrument_app(app)
 @app.get("/health")
 def health() -> dict[str, str | bool]:
     return {"status": "ok", "model": MODEL_NAME, "loaded": _model is not None}
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    payload, content_type = metrics.render()
+    return Response(payload, media_type=content_type)
 
 
 class Chunk(BaseModel):
@@ -117,10 +127,15 @@ class RerankedChunk(BaseModel):
 @app.post("/rerank", response_model=list[RerankedChunk])
 def rerank(body: RerankRequest) -> list[RerankedChunk]:
     if _model is None:
+        metrics.requests_total.labels(outcome="unavailable").inc()
         raise RuntimeError("model not loaded")
     if not body.chunks:
+        metrics.batch_chunks.observe(0)
+        metrics.requests_total.labels(outcome="empty").inc()
         return []
     if len(body.chunks) > MAX_RERANK_CHUNKS:
+        metrics.batch_chunks.observe(len(body.chunks))
+        metrics.requests_total.labels(outcome="too_large").inc()
         raise HTTPException(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             f"batch of {len(body.chunks)} chunks exceeds the {MAX_RERANK_CHUNKS}-chunk limit",
@@ -129,6 +144,13 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
     # #134: the CPU-bound stage this service exists for, as its own span --
     # batch size only, never query/chunk text (common/tracing.py's rule).
     with tracer.start_as_current_span("model.predict", attributes={"rerank.pairs": len(pairs)}):
-        scores = _model.predict(pairs)
+        try:
+            with metrics.model_predict_seconds.time():
+                scores = _model.predict(pairs)
+        except Exception:
+            metrics.requests_total.labels(outcome="error").inc()
+            raise
+    metrics.batch_chunks.observe(len(body.chunks))
+    metrics.requests_total.labels(outcome="ok").inc()
     ranked = sorted(zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True)
     return [RerankedChunk(id=chunk.id, score=float(score)) for chunk, score in ranked]

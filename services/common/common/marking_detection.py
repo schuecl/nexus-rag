@@ -71,8 +71,12 @@ _BANNER_WORDS = [
 # so keeping it out of the character class removes the one-slash-two-ways
 # ambiguity that let `//0//0//0...` backtrack exponentially (CodeQL py/redos).
 # `_parse_caveats` still splits the captured tail on '/' itself, so a segment
-# body never needs to match a bare slash.
-_CAVEAT_TAIL = r"((?://[A-Z0-9][A-Z0-9 ,]*)*)"
+# body never needs to match a bare slash. '-' is in the body class so a
+# hyphenated CUI control segment ("CUI//SP-CTI//NOFORN") is consumed whole --
+# without it the match stopped at "CUI//SP" and dropped the NOFORN restriction
+# entirely (PR #2 review). '-' introduces no separator ambiguity, so the ReDoS
+# reasoning above is unchanged.
+_CAVEAT_TAIL = r"((?://[A-Z0-9][A-Z0-9 ,-]*)*)"
 _BANNER_RE = re.compile(
     r"(?<![A-Za-z])(" + "|".join(_BANNER_WORDS) + r")" + _CAVEAT_TAIL + r"(?![A-Za-z])"
 )
@@ -218,6 +222,7 @@ def evaluate_markings(
     assigned_releasability: list[str],
     detected: DetectedMarkings,
     rank_by_value: Mapping[str, int],
+    known_caveats: list[str] | None = None,
 ) -> TaggingAdvisory:
     """Compare detected markings against the human-assigned tags (issue #138).
 
@@ -226,6 +231,15 @@ def evaluate_markings(
     in it are ignored -- we can only compare against configured levels. The
     result is advisory: `under_classified` means the document's own markings
     appear *higher* than the tag a human chose, which a curator should confirm.
+
+    `known_caveats` is the admin-configured ReleasabilityValue vocabulary. When
+    provided, only detected caveats that appear in it are eligible for
+    `unassigned_caveats`: a marking tail can also carry segments that are not
+    releasability at all (CUI control markings like SP-CTI, dissemination
+    controls), and flagging those as "missing releasability" would be a false
+    positive against a vocabulary they were never part of (PR #2 review). All
+    detected segments still appear in `detected_caveats` for the curator to see.
+    When omitted, every detected caveat is compared (the prior behavior).
     """
     ranks = {value.upper(): rank for value, rank in rank_by_value.items()}
     advisory = TaggingAdvisory(assigned_classification=assigned_classification)
@@ -256,5 +270,9 @@ def evaluate_markings(
 
     held = {c.upper() for c in assigned_releasability}
     advisory.detected_caveats = list(detected.caveats)
-    advisory.unassigned_caveats = [c for c in detected.caveats if c.upper() not in held]
+    candidates = detected.caveats
+    if known_caveats is not None:
+        known = {c.upper() for c in known_caveats}
+        candidates = tuple(c for c in candidates if c.upper() in known)
+    advisory.unassigned_caveats = [c for c in candidates if c.upper() not in held]
     return advisory
