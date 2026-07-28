@@ -1079,6 +1079,52 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # The classification-matrix corpus (#198): not started by a plain
+  # `docker compose up`. Two on-demand steps, both inside the compose network
+  # because a host-side token carries issuer 127.0.0.1:8080 and the services
+  # verify against http://keycloak:8080 -- the mismatch is a 401, not a config
+  # error, and it is confusing to debug from the outside.
+  #
+  #   docker compose --profile corpus run --rm ingest-classification-corpus
+  #   docker compose --profile corpus run --rm verify-corpus-access
+  ingest-classification-corpus:
+    profiles: ["corpus"]
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["python3", "ingest_classification_corpus.py"]
+    volumes:
+      - ./sample-data/classification-corpus:/srv/corpus:ro
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      INGESTION_API_URL: http://ingestion-api:8001
+      CORPUS_DIR: /srv/corpus
+      RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+    depends_on:
+      ingestion-api:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+
+  verify-corpus-access:
+    profiles: ["corpus"]
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["python3", "verify_corpus_access.py"]
+    volumes:
+      - ./sample-data/classification-corpus:/srv/corpus:ro
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
+      CORPUS_DIR: /srv/corpus
+      RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+    depends_on:
+      orchestration-mcp:
+        condition: service_healthy
+    restart: "no"
+
   # ---------------------------------------------------- throwaway MPNexus stack
   mongodb:
     image: mongo:7.0.31
