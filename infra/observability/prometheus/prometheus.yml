@@ -1,0 +1,107 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: nexus-rag-ingestion-api
+    static_configs:
+      - targets: ["ingestion-api:8001"]
+
+  - job_name: nexus-rag-ingestion-worker
+    static_configs:
+      - targets: ["ingestion-worker:8004"]
+
+  - job_name: nexus-rag-orchestration-mcp
+    static_configs:
+      - targets: ["orchestration-mcp:8002"]
+
+  - job_name: nexus-rag-reranker
+    static_configs:
+      - targets: ["reranker-service:8003"]
+
+  - job_name: nats
+    static_configs:
+      - targets: ["nats-exporter:7777"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: qdrant
+    # Qdrant protects /metrics when API-key auth is enabled. Prometheus does
+    # not expand environment variables inside this file, so the key is read
+    # from a file the container renders from $QDRANT_READ_ONLY_API_KEY at
+    # startup (see docker-compose.yml's prometheus entrypoint). Baking the
+    # literal key in here meant that rotating it in .env silently broke the
+    # scrape with a 401 and no other signal.
+    authorization:
+      credentials_file: /prometheus/qdrant-credentials
+    static_configs:
+      - targets: ["qdrant:6333"]
+
+  # #160: Milvus Standalone metrics, the either/or alternative to Qdrant. Only
+  # reachable when the stack is started with the milvus profile; on a Qdrant
+  # deployment this target simply stays DOWN, which is the expected state (one
+  # backend per deployment, never both). Milvus exposes Prometheus metrics on
+  # 9091/metrics -- the same port as its healthz.
+  - job_name: milvus
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["milvus:9091"]
+
+  - job_name: keycloak
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["keycloak:9000"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+
+  # #133: blackbox HTTP probes for services without a /metrics endpoint. The
+  # probe result is probe_success{instance="<target>"}; a flow/status panel
+  # keys on the instance, not a job=up.
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://librechat-proxy:3080/login
+          - http://litellm:4000/health/liveliness
+          - http://ollama:11434/api/version
+          - http://ingestion-api:8001/health
+          - http://ingestion-worker:8004/health
+          - http://orchestration-mcp:8002/health
+          - http://reranker-service:8003/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

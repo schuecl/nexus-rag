@@ -35,6 +35,11 @@ def db():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+    # Disposing is not optional housekeeping: pytest 9 turns the
+    # ResourceWarning an un-disposed sqlite3 connection raises at GC time into
+    # a test error, and because GC runs whenever it likes, the error lands on
+    # whichever unrelated test is executing at the time (#188).
+    engine.dispose()
 
 
 def _session_row(*, age: timedelta) -> UserSession:
