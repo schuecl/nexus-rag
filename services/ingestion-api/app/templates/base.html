@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>{% block title %}nexus-rag{% endblock %}</title>
   <style>
+    .linklike { background: none; border: none; padding: 0; color: #06c; text-decoration: underline; cursor: pointer; font: inherit; }
     body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
     nav a { margin-right: 1rem; }
     label { display: block; margin-top: 0.75rem; font-weight: 600; }
@@ -24,7 +25,9 @@
     <a href="/search">Search</a>
     {% if current_user %}
     <span class="hint">Logged in as <strong>{{ current_user.preferred_username }}</strong></span>
-    <a href="/auth/logout">Log out</a>
+    <!-- Issue #215: logout is a state change, so it goes through POST with
+         the same CSRF header every other state-changing request carries. -->
+    <button type="button" class="linklike" onclick="logout()">Log out</button>
     {% else %}
     <a href="/auth/login">Log in</a>
     {% endif %}
@@ -43,6 +46,15 @@
     function authHeaders() {
       const match = document.cookie.match(/(?:^|; )nexus_rag_csrf=([^;]*)/);
       return match ? { 'X-CSRF-Token': decodeURIComponent(match[1]) } : {};
+    }
+
+    // Issue #215: POST, so the CSRF check applies and a third-party page
+    // can't log the user out by embedding the URL. The server answers 303,
+    // so fetch() follows the RP-initiated logout redirect through Keycloak
+    // with GET; we then land the browser wherever it ended up.
+    async function logout() {
+      const res = await fetch('/auth/logout', { method: 'POST', headers: authHeaders() });
+      window.location.href = res.url || '/';
     }
   </script>
 </body>

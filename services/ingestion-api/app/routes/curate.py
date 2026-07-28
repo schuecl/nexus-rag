@@ -39,8 +39,13 @@ def list_queue(
     return docs
 
 
-def _load_pending(session: Session, doc_id: uuid.UUID) -> Document:
-    doc = session.get(Document, doc_id)
+def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) -> Document:
+    # Issue #215: `lock=True` takes a row lock (SELECT ... FOR UPDATE) so two
+    # curators acting on the same document can't both pass the
+    # `pending_review` check and both proceed. Same mechanism #164 introduced
+    # for the worker's processing lease. Not taken on read-only paths, which
+    # would otherwise serialise the queue view against every decision.
+    doc = session.get(Document, doc_id, with_for_update=lock)
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
     if doc.status != "pending_review":
@@ -50,7 +55,13 @@ def _load_pending(session: Session, doc_id: uuid.UUID) -> Document:
 
 def _check_curator_authority(user: UserClaims, doc: Document, session: Session) -> None:
     if not user.can_curate_org(doc.owner_org):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a curator for org '{doc.owner_org}'")
+        # Issue #215: 404, not 403. A 403 naming the owning org told a curator
+        # scoped to one org that a given document id exists and which org owns
+        # it -- an existence oracle, and one that leaks an org name to someone
+        # with no authority over it. To a caller who may not curate this
+        # document, it is indistinguishable from a document that isn't there,
+        # which is exactly what they should be able to observe.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
     allowed = allowed_classifications(session, user.clearance)
     if doc.classification not in allowed:
         raise HTTPException(
@@ -131,7 +142,7 @@ def approve(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> Document:
-    doc = _load_pending(session, doc_id)
+    doc = _load_pending(session, doc_id, lock=True)
     _check_curator_authority(user, doc, session)
 
     if corrections:
@@ -225,7 +236,7 @@ def reject(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> Document:
-    doc = _load_pending(session, doc_id)
+    doc = _load_pending(session, doc_id, lock=True)
     _check_curator_authority(user, doc, session)
 
     doc.status = "rejected"

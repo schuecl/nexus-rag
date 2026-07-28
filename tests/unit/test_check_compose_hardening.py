@@ -19,7 +19,7 @@ from check_compose_hardening import _check_service
 HARDENED = {
     "user": "10001:10001",
     "read_only": True,
-    "tmpfs": ["/tmp"],
+    "tmpfs": ["/tmp:size=64m"],
     "cap_drop": ["ALL"],
     "security_opt": ["no-new-privileges:true"],
 }
@@ -57,6 +57,25 @@ class TestCustomServices:
         problems = _check_service("ingestion-api", _custom(tmpfs=None))
 
         assert any("no tmpfs" in p for p in problems), problems
+
+    def test_an_unsized_tmpfs_is_rejected(self):
+        """Issue #209: unlike the chart's emptyDir (already bounded by
+        ephemeral-storage limits), Compose's tmpfs is RAM-backed -- an
+        unsized mount lets an oversized upload's multipart spool consume
+        host memory before MAX_UPLOAD_BYTES is ever checked."""
+        problems = _check_service("ingestion-api", _custom(tmpfs=["/tmp"]))
+
+        assert any("no size=" in p for p in problems), problems
+
+    def test_a_sized_tmpfs_passes(self):
+        assert _check_service("ingestion-api", _custom(tmpfs=["/tmp:size=64m"])) == []
+
+    def test_a_long_form_tmpfs_entry_is_reported_not_silently_passed(self):
+        problems = _check_service(
+            "ingestion-api", _custom(tmpfs=[{"target": "/tmp", "tmpfs": {"size": 67108864}}])
+        )
+
+        assert any("long-form tmpfs" in p for p in problems), problems
 
 
 class TestEveryService:
