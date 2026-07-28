@@ -304,6 +304,30 @@ A token requested this way (via `localhost:8080`, i.e. from outside the Compose 
 
 Swap `username`/`password` for any seeded user above.
 
+### Chat plane troubleshooting (#193)
+
+A **successful Keycloak login followed by a chat error is not an auth failure** — the
+OIDC path (login, claims, `rag_search` access filtering) is independent of the
+LibreChat → LiteLLM → Ollama generation path. Two symptoms seen during testing:
+
+- **"Missing API Key for LiteLLM."** The LiteLLM endpoint's key comes from
+  `LITELLM_MASTER_KEY` in the `librechat` container's environment (substituted into
+  `infra/librechat/librechat.yaml`). It is wired in `docker-compose.yml`; if you see
+  this, confirm `docker exec <librechat> printenv LITELLM_MASTER_KEY` is non-empty and
+  matches LiteLLM's own value. It has nothing to do with the user's login.
+- **`400 "nomic-embed-text:latest" does not support chat`.** The generation model
+  (`qwen2.5:7b-instruct`, ~5 GB) is pulled by `ollama-model-init` on first boot, after
+  the embedding model. If that pull is interrupted (no internet, or a full disk — the
+  full first boot needs ~10 GB free), only the embedding model remains and the model
+  list offers it for chat, which it cannot do. Re-pull it:
+
+  ```bash
+  docker exec "$(docker compose ps -q ollama)" ollama pull qwen2.5:7b-instruct
+  docker exec "$(docker compose ps -q ollama)" ollama list   # confirm qwen is present
+  ```
+
+  Then pick the **LiteLLM** endpoint and the `qwen2.5:7b-instruct` model in LibreChat.
+
 ## Exercising the flow
 
 By the time `docker compose up` finishes, `seed-sample-data` has already run steps 1-2
