@@ -1,0 +1,20 @@
+{{- if .Values.nats.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-nats-conf
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+data:
+  # Issue #212: per-user publish/subscribe permissions (ingestion-api
+  # publish-only, ingestion-worker consume-only) instead of the single
+  # shared --auth token. Passwords are unquoted $VAR references that
+  # nats-server itself substitutes from the container's environment at
+  # startup -- this file has no secret material in it.
+  #
+  # Mirrors infra/nats/nats.conf (Helm can't reference files outside its own
+  # chart directory) -- kept in sync by scripts/check_nats_conf_sync.py.
+  nats.conf: |
+{{ .Files.Get "files/nats.conf" | indent 4 }}
+{{- end }}

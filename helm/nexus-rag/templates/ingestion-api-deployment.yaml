@@ -157,13 +157,17 @@ spec:
                   name: {{ .Values.externalObjectStore.existingSecret }}
                   key: {{ .Values.externalObjectStore.secretKeySecretKey }}
             # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
+            # Issue #212: publish-only credential -- nats-configmap.yaml's
+            # permissions deny this user any subscribe/consume permission.
             - name: NATS_URL
               value: "nats://{{ include "nexus-rag.fullname" . }}-nats:{{ .Values.nats.service.clientPort }}"
-            - name: NATS_AUTH_TOKEN
+            - name: NATS_USER
+              value: "ingestion_api"
+            - name: NATS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.nats.authToken.existingSecret }}
-                  key: {{ .Values.nats.authToken.secretKey }}
+                  name: {{ .Values.nats.credentials.ingestionApi.existingSecret }}
+                  key: {{ .Values.nats.credentials.ingestionApi.secretKey }}
           livenessProbe:
             httpGet:
               path: /health

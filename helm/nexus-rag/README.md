@@ -65,9 +65,12 @@ doesn't render cleanly as a bug to fix, not a surprise.
   key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
   read/write access to it — original uploaded files are stored there,
   independent of Qdrant/Postgres (NFR-12)
-- A pre-created Secret matching `nats.authToken.existingSecret` /
-  `.secretKey`, containing a token both `ingestion-api` (publisher) and
-  `ingestion-worker` (consumer) authenticate to NATS with (NFR-11)
+- Two pre-created Secrets, matching `nats.credentials.ingestionApi` and
+  `.ingestionWorker` (`.existingSecret`/`.secretKey` each) — `ingestion-api`
+  (publisher) and `ingestion-worker` (consumer) each authenticate to NATS
+  with their own password, restricted to publish-only/consume-only by
+  `templates/nats-configmap.yaml`'s per-subject permissions (NFR-11, issue
+  #212)
 
 ## Network policy (issue #110)
 

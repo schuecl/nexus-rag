@@ -108,13 +108,21 @@ services:
     # FastAPI BackgroundTasks mechanism this replaces. -sd persists stream
     # data to the mounted volume; -m exposes the monitoring HTTP endpoint
     # (port 8222, unauthenticated by design, used by the healthcheck below)
-    # separate from the client protocol port (4222, which --auth protects).
+    # separate from the client protocol port (4222, which the mounted
+    # config's per-user permissions protect -- issue #212: a single shared
+    # --auth token let either service publish and consume everything;
+    # ingestion-api/ingestion-worker now each connect with their own
+    # publish-only/consume-only credential).
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     image: nats:2.14.3-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222", "--auth", "${NATS_AUTH_TOKEN:-dev-nats-token}"]
+    command: ["-js", "-sd", "/data", "-m", "8222", "-c", "/etc/nats/nats.conf"]
+    environment:
+      NATS_INGESTION_API_PASSWORD: ${NATS_INGESTION_API_PASSWORD:-dev-nats-api-password}
+      NATS_INGESTION_WORKER_PASSWORD: ${NATS_INGESTION_WORKER_PASSWORD:-dev-nats-worker-password}
     volumes:
       - nats-data:/data
+      - ./infra/nats/nats.conf:/etc/nats/nats.conf:ro
     ports:
       # Bound to localhost only, same reasoning as qdrant's port binding
       # above -- other containers reach it via nats:4222 regardless.
@@ -353,8 +361,11 @@ services:
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
       # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
+      # Issue #212: publish-only credential -- infra/nats/nats.conf denies
+      # this user any subscribe/consume permission.
       NATS_URL: nats://nats:4222
-      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
+      NATS_USER: ingestion_api
+      NATS_PASSWORD: ${NATS_INGESTION_API_PASSWORD:-dev-nats-api-password}
     volumes:
       - object-store-data:/srv/object-store
     ports:
@@ -434,8 +445,12 @@ services:
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
+      # Issue #212: consume-only credential -- infra/nats/nats.conf denies
+      # this user publish on the data subject itself, only the JetStream
+      # consumer/ack API subjects it needs to pull and acknowledge jobs.
       NATS_URL: nats://nats:4222
-      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
+      NATS_USER: ingestion_worker
+      NATS_PASSWORD: ${NATS_INGESTION_WORKER_PASSWORD:-dev-nats-worker-password}
     volumes:
       - ingestion-worker-cache:/srv/.cache/huggingface
       - object-store-data:/srv/object-store
