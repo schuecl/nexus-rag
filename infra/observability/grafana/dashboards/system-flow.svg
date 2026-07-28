@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620" font-family="system-ui, sans-serif">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a93a3"/></marker></defs>
+<style>.lbl{fill:#f5f8ff;font-size:14px;font-weight:600;text-anchor:middle;pointer-events:none;}.sub{fill:#dbe2ee;font-size:10.5px;text-anchor:middle;pointer-events:none;}.elbl{fill:#c7cfdb;font-size:10px;text-anchor:middle;paint-order:stroke;stroke:#0d1117;stroke-width:3;stroke-linejoin:round;pointer-events:none;}.lane{fill:#7d8794;font-size:11px;font-weight:700;letter-spacing:1px;pointer-events:none;}.edge{stroke-width:3;fill:none;marker-end:url(#arrow);stroke-linejoin:round;stroke-linecap:round;}.node{stroke:#0d1117;stroke-width:1.5;}.store{stroke:#0d1117;stroke-width:1.5;}.rim{fill:rgba(255,255,255,0.13);stroke:#0d1117;stroke-width:1.2;pointer-events:none;}</style>
+<text class="lane" x="20" y="55">AUTH</text>
+<text class="lane" x="20" y="168">INGESTION</text>
+<text class="lane" x="20" y="408">RETRIEVAL</text>
+<text class="lane" x="20" y="523">GENERATION</text>
+<path id="edge-auth" class="edge" d="M305,85 L221,85" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-upload" class="edge" d="M130,113 L130,180" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-publish" class="edge" d="M218,210 L294,210" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-consume" class="edge" d="M464,210 L540,210" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-upsert" class="edge" d="M718,210 L803,210" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-objstore" class="edge" d="M130,238 L130,298" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-status" class="edge" d="M630,182 L630,140 L880,140 L880,120" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-query" class="edge" d="M42,80 L22,92 L22,450 L40,450" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-genin" class="edge" d="M42,92 L10,104 L10,565 L40,565" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-rerank" class="edge" d="M218,448 L540,448" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-vquery" class="edge" d="M130,478 L130,505 L880,505 L880,243" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-embedI" class="edge" d="M630,238 L630,288 L410,288 L410,537" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-embedQ" class="edge" d="M218,454 L250,454 L250,538 L350,538" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="edge-gen" class="edge" d="M218,565 L294,565" stroke="#556072" stroke-dasharray="9 7"><animate attributeName="stroke-dashoffset" values="16;0" dur="0.9s" repeatCount="indefinite"/></path>
+<path id="object-store" class="store" d="M55,309 A75,9 0 0 0 205,309 L205,351 A75,9 0 0 1 55,351 Z" fill="#33405a"/><ellipse class="rim" cx="130" cy="309" rx="75" ry="9"/><text class="lbl" x="130" y="332">object store</text><text class="sub" x="130" y="347">original bytes (NFR-12)</text>
+<rect id="librechat" class="node" x="42" y="57" width="176" height="56" rx="6" fill="#20252e"/><rect class="rim" x="121" y="113" width="18" height="6"/><rect class="rim" x="108" y="119" width="44" height="4" rx="2"/><text class="lbl" x="130" y="84">LibreChat</text><text class="sub" x="130" y="99">chat UI (HTTPS)</text>
+<path id="keycloak" class="node" d="M380,53 L455,61 L455,85 Q455,117 380,117 Q305,117 305,85 L305,61 Z" fill="#20252e"/><text class="lbl" x="380" y="86">Keycloak</text><text class="sub" x="380" y="101">OIDC / SSO</text>
+<path id="postgres" class="node" d="M805,61 A75,9 0 0 0 955,61 L955,109 A75,9 0 0 1 805,109 Z" fill="#20252e"/><ellipse class="rim" cx="880" cy="61" rx="75" ry="9"/><text class="lbl" x="880" y="87">Postgres</text><text class="sub" x="880" y="102">documents · audit</text>
+<rect id="ingestion-api" class="node" x="42" y="182" width="176" height="56" rx="9" fill="#20252e"/><text class="lbl" x="130" y="209">ingestion-api</text><text class="sub" x="130" y="224">upload · tag · curate</text>
+<polygon id="nats" class="node" points="296,210 338,180 422,180 464,210 422,240 338,240" fill="#20252e"/><text class="lbl" x="380" y="209">NATS</text><text class="sub" x="380" y="224">JetStream queue</text>
+<rect id="ingestion-worker" class="node" x="542" y="182" width="176" height="56" rx="9" fill="#20252e"/><text class="lbl" x="630" y="209">ingestion-worker</text><text class="sub" x="630" y="224">parse·chunk·embed</text>
+<path id="qdrant" class="node" d="M805,186 A75,9 0 0 0 955,186 L955,234 A75,9 0 0 1 805,234 Z" fill="#20252e"/><ellipse class="rim" cx="880" cy="186" rx="75" ry="9"/><text class="lbl" x="880" y="212">Qdrant</text><text class="sub" x="880" y="227">vector store</text>
+<rect id="orchestration-mcp" class="node" x="42" y="422" width="176" height="56" rx="9" fill="#20252e"/><text class="lbl" x="130" y="449">orchestration-mcp</text><text class="sub" x="130" y="464">rag_search (MCP)</text>
+<rect id="reranker" class="node" x="542" y="422" width="176" height="56" rx="9" fill="#20252e"/><text class="lbl" x="630" y="449">reranker</text><text class="sub" x="630" y="464">cross-encoder</text>
+<rect id="litellm" class="node" x="42" y="537" width="176" height="56" rx="9" fill="#20252e"/><text class="lbl" x="130" y="564">LiteLLM</text><text class="sub" x="130" y="579">model gateway</text>
+<polygon id="ollama" class="node" points="296,565 338,535 422,535 464,565 422,595 338,595" fill="#20252e"/><text class="lbl" x="380" y="564">Ollama</text><text class="sub" x="380" y="579">embed + generate</text>
+<text class="elbl" x="263" y="78">OIDC</text>
+<text class="elbl" x="163" y="150">upload</text>
+<text class="elbl" x="256" y="202">publish</text>
+<text class="elbl" x="502" y="202">consume</text>
+<text class="elbl" x="760" y="202">writes vectors</text>
+<text class="elbl" x="175" y="270">original file</text>
+<text class="elbl" x="752" y="132">status/audit</text>
+<text class="elbl" x="46" y="300">query</text>
+<text class="elbl" x="379" y="440">rerank</text>
+<text class="elbl" x="486" y="497">dense+BM25</text>
+<text class="elbl" x="508" y="280">embed</text>
+<text class="elbl" x="272" y="500">embed query</text>
+<text class="elbl" x="256" y="557">generate</text>
+</svg>

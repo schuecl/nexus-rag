@@ -110,7 +110,7 @@ jobs:
           docker compose --profile eval run --rm eval-retrieval | tee retrieval-eval.txt
       - name: Upload evaluation report
         if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: retrieval-eval-report
           path: retrieval-eval.txt
@@ -143,7 +143,7 @@ jobs:
           pip install mutmut==3.6.0
           pip install -r requirements-test.txt
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
+            "sqlmodel>=0.0.21" "qdrant-client>=1.10" "pymilvus>=2.5" "nats-py>=2.7" "boto3>=1.34"
       - name: Run mutation testing on services/common
         # Runs from services/common so mutated module names match the test
         # suite's `common.*` imports -- see pyproject.toml's [tool.mutmut].
@@ -160,7 +160,7 @@ jobs:
       - name: Export HTML report
         if: always()
         run: cd services/common && mutmut html || true
-      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: mutation-report

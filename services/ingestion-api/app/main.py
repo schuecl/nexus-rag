@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
+from app import metrics
 from app.deps import get_current_user_optional
+from app.recovery import reconcile_forever
 from app.routes import admin, auth, curate, notifications, search, upload
 from common.claims import UserClaims
 from common.db import get_engine, get_session, init_db
@@ -67,13 +70,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     js = nc.jetstream()
     await ensure_stream(js)
     app.state.jetstream = js
+    recovery_task = asyncio.create_task(reconcile_forever(js))
     try:
         yield
     finally:
+        recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await recovery_task
         await nc.close()
 
 
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
+app.middleware("http")(metrics.http_metrics_middleware)
 # #134: one request span per route, with incoming traceparent honored; the
 # import lives here rather than at the top so the app object exists first.
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
@@ -92,6 +100,12 @@ app.include_router(search.router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    payload, content_type = metrics.render()
+    return Response(payload, media_type=content_type)
 
 
 def _live_controlled_vocab(session: Session) -> dict:

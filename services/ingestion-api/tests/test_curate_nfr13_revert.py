@@ -69,17 +69,24 @@ def _document(**overrides: Any) -> Document:
 
 
 class _PayloadCalls:
-    """Records every update_document_payload/delete_document_chunks call, in
-    order, so a test can assert both that the revert happened and that it
-    happened *after* the original write it's supposed to be undoing."""
+    """A stand-in for the #160 vector-store seam that records every
+    update_document_payload/delete_document_chunks call, in order, so a test
+    can assert both that the revert happened and that it happened *after* the
+    original write it's supposed to be undoing.
+
+    Since #160 curate.py reaches the vector backend through get_store() rather
+    than module-level Qdrant helpers, so this is patched in as the store
+    itself -- which also means these tests now cover the revert path for
+    whichever backend is configured, not just Qdrant.
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict | None]] = []
 
-    def update(self, _client: object, document_id: str, fields: dict) -> None:
+    def update_document_payload(self, document_id: str, fields: dict) -> None:
         self.calls.append(("update", document_id, fields))
 
-    def delete(self, _client: object, document_id: str) -> None:
+    def delete_document_chunks(self, document_id: str) -> None:
         self.calls.append(("delete", document_id, None))
 
 
@@ -97,9 +104,7 @@ def _break_commit(session: Session, error: Exception) -> None:
 @pytest.fixture(autouse=True)
 def _stub_qdrant(monkeypatch: pytest.MonkeyPatch) -> _PayloadCalls:
     calls = _PayloadCalls()
-    monkeypatch.setattr(curate, "get_qdrant_client", object)
-    monkeypatch.setattr(curate, "update_document_payload", calls.update)
-    monkeypatch.setattr(curate, "delete_document_chunks", calls.delete)
+    monkeypatch.setattr(curate, "get_store", lambda: calls)
     return calls
 
 
@@ -134,12 +139,12 @@ class TestApproveRevertsOnCommitFailure:
         session.refresh(doc)
         _break_commit(session, RuntimeError("db unavailable"))
 
-        def _broken_update(_client: object, document_id: str, fields: dict) -> None:
+        def _broken_update(document_id: str, fields: dict) -> None:
             _stub_qdrant.calls.append(("update", document_id, fields))
             if fields == {"status": "pending_review"}:
                 raise ConnectionError("qdrant unreachable")
 
-        monkeypatch.setattr(curate, "update_document_payload", _broken_update)
+        monkeypatch.setattr(_stub_qdrant, "update_document_payload", _broken_update)
 
         with pytest.raises(RuntimeError, match="db unavailable"):
             curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
@@ -190,11 +195,11 @@ class TestSupersedeRevertsWhenOldDocumentDeleteFails:
         session.commit()
         session.refresh(new_doc)
 
-        def _broken_delete(_client: object, document_id: str) -> None:
+        def _broken_delete(document_id: str) -> None:
             _stub_qdrant.calls.append(("delete", document_id, None))
             raise ConnectionError("qdrant delete failed")
 
-        monkeypatch.setattr(curate, "delete_document_chunks", _broken_delete)
+        monkeypatch.setattr(_stub_qdrant, "delete_document_chunks", _broken_delete)
 
         with pytest.raises(ConnectionError, match="qdrant delete failed"):
             curate.approve(new_doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)

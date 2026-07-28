@@ -53,7 +53,7 @@ def captured(monkeypatch):
     points: list = []
 
     class _Session:
-        def get(self, _model, _id):
+        def get(self, _model, _id, **_kwargs):
             return doc
 
         def add(self, _obj):
@@ -86,16 +86,29 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(processing, "embed_texts", _embed)
     monkeypatch.setattr(processing, "embed_sparse", lambda _t: [object()])
-    monkeypatch.setattr(processing, "chunk_vector", lambda _d, _s: {"dense": _d})
-    monkeypatch.setattr(processing, "ensure_collection", lambda _c, dense_size: None)
-    monkeypatch.setattr(processing, "get_qdrant_client", object)
-    monkeypatch.setattr(processing, "upsert_chunks", lambda _c, pts: points.extend(pts))
+
+    # #160: the pipeline writes through the vector-store seam now.
+    class _Store:
+        def ensure_ready(self, dense_size):
+            return None
+
+        def upsert(self, pts):
+            points.extend(pts)
+
+    monkeypatch.setattr(processing, "get_store", _Store)
     monkeypatch.setattr(processing, "AuditLogEntry", lambda **_kw: object())
 
     return doc, points
 
 
 class TestChunkProvenance:
+    async def test_chunk_id_is_stable_across_retries(self, captured):
+        doc, points = captured
+
+        await processing.process_document(doc.id)
+
+        assert points[0].id == str(uuid.uuid5(doc.id, "chunk:0"))
+
     async def test_chunk_records_the_embedding_model(self, captured):
         doc, points = captured
 

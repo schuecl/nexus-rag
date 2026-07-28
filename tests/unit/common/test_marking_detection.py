@@ -36,6 +36,14 @@ class TestDetectBanners:
         assert detect_markings("CUI").classifications == ("CUI",)
         assert detect_markings("UNCLASSIFIED//FOUO").classifications == ("UNCLASSIFIED",)
 
+    def test_hyphenated_cui_control_marking_consumed_whole(self):
+        # PR #2 review: "CUI//SP-CTI//NOFORN" used to stop matching at the
+        # first hyphen ("CUI//SP"), inventing an SP caveat and dropping the
+        # NOFORN restriction entirely.
+        det = detect_markings("CUI//SP-CTI//NOFORN")
+        assert det.classifications == ("CUI",)
+        assert set(det.caveats) == {"SP-CTI", "NOFORN"}
+
     def test_top_secret_wins_over_secret(self):
         # Longest-token-first: the string contains "SECRET" as a substring of
         # "TOP SECRET" but must be read as TOP SECRET, once.
@@ -126,6 +134,22 @@ class TestEvaluateMarkings:
     def test_caveat_already_held_not_flagged(self):
         adv = self._detect_eval("SECRET//REL TO NATO", assigned="SECRET", releasability=["NATO"])
         assert adv.unassigned_caveats == []
+
+    def test_known_caveats_scopes_unassigned_to_configured_vocabulary(self):
+        # PR #2 review: a CUI control segment (SP-CTI) is not a releasability
+        # value; with the configured vocabulary provided it must not be flagged
+        # as "missing releasability" -- while a genuine configured caveat the
+        # uploader didn't assign (NOFORN) still is. Both stay visible in
+        # detected_caveats.
+        adv = evaluate_markings(
+            assigned_classification="CUI",
+            assigned_releasability=["NONE"],
+            detected=detect_markings("CUI//SP-CTI//NOFORN"),
+            rank_by_value=RANKS,
+            known_caveats=["NONE", "NOFORN", "USA", "NATO", "FVEY"],
+        )
+        assert adv.unassigned_caveats == ["NOFORN"]
+        assert set(adv.detected_caveats) == {"SP-CTI", "NOFORN"}
 
     def test_clean_document_has_no_findings(self):
         adv = self._detect_eval("This is ordinary prose with no markings.", assigned="CUI")
