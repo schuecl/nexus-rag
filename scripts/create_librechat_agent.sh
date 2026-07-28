@@ -26,7 +26,11 @@ lc()    { $COMPOSE exec -T librechat "$@"; }
 mongo() { $COMPOSE exec -T mongodb mongosh LibreChat --quiet --eval "$1"; }
 
 echo "Looking up LibreChat user '$USER_NAME'..."
-UID_HEX="$(mongo "print((db.users.findOne({username:'$USER_NAME'})||{})._id)" | tr -d '[:space:]')"
+# .toString() is deliberate: some mongosh versions print a bare ObjectId as
+# `ObjectId('...')` rather than the hex string alone, which then gets minted
+# straight into the JWT's "id" claim and fails LibreChat's `Cast to ObjectId`
+# lookup with an opaque 500 (issue #97, found live).
+UID_HEX="$(mongo "print((db.users.findOne({username:'$USER_NAME'})||{})._id.toString())" | tr -d '[:space:]')"
 [ -n "$UID_HEX" ] && [ "$UID_HEX" != "undefined" ] || {
   echo "ERROR: user '$USER_NAME' not found in LibreChat Mongo -- log in via Keycloak once first." >&2; exit 1; }
 

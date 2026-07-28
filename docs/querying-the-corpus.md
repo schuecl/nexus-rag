@@ -142,4 +142,43 @@ Agents are per-author and created through LibreChat's authenticated REST API
 JWT (signed with the container's `JWT_SECRET`) for an existing user and POSTs
 [`rag-assistant.json`](../infra/librechat/agents/rag-assistant.json). Gotcha:
 LibreChat's `uaParser` middleware rejects any request without a browser
-`User-Agent` with **"Illegal request"** — the script sends one.
+`User-Agent` with **"Illegal request"** — the script sends one. Second gotcha,
+found live (issue #97): the script looked up the author's Mongo `_id` with a
+bare `print(...)`, and on this mongosh version that prints `ObjectId('...')`
+rather than the hex string alone — the whole wrapped string then got minted
+straight into the JWT's `id` claim, and LibreChat's user lookup failed with an
+opaque `Cast to ObjectId` 500. Fixed by calling `.toString()` explicitly on
+the `_id` rather than relying on `print`'s default formatting.
+
+### F. Scripting the full round-trip without a browser (issue #97)
+Everything in section 2 above — including the Keycloak login and the `rag`
+tool's per-user OAuth "Connect" — is scriptable with `httpx`, not just
+`create_librechat_agent.sh`'s session-JWT trick. Confirmed live (2026-07-28):
+`scripts/adversarial_injection_probe.py` does a real Keycloak password-grant
+login following the same redirect chain a browser takes, reuses the resulting
+Keycloak SSO cookie to complete the `rag` tool's OAuth authorization redirect
+non-interactively, then drives LibreChat's resumable chat API
+(`POST /api/agents/chat` → poll `GET /api/agents/chat/status/:streamId` →
+`GET /api/messages/:conversationId` once inactive) to send a real message and
+read the model's real answer. Useful beyond issue #97 for the still-open
+"regression test that the generation model actually invokes `rag_search`"
+item (`REQUIREMENTS.md` Section 11 P1 list).
+
+Two timing gotchas this ran into, both from things with a TTL shorter than a
+CPU-bound `qwen2.5:7b-instruct` generation can take:
+- A minted session JWT is only valid 10 minutes (`_JWT_TTL_SECONDS`) — mint a
+  fresh one before each query in a multi-query run, not once up front.
+- The `rag` tool's Keycloak-issued access token is the 900s one from lesson D
+  above. LibreChat does **not** auto-detect "loaded but expired" the way it
+  detects "missing" — it loads the stale token, sends it, `orchestration-mcp`
+  rejects it, and the agent retries the *same* failing tool call until
+  LangGraph's recursion limit (50) aborts the whole message, all without ever
+  showing an OAuth prompt. The script works around this by deleting the
+  stored token from LibreChat's Mongo `tokens` collection before every
+  connect attempt, forcing a real "missing token" state rather than trying to
+  infer whether a reconnect is needed.
+
+Not wired into CI — real generation on CPU takes minutes per query, same
+reason the golden-query e2e job (`e2e.yml`) points `GENERATION_MODEL` at the
+embedding model instead of a real one. Manual/advisory only, like the
+mutation-testing job.
