@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -29,7 +30,10 @@ from app.deps import (
 )
 from common.claims import OIDC_ISSUERS
 from common.db import get_session
+from common.log_safety import log_safe
 from common.models import OAuthState, UserSession
+
+logger = logging.getLogger("ingestion-api")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -170,7 +174,16 @@ def callback(
         timeout=10,
     )
     if token_resp.status_code != 200:
-        raise HTTPException(502, f"token exchange failed: {token_resp.text}")
+        # #214: Keycloak's raw error body goes to the log, not to the browser.
+        # It names the client id, the grant type, and often the realm's
+        # configuration problem verbatim -- useful to an operator, a free map
+        # of the identity provider to anyone who can reach the callback.
+        logger.warning(
+            "OIDC token exchange failed: HTTP %s: %s",
+            token_resp.status_code,
+            log_safe(token_resp.text[:500]),
+        )
+        raise HTTPException(502, "token exchange with the identity provider failed")
     tokens = token_resp.json()
 
     session_id = secrets.token_urlsafe(32)

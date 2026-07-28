@@ -377,9 +377,21 @@ automated or for testing with your own file.
    against the debug endpoint:
 
    ```bash
-   curl -s -X POST "http://localhost:8002/debug/rag_search?query=<a+phrase+from+your+doc>&top_k=5" \
-     -H "Authorization: Bearer $TOKEN"
+   curl -s -X POST http://localhost:8002/debug/rag_search \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "<a phrase from your doc>", "top_k": 5}'
    ```
+
+   The query goes in the body, not the URL (#214): a question asked of a
+   classified corpus is itself sensitive, which is why #125 kept it out of the
+   audit log — and a `?query=` lands in every proxy and ingress access log in
+   the path. The query-string form still works so existing scripts don't
+   break, but it logs a warning.
+
+   This endpoint is a development convenience. Set
+   `DEBUG_RAG_SEARCH_ENABLED=false` to remove it from a deployed image;
+   authorization is enforced either way, so this is about surface, not a hole.
 
    The UI page is a thin proxy over this same endpoint (`app/routes/search.py`), forwarding
    your logged-in session's own token — same access filter either way.

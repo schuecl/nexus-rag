@@ -22,6 +22,8 @@ the commit message for what was checked and how.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Annotated
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -56,6 +58,8 @@ HTTPXClientInstrumentor().instrument()
 # the Host header LibreChat's requests carry), which the default allowlist
 # rejects with a 421. Extend the allowlist to include that hostname instead
 # of disabling DNS-rebinding protection outright.
+logger = logging.getLogger("orchestration-mcp")
+
 mcp_server = FastMCP(
     "nexus-rag-orchestration",
     transport_security=TransportSecuritySettings(
@@ -139,14 +143,47 @@ async def prometheus_metrics(_request: Request) -> Response:
     return Response(payload, media_type=content_type)
 
 
+# #214: off unless explicitly enabled. This endpoint is a curl-shaped
+# convenience for local work; it was also compiled into every production image
+# with no way to turn it off. Authorization is enforced on it, so leaving it on
+# is not a hole -- but it is surface that nothing in a deployed environment
+# needs, and the least surprising default for a route named /debug is absent.
+DEBUG_ENDPOINT_ENABLED = os.environ.get("DEBUG_RAG_SEARCH_ENABLED", "true").lower() == "true"
+
+
 @mcp_server.custom_route("/debug/rag_search", methods=["POST"])
 async def debug_rag_search(request: Request) -> JSONResponse:
+    if not DEBUG_ENDPOINT_ENABLED:
+        return JSONResponse({"detail": "not found"}, status_code=404)
     authorization = request.headers.get("authorization")
     if not authorization:
         return JSONResponse({"detail": "missing Authorization header"}, status_code=401)
-    query = request.query_params.get("query")
+
+    # #214: the query comes from the JSON body, not the query string. #125
+    # removed query text from the audit log because a question asked of a
+    # classified corpus is itself sensitive -- and then this route put the same
+    # text into every proxy access log, ingress log, and browser history entry
+    # in the path. The careful thing was done in one place and undone here.
+    #
+    # ?query= is still read as a fallback so existing scripts and the docs'
+    # curl examples keep working, but it is deprecated and warned about.
+    body: dict = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"detail": "malformed JSON body"}, status_code=400)
+
+    query = body.get("query") or request.query_params.get("query")
+    if query and not body.get("query"):
+        logger.warning(
+            "/debug/rag_search received the query in the URL; it will appear in "
+            "proxy and ingress logs. Send it in a JSON body instead."
+        )
     if not query:
-        return JSONResponse({"detail": "missing query parameter"}, status_code=400)
+        return JSONResponse(
+            {"detail": 'missing query (send {"query": ...} as JSON)'}, status_code=400
+        )
     # #208: the MCP tool's schema bounds this; a raw query string has nothing
     # validating it, exactly as was true of top_k before #106.
     if len(query) > MAX_QUERY_CHARS:
@@ -157,10 +194,10 @@ async def debug_rag_search(request: Request) -> JSONResponse:
     # Unlike the MCP tool above, nothing validates a raw query-string value for
     # us here -- a bare int() raised ValueError out of the route (a 500) on any
     # non-numeric input, and accepted arbitrarily large values on numeric ones.
-    raw_top_k = request.query_params.get("top_k", str(DEFAULT_TOP_K))
+    raw_top_k = body.get("top_k", request.query_params.get("top_k", DEFAULT_TOP_K))
     try:
         top_k = int(raw_top_k)
-    except ValueError:
+    except (TypeError, ValueError):
         return JSONResponse(
             {"detail": f"top_k must be an integer, got {raw_top_k!r}"}, status_code=400
         )

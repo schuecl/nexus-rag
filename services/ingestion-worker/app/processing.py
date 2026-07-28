@@ -72,6 +72,10 @@ ACK_WAIT_SECONDS = 300.0
 # again and the uploader waits longer for the same FR-8 outcome.
 PROCESSING_TIMEOUT_SECONDS = float(os.environ.get("PROCESSING_TIMEOUT_SECONDS", "240"))
 
+# Sentinel distinguishing "deliberately purged" from "the object store lost
+# it" -- see the FileNotFoundError handler in process_document (#214).
+_PURGED_MARKER = "original_object_key is unset (document was purged)"
+
 DURABLE_CONSUMER_NAME = "ingestion-worker"
 FETCH_BATCH_SIZE = 1
 FETCH_TIMEOUT_SECONDS = 5.0
@@ -281,7 +285,7 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                 # of that. Same permanent-failure handling as a missing
                 # object-store key below: retrying can't produce a key that
                 # was deliberately destroyed.
-                raise FileNotFoundError("original_object_key is unset (document was purged)")
+                raise FileNotFoundError(_PURGED_MARKER)
             # #208: one wall-clock budget for the whole CPU-bound stretch
             # -- fetch, parse, chunk, embed. The vector upsert is left
             # outside it deliberately: a slow Qdrant write is a transient
@@ -414,7 +418,26 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
             doc.status = "failed"
             doc.processing_started_at = None
             doc.updated_at = _utcnow()
-            doc.processing_error = f"original file missing from object store: {exc}"
+            # #214: two cases that look identical to the type system and are
+            # very different to the person reading the status.
+            #
+            # A purge is a deliberate, audited destruction (common/purge.py) --
+            # saying so is the whole point, and the message is one this
+            # codebase wrote, not a library's. The other case is the object
+            # store failing to produce a key we believe exists, and *that*
+            # exception carries the filesystem path or S3 key layout, which
+            # the uploader has no use for and shouldn't see.
+            logger.warning(
+                "original object missing for %s: %s: %s",
+                log_safe(document_id),
+                type(exc).__name__,
+                log_safe(exc),
+            )
+            doc.processing_error = (
+                "the original was purged and is no longer retrievable"
+                if str(exc) == _PURGED_MARKER
+                else "the uploaded original is no longer retrievable"
+            )
             session.add(doc)
             session.add(
                 AuditLogEntry(
