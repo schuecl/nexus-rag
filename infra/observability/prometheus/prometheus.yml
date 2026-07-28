@@ -71,3 +71,27 @@ scrape_configs:
   - job_name: alloy
     static_configs:
       - targets: ["alloy:12345"]
+
+  # #133: blackbox HTTP probes for services without a /metrics endpoint. The
+  # probe result is probe_success{instance="<target>"}; a flow/status panel
+  # keys on the instance, not a job=up.
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://librechat-proxy:3080/login
+          - http://litellm:4000/health/liveliness
+          - http://ollama:11434/api/version
+          - http://ingestion-api:8001/health
+          - http://ingestion-worker:8004/health
+          - http://orchestration-mcp:8002/health
+          - http://reranker-service:8003/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

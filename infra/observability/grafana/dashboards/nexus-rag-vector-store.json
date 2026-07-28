@@ -738,7 +738,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{job=~\"milvus.*\"} or vector(0)",
+          "expr": "max(up{job=~\"milvus.*\"}) or vector(0)",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -815,7 +815,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(milvus_proxy_req_latency_bucket[5m]))) or vector(0)",
+          "expr": "max(histogram_quantile(0.95, sum by (le) (rate(milvus_proxy_req_latency_bucket[5m])))) or vector(0)",
           "legendFormat": "p95",
           "range": true,
           "instant": false,

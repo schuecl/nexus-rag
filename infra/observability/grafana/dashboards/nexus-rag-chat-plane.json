@@ -44,7 +44,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{job=~\"librechat.*\"} or vector(0)",
+          "expr": "max(probe_success{instance=~\".*librechat.*\"}) or vector(0)",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -121,7 +121,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{job=~\"litellm.*\"} or vector(0)",
+          "expr": "max(probe_success{instance=~\".*litellm.*\"}) or vector(0)",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -198,7 +198,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{job=~\"ollama.*\"} or vector(0)",
+          "expr": "max(probe_success{instance=~\".*ollama.*\"}) or vector(0)",
           "legendFormat": "",
           "range": false,
           "instant": true,

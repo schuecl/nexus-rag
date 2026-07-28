@@ -450,6 +450,19 @@ services:
   # ---------------------------------------------------------- observability
   # Metrics: Prometheus scrapes every Nexus RAG service plus the queue,
   # database, identity provider, vector store, and telemetry backends.
+  blackbox-exporter:
+    # #133: HTTP health probes for services with no Prometheus /metrics
+    # (Ollama, LibreChat, LiteLLM). Prometheus scrapes it with the target as a
+    # param; it reports probe_success, which the chat-plane and flow dashboards
+    # use for up/down instead of a non-existent up{job=...}.
+    profiles: ["observability"]
+    image: prom/blackbox-exporter:v0.28.0
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./infra/observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"
+
   nats-exporter:
     # #133: opt-in -- the observability stack starts only with
     # `--profile observability`, not on a bare `docker compose up`.
@@ -672,6 +685,10 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-nexus-rag-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # #133: SVG flowchart panel (draw.io-style live topology). Downloaded
+      # at startup; in an air-gapped install, pre-seed the plugin into
+      # /var/lib/grafana/plugins instead and drop this line.
+      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro

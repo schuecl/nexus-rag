@@ -1,0 +1,480 @@
+{
+  "title": "Nexus RAG / System flow",
+  "uid": "nexus-rag-system-flow",
+  "tags": [
+    "nexus-rag",
+    "flow"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Component flow",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### How a request moves through nexus-rag\n\n```\n  Browser / LibreChat\n        \u2502  (OIDC login via Keycloak)\n        \u25bc\n  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510   publish job    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510   consume    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n  \u2502 ingestion-api \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6 \u2502   NATS   \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6 \u2502 ingestion-worker \u2502\n  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518   (NFR-11)       \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518              \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n          \u2502 original file                                        parse\u2192chunk\u2192embed\n          \u25bc                                                             \u2502 writes vectors\n     object store                                                       \u25bc\n                                                                    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n  Query path:                                                       \u2502 Qdrant \u2502\n  LibreChat \u2500\u25b6 orchestration-mcp \u2500(dense+BM25)\u25b6 Qdrant \u2500\u25b6 reranker  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n                    \u2502  embed query                         (cross-encoder)\n                    \u25bc\n                 Ollama\n\n  Generation path:  LibreChat \u2500\u25b6 LiteLLM \u2500\u25b6 Ollama\n```\n\nLive component status is below; edges above show data flow. Full topology and status colouring are in the **System flow (canvas)** panel."
+      }
+    },
+    {
+      "id": 2,
+      "type": "andrewbmchugh-flow-panel",
+      "title": "System flow (live status \u2014 draw.io/SVG)",
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(probe_success{instance=~\".*librechat.*\"}) or vector(0)",
+          "instant": true,
+          "legendFormat": "librechat"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"keycloak\"}",
+          "instant": true,
+          "legendFormat": "keycloak"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-ingestion-api\"}",
+          "instant": true,
+          "legendFormat": "ingestion-api"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nats\"}",
+          "instant": true,
+          "legendFormat": "nats"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-ingestion-worker\"}",
+          "instant": true,
+          "legendFormat": "ingestion-worker"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"postgres\"}",
+          "instant": true,
+          "legendFormat": "postgres"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"qdrant\"}",
+          "instant": true,
+          "legendFormat": "qdrant"
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-orchestration-mcp\"}",
+          "instant": true,
+          "legendFormat": "orchestration-mcp"
+        },
+        {
+          "refId": "I",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-reranker\"}",
+          "instant": true,
+          "legendFormat": "reranker"
+        },
+        {
+          "refId": "J",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(probe_success{instance=~\".*ollama.*\"}) or vector(0)",
+          "instant": true,
+          "legendFormat": "ollama"
+        },
+        {
+          "refId": "K",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(probe_success{instance=~\".*litellm.*\"}) or vector(0)",
+          "instant": true,
+          "legendFormat": "litellm"
+        }
+      ],
+      "options": {
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1000\" height=\"600\" viewBox=\"0 0 1000 600\" font-family=\"system-ui, sans-serif\">\n  <defs>\n    <marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\">\n      <path d=\"M0,0 L10,5 L0,10 z\" fill=\"#9aa4b2\"/>\n    </marker>\n  </defs>\n  <style>\n    .lbl { fill:#e6e9ef; font-size:15px; font-weight:600; text-anchor:middle; pointer-events:none; }\n    .sub { fill:#aeb6c2; font-size:11px; text-anchor:middle; pointer-events:none; }\n    .edge { stroke:#9aa4b2; stroke-width:2; fill:none; marker-end:url(#arrow); }\n    .box { rx:8; ry:8; stroke:#3a4150; stroke-width:2; fill:#2a2f3a; }\n    .zone { fill:none; stroke:#3a4150; stroke-dasharray:4 4; rx:10; ry:10; }\n    .zlbl { fill:#8892a0; font-size:12px; font-weight:700; }\n  </style>\n\n  <!-- zones -->\n  <rect class=\"zone\" x=\"10\" y=\"45\" width=\"360\" height=\"70\"/>\n  <text class=\"zlbl\" x=\"20\" y=\"40\">ENTRY / AUTH</text>\n  <rect class=\"zone\" x=\"10\" y=\"150\" width=\"960\" height=\"120\"/>\n  <text class=\"zlbl\" x=\"20\" y=\"145\">INGESTION  (upload \u2192 queue \u2192 embed \u2192 store)</text>\n  <rect class=\"zone\" x=\"10\" y=\"300\" width=\"700\" height=\"120\"/>\n  <text class=\"zlbl\" x=\"20\" y=\"295\">RETRIEVAL  (query \u2192 hybrid search \u2192 rerank)</text>\n  <rect class=\"zone\" x=\"10\" y=\"450\" width=\"500\" height=\"80\"/>\n  <text class=\"zlbl\" x=\"20\" y=\"445\">GENERATION</text>\n\n  <!-- edges (drawn first, under boxes) -->\n  <path class=\"edge\" d=\"M110,115 L110,175\"/>            <!-- librechat -> ingestion-api -->\n  <path class=\"edge\" d=\"M170,90 L110,90 M250,90 L190,90\"/>\n  <path class=\"edge\" d=\"M280,90 L110,90\"/>              <!-- keycloak -> librechat -->\n  <path class=\"edge\" d=\"M200,200 L250,200\"/>            <!-- ingestion-api -> nats -->\n  <path class=\"edge\" d=\"M390,200 L440,200\"/>            <!-- nats -> worker -->\n  <path class=\"edge\" d=\"M620,200 L700,200\"/>            <!-- worker -> qdrant -->\n  <path class=\"edge\" d=\"M540,225 L330,355\"/>            <!-- worker -> ollama (embed) -->\n  <path class=\"edge\" d=\"M200,340 L440,340\"/>            <!-- mcp -> reranker -->\n  <path class=\"edge\" d=\"M180,330 L720,240\"/>            <!-- mcp -> qdrant -->\n  <path class=\"edge\" d=\"M120,365 L120,355\"/>\n  <path class=\"edge\" d=\"M110,300 L110,270\"/>            <!-- librechat -> mcp (query) via api -->\n  <path class=\"edge\" d=\"M150,490 L250,490\"/>            <!-- litellm -> ollama gen -->\n  <path class=\"edge\" d=\"M110,450 L110,410\"/>            <!-- generation up to retrieval/ollama -->\n\n  <!-- component boxes (id = metric dataRef) -->\n  <rect id=\"librechat\" class=\"box\" x=\"30\" y=\"55\" width=\"160\" height=\"50\"/>\n  <text class=\"lbl\" x=\"110\" y=\"78\">LibreChat</text><text class=\"sub\" x=\"110\" y=\"95\">chat UI (HTTPS)</text>\n\n  <rect id=\"keycloak\" class=\"box\" x=\"260\" y=\"55\" width=\"100\" height=\"50\"/>\n  <text class=\"lbl\" x=\"310\" y=\"78\">Keycloak</text><text class=\"sub\" x=\"310\" y=\"95\">OIDC</text>\n\n  <rect id=\"ingestion-api\" class=\"box\" x=\"30\" y=\"175\" width=\"170\" height=\"50\"/>\n  <text class=\"lbl\" x=\"115\" y=\"198\">ingestion-api</text><text class=\"sub\" x=\"115\" y=\"215\">upload \u00b7 tag \u00b7 curate</text>\n\n  <rect id=\"nats\" class=\"box\" x=\"250\" y=\"175\" width=\"140\" height=\"50\"/>\n  <text class=\"lbl\" x=\"320\" y=\"198\">NATS</text><text class=\"sub\" x=\"320\" y=\"215\">JetStream (NFR-11)</text>\n\n  <rect id=\"ingestion-worker\" class=\"box\" x=\"440\" y=\"175\" width=\"180\" height=\"50\"/>\n  <text class=\"lbl\" x=\"530\" y=\"198\">ingestion-worker</text><text class=\"sub\" x=\"530\" y=\"215\">parse\u00b7chunk\u00b7embed</text>\n\n  <rect id=\"postgres\" class=\"box\" x=\"700\" y=\"55\" width=\"140\" height=\"50\"/>\n  <text class=\"lbl\" x=\"770\" y=\"78\">Postgres</text><text class=\"sub\" x=\"770\" y=\"95\">documents \u00b7 audit</text>\n\n  <rect id=\"qdrant\" class=\"box\" x=\"700\" y=\"175\" width=\"140\" height=\"60\"/>\n  <text class=\"lbl\" x=\"770\" y=\"200\">Qdrant</text><text class=\"sub\" x=\"770\" y=\"218\">vector store</text>\n\n  <rect id=\"orchestration-mcp\" class=\"box\" x=\"30\" y=\"320\" width=\"170\" height=\"50\"/>\n  <text class=\"lbl\" x=\"115\" y=\"343\">orchestration-mcp</text><text class=\"sub\" x=\"115\" y=\"360\">rag_search (MCP)</text>\n\n  <rect id=\"reranker\" class=\"box\" x=\"440\" y=\"320\" width=\"150\" height=\"50\"/>\n  <text class=\"lbl\" x=\"515\" y=\"343\">reranker</text><text class=\"sub\" x=\"515\" y=\"360\">cross-encoder</text>\n\n  <rect id=\"ollama\" class=\"box\" x=\"250\" y=\"460\" width=\"140\" height=\"50\"/>\n  <text class=\"lbl\" x=\"320\" y=\"483\">Ollama</text><text class=\"sub\" x=\"320\" y=\"500\">embed + generate</text>\n\n  <rect id=\"litellm\" class=\"box\" x=\"30\" y=\"460\" width=\"150\" height=\"50\"/>\n  <text class=\"lbl\" x=\"105\" y=\"483\">LiteLLM</text><text class=\"sub\" x=\"105\" y=\"500\">model gateway</text>\n</svg>\n",
+        "panelConfig": "---\ncellIdPreamble: ''\ncells:\n  librechat:\n    dataRef: librechat\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  keycloak:\n    dataRef: keycloak\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  ingestion-api:\n    dataRef: ingestion-api\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  nats:\n    dataRef: nats\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  ingestion-worker:\n    dataRef: ingestion-worker\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  postgres:\n    dataRef: postgres\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  qdrant:\n    dataRef: qdrant\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  orchestration-mcp:\n    dataRef: orchestration-mcp\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  reranker:\n    dataRef: reranker\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  ollama:\n    dataRef: ollama\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n  litellm:\n    dataRef: litellm\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#30a46c', level: 1 }\n    label:\n      separator: replace\n      valueMappings:\n        valueMap:\n          '0': { text: 'DOWN' }\n          '1': { text: 'UP' }\n",
+        "timeSliderScope": "global",
+        "test": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live component status",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-ingestion-api\"}",
+          "instant": true,
+          "legendFormat": "ingestion-api"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-ingestion-worker\"}",
+          "instant": true,
+          "legendFormat": "ingestion-worker"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-orchestration-mcp\"}",
+          "instant": true,
+          "legendFormat": "orchestration-mcp"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nexus-rag-reranker\"}",
+          "instant": true,
+          "legendFormat": "reranker"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"qdrant\"}",
+          "instant": true,
+          "legendFormat": "qdrant"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"nats\"}",
+          "instant": true,
+          "legendFormat": "nats"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"postgres\"}",
+          "instant": true,
+          "legendFormat": "postgres"
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "up{job=\"keycloak\"}",
+          "instant": true,
+          "legendFormat": "keycloak"
+        },
+        {
+          "refId": "I",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{instance=~\".*ollama.*\"}",
+          "instant": true,
+          "legendFormat": "ollama"
+        },
+        {
+          "refId": "J",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{instance=~\".*litellm.*\"}",
+          "instant": true,
+          "legendFormat": "litellm"
+        },
+        {
+          "refId": "K",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{instance=~\".*librechat.*\"}",
+          "instant": true,
+          "legendFormat": "librechat"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "UP",
+                  "index": 0
+                },
+                "0": {
+                  "text": "DOWN",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Ingestion throughput (docs embedded, 5m rate)",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"vector_upsert\"}[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Query rate (rag_search, 5m)",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_queries_total[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "continuous-BlPu"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Rerank calls (5m)",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_reranker_requests_total[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
