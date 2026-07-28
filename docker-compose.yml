@@ -49,16 +49,24 @@ services:
       LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm_app}
       LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm_app}
       # #133: postgres-exporter's scrape role (pg_monitor + CONNECT only).
-      # Created unconditionally because init-app-roles.sh runs exactly once,
-      # on the first boot of a fresh data directory -- creating it lazily when
-      # the observability profile is first enabled would mean the script had
-      # already run and the role would never appear.
+      # #221: provisioned by ensure-roles.sh, which the ensure-db-roles
+      # one-shot re-runs on every `up` -- so enabling the observability
+      # profile on a stack whose volume predates this role now works, where
+      # before the role simply never appeared.
       MONITORING_DB_USER: ${MONITORING_DB_USER:-nexus_rag_monitor}
       MONITORING_DB_PASSWORD: ${MONITORING_DB_PASSWORD:-nexus_rag_monitor}
       LITELLM_DB_NAME: ${LITELLM_DB_NAME:-litellm}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init-app-roles.sh:/docker-entrypoint-initdb.d/init-app-roles.sh:ro
+      # #221: called by init-app-roles.sh on first boot, and re-run on every
+      # `up` by the ensure-db-roles one-shot below -- the same file, so the two
+      # paths can't diverge. Mounted at / rather than inside
+      # docker-entrypoint-initdb.d deliberately: Postgres executes everything in
+      # that directory itself, in filename order, which would run this twice
+      # (harmlessly, since it's idempotent -- but relying on "ensure" sorting
+      # before "init" is not a property worth depending on).
+      - ./infra/postgres/ensure-roles.sh:/ensure-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus_rag}"]
       interval: 5s
@@ -568,6 +576,11 @@ services:
     ports:
       - "127.0.0.1:9187:9187"
     depends_on:
+      # #221: the roles this needs were added after the initial release,
+      # so on a pre-existing volume they only exist because ensure-db-roles
+      # ran. Waiting for it turns a race into an ordering.
+      ensure-db-roles:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -892,6 +905,46 @@ services:
       milvus:
         condition: service_healthy
 
+  ensure-db-roles:
+    # #221: role provisioning that actually runs. init-app-roles.sh executes
+    # from /docker-entrypoint-initdb.d, which Postgres runs exactly once on a
+    # fresh data directory -- so every role added by a later release silently
+    # never appeared on an existing deployment, and the failure surfaced as an
+    # authentication error in some other service. It happened twice:
+    # nexus_rag_monitor (#169) and grafana_ro (#133).
+    #
+    # This runs ensure-roles.sh on every `up`, against the running container.
+    # Every statement in it is idempotent, so a stack whose volume predates a
+    # new role picks it up on the next start with no manual step and no
+    # volume recreation. Same shape as harden-audit-log below.
+    #
+    # Not profiled: roles are needed by the base stack, and the monitoring
+    # role must exist before the observability profile is first enabled --
+    # gating it behind that profile would recreate the original bug.
+    security_opt: ["no-new-privileges:true"]
+    image: postgres:16.14
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      APP_DB_USER: ${APP_DB_USER:-nexus_rag_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-nexus_rag_app}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak_app}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
+      LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm_app}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm_app}
+      MONITORING_DB_USER: ${MONITORING_DB_USER:-nexus_rag_monitor}
+      MONITORING_DB_PASSWORD: ${MONITORING_DB_PASSWORD:-nexus_rag_monitor}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}
+    volumes:
+      - ./infra/postgres/ensure-roles.sh:/ensure-roles.sh:ro
+    entrypoint: ["/bin/bash", "/ensure-roles.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   harden-audit-log:
     # NFR-2: audit_log must be append-only from the app's own DB credentials
     # (APP_DB_USER, not the postgres superuser). Can't do this from
@@ -956,6 +1009,11 @@ services:
     volumes:
       - ./infra/postgres/document-metrics-view.sql:/sql/document-metrics-view.sql:ro
     depends_on:
+      # #221: the roles this needs were added after the initial release,
+      # so on a pre-existing volume they only exist because ensure-db-roles
+      # ran. Waiting for it turns a race into an ordering.
+      ensure-db-roles:
+        condition: service_completed_successfully
       ingestion-api:
         condition: service_healthy
     restart: "no"

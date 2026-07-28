@@ -6,73 +6,35 @@
 # data directory only -- never again on restart) -- see docker-compose.yml's
 # postgres service for the env vars this reads.
 #
-# Creates three non-superuser roles distinct from the bootstrap POSTGRES_USER
-# (which stays superuser, used only for this script and the harden-audit-log
-# one-shot service below -- never for day-to-day app, Keycloak, or LiteLLM
-# traffic):
-#   - APP_DB_USER: what ingestion-api/orchestration-mcp's DATABASE_URL uses.
-#     Granted full privileges on the existing POSTGRES_DB database (it still
-#     owns whatever tables SQLModel's create_all() creates under it -- see
-#     harden-audit-log for the one exception, audit_log, locked down after
-#     those tables exist).
-#   - KEYCLOAK_DB_USER: owns its own separate KEYCLOAK_DB_NAME database,
-#     entirely distinct from POSTGRES_DB -- Keycloak never touches app
-#     tables, and the app never touches Keycloak's.
-#   - LITELLM_DB_USER: owns its own separate LITELLM_DB_NAME database, same
-#     reasoning -- LiteLLM's Prisma migrations (virtual keys, spend tracking)
-#     stay isolated from both the app's and Keycloak's tables.
-#   - MONITORING_DB_USER: what postgres-exporter scrapes as under the opt-in
-#     observability profile (#133). pg_monitor + CONNECT only -- no table
-#     privileges, and deliberately not APP_DB_USER.
+# Since #221 this file creates *databases* only. Role creation moved to
+# ensure-roles.sh, which is idempotent and re-run on every `up` by the
+# ensure-db-roles one-shot -- because "runs once, on a fresh data directory"
+# meant every role added by a later release silently never appeared on an
+# existing deployment. That happened twice: nexus_rag_monitor (#169) and
+# grafana_ro (#133).
+#
+# Databases stay here. CREATE DATABASE cannot run inside a transaction or a DO
+# block, so it cannot be made idempotent the same way -- and unlike roles, it
+# is not something later releases add.
+#
+# Databases created:
+#   - KEYCLOAK_DB_NAME, owned by KEYCLOAK_DB_USER -- entirely distinct from
+#     POSTGRES_DB. Keycloak never touches app tables, and the app never
+#     touches Keycloak's.
+#   - LITELLM_DB_NAME, owned by LITELLM_DB_USER -- same reasoning; LiteLLM's
+#     Prisma migrations (virtual keys, spend tracking) stay isolated from both.
+#
+# POSTGRES_DB itself is created by the image before this script runs, and stays
+# owned by the bootstrap POSTGRES_USER -- a superuser used only by this script,
+# ensure-roles.sh, and the harden-audit-log one-shot, never for day-to-day app,
+# Keycloak, or LiteLLM traffic.
 set -e
 
+# Roles first: the databases below are created OWNER <role>, so those roles
+# have to exist. Same script the ensure-db-roles one-shot re-runs every boot.
+/ensure-roles.sh
+
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
-    CREATE ROLE "$APP_DB_USER" WITH LOGIN PASSWORD '$APP_DB_PASSWORD';
-    GRANT ALL PRIVILEGES ON DATABASE "$POSTGRES_DB" TO "$APP_DB_USER";
-
-    CREATE ROLE "$KEYCLOAK_DB_USER" WITH LOGIN PASSWORD '$KEYCLOAK_DB_PASSWORD';
-    CREATE DATABASE "$KEYCLOAK_DB_NAME" OWNER "$KEYCLOAK_DB_USER";
-
-    CREATE ROLE "$LITELLM_DB_USER" WITH LOGIN PASSWORD '$LITELLM_DB_PASSWORD';
-    CREATE DATABASE "$LITELLM_DB_NAME" OWNER "$LITELLM_DB_USER";
-
-    -- #133: the role postgres-exporter scrapes with, when the opt-in
-    -- observability profile is running. Deliberately its own role rather than
-    -- APP_DB_USER: the exporter's collectors need pg_monitor (pg_stat_*,
-    -- pg_read_all_stats) to return anything at all, and pg_monitor is
-    -- cluster-wide read of every session's activity -- not something the
-    -- credential ingestion-api and orchestration-mcp run as should carry.
-    -- CONNECT only, no table privileges: it reads statistics views, never
-    -- corpus data.
-    CREATE ROLE "$MONITORING_DB_USER" WITH LOGIN PASSWORD '$MONITORING_DB_PASSWORD';
-    GRANT pg_monitor TO "$MONITORING_DB_USER";
-    GRANT CONNECT ON DATABASE "$POSTGRES_DB" TO "$MONITORING_DB_USER";
-EOSQL
-
-# Postgres 15+ restricts CREATE on the public schema to the database owner by
-# default -- APP_DB_USER isn't the owner of POSTGRES_DB (POSTGRES_USER still
-# is), so without this, SQLModel's create_all() would fail the first time
-# ingestion-api starts up and tries to create its tables.
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    GRANT ALL ON SCHEMA public TO "$APP_DB_USER";
-EOSQL
-
-# #133: scoped read-only role for the Grafana "Documents" dashboard. Only the
-# role, its CONNECT and its schema USAGE are created here -- they need no
-# application tables. The document_metrics VIEW it reads (governance metadata
-# only: classification/doc_type/status/org/timestamps + file-format extension,
-# never filenames or base tables) and the GRANT on that view are created later
-# by the provision-metrics-view one-shot: the `documents` table does not exist
-# yet at initdb time -- SQLModel's create_all() builds it when ingestion-api
-# first starts -- exactly the constraint harden-audit-log works around. Creating
-# the view here made postgres init fail with "relation documents does not exist"
-# and, under ON_ERROR_STOP, abort the whole first boot.
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    DO \$\$ BEGIN
-      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'grafana_ro') THEN
-        CREATE ROLE grafana_ro LOGIN PASSWORD '${GRAFANA_DB_PASSWORD:-grafana_ro}';
-      END IF;
-    END \$\$;
-    GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO grafana_ro;
-    GRANT USAGE ON SCHEMA public TO grafana_ro;
+	CREATE DATABASE "${KEYCLOAK_DB_NAME:-keycloak}" OWNER "${KEYCLOAK_DB_USER:-keycloak_app}";
+	CREATE DATABASE "${LITELLM_DB_NAME:-litellm}" OWNER "${LITELLM_DB_USER:-litellm_app}";
 EOSQL
