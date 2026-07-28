@@ -1,0 +1,18 @@
+# Extends gitleaks' default ruleset (generic-api-key etc.) rather than
+# replacing it -- this repo already carries several intentionally-committed
+# dev-only placeholder secrets in .env.example (LIBRECHAT_JWT_SECRET,
+# LIBRECHAT_CREDS_KEY, QDRANT_API_KEY, ...), documented there as such and
+# never used in production. Those are hex strings, whose lower per-character
+# entropy stays under generic-api-key's threshold; issue #213's
+# SESSION_TOKEN_ENCRYPTION_KEY dev default is a base64 Fernet key, which
+# trips it. Allowlisting the literal known placeholder value (not a broad
+# pattern) keeps the scan's ability to catch an actually-leaked secret
+# elsewhere intact.
+title = "nexus-rag gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented dev-only default for SESSION_TOKEN_ENCRYPTION_KEY (issue #213) -- see .env.example's header and common/token_crypto.py's comment"
+regexes = ['''VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=''']
