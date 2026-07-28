@@ -37,6 +37,11 @@ from app.deps import (
 from app.recovery import mark_published
 from common.claims import UserClaims
 from common.db import get_session
+from common.file_types import (
+    SNIFF_BYTES,
+    UnsupportedUpload,
+    validate_upload,
+)
 from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
@@ -124,6 +129,16 @@ async def submit_document(
     if not contents:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
     metrics.upload_bytes.observe(len(contents))
+
+    # Issue #211: reject here rather than at parse time. parse_document
+    # dispatches on the filename extension, which the uploader chooses, so
+    # without this a caller picks which parser runs on their bytes. Rejecting
+    # synchronously also means the uploader gets an actionable error now
+    # instead of an asynchronous `failed` status minutes later (FR-8).
+    try:
+        validate_upload(file.filename or "", contents[:SNIFF_BYTES])
+    except UnsupportedUpload as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
 
     try:
         metadata = DocumentMetadataIn(
