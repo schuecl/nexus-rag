@@ -684,7 +684,15 @@ the docs, not a silent "it works" — flag it if you find one.
   `TestClient`-level verification. "Log in" redirects to Keycloak; the callback
   (`app/routes/auth.py`) exchanges the code for tokens server-to-server and stores them in
   a new `user_sessions` Postgres row, keyed by an opaque session ID in an `HttpOnly` cookie
-  (never the token itself in browser-reachable storage). `app/deps.get_current_user`
+  (never the token itself in browser-reachable storage). Issue #213: the stored
+  access/refresh/id tokens are encrypted at rest (`common/token_crypto.py`, keyed by
+  `SESSION_TOKEN_ENCRYPTION_KEY`) rather than dropped or hashed — both alternatives were
+  considered and rejected because `refresh_token` drives real silent renewal and
+  `access_token` is forwarded verbatim to downstream calls, so the app has to be able to
+  read them back in plaintext; encryption is the only option that doesn't regress that.
+  Confirmed live against a real Postgres: a raw SQL read of `user_sessions` returns
+  ciphertext, the ORM round-trip returns the original token. This is the project's chosen
+  position, not an open gap. `app/deps.get_current_user`
   resolves that cookie to the same `UserClaims` as the header-based bearer-token path used
   by curl/API/MCP callers — transparently refreshing an expired access token via the
   stored refresh token — so no enforcement logic forks between the two. "Log out" performs

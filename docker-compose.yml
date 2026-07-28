@@ -346,6 +346,8 @@ services:
       RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
       OIDC_REDIRECT_URI: http://localhost:8001/auth/callback
       COOKIE_SECURE: "false"
+      # Issue #213: encrypts the UserSession rows this service writes below.
+      SESSION_TOKEN_ENCRYPTION_KEY: ${SESSION_TOKEN_ENCRYPTION_KEY:-VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=}
       QDRANT_URL: http://qdrant:6333
       # NFR-15: full read/write key -- app/routes/curate.py updates/deletes
       # points directly (approve/reject/supersede); ingestion-worker (below)

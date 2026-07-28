@@ -46,6 +46,13 @@ doesn't render cleanly as a bug to fix, not a surprise.
   needed for the ingestion UI's browser OIDC login (ARCHITECTURE.md Section
   4.4: the auth-code exchange and token refresh are server-to-server calls
   against Keycloak's token endpoint)
+- A pre-created Secret matching `ingestionApi.sessionTokenEncryption.existingSecret` /
+  `.secretKey`, containing a Fernet key (32 url-safe base64-encoded bytes) —
+  encrypts the OIDC access/refresh/id tokens `ingestion-api` stores server-side
+  for browser sessions at rest (`common/token_crypto.py`), so a read-only
+  compromise of the app database alone doesn't yield usable Keycloak
+  credentials (issue #213). Generate one with `python3 -c "from
+  cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 - Either `ingestionApi.ingress.enabled: true` with `ingestionApi.ingress.host`
   set, or an explicit `ingestionApi.oidcRedirectUri` — the chart fails the
   render otherwise, rather than silently deploying a broken OIDC login

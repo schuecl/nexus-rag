@@ -363,6 +363,13 @@ ingestionApi:
   # this should ever be false (docker-compose.yml sets COOKIE_SECURE=false
   # there, since it serves the UI over http://localhost).
   cookieSecure: true
+  # Issue #213: encrypts UserSession's stored access/refresh/id tokens at
+  # rest (common/token_crypto.py) -- pre-created Secret, same existingSecret
+  # pattern as externalKeycloak.clientSecret. Must be a Fernet key (32
+  # url-safe base64-encoded bytes); see .env.example for how to generate one.
+  sessionTokenEncryption:
+    existingSecret: "nexus-rag-session-token-key"
+    secretKey: "key"
   resources:
     requests:
       cpu: "250m"

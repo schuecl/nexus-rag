@@ -122,6 +122,14 @@ spec:
               value: {{ include "nexus-rag.oidcRedirectUri" . | quote }}
             - name: COOKIE_SECURE
               value: {{ .Values.ingestionApi.cookieSecure | quote }}
+            # Issue #213: encrypts the UserSession rows this service writes
+            # (common/token_crypto.py) so a read-only compromise of the app
+            # database alone doesn't yield usable Keycloak credentials.
+            - name: SESSION_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ingestionApi.sessionTokenEncryption.existingSecret }}
+                  key: {{ .Values.ingestionApi.sessionTokenEncryption.secretKey }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
             # NFR-15: full read/write key -- this service creates the
