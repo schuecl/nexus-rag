@@ -1,0 +1,22 @@
+apiVersion: 1
+
+providers:
+  - name: Nexus RAG
+    orgId: 1
+    folder: Nexus RAG
+    type: file
+    # Deletion stays disabled: these files are the source of truth and a
+    # provisioned dashboard deleted in the UI would silently reappear on the
+    # next restart, which reads as a bug.
+    disableDeletion: true
+    # #133: both of these are required for "Save dashboard" to work. `editable`
+    # alone only makes the panels editable in the session -- without
+    # allowUiUpdates Grafana refuses the save with "Dashboard cannot be saved
+    # because it is provisioned", which looks like a broken UI rather than a
+    # deliberate setting. Saved changes are written back to the file, so a
+    # panel worth keeping should be committed here.
+    editable: true
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
