@@ -1958,8 +1958,13 @@ button[type="submit"]:hover {
   text-align: center;
 }
 
+.login-card h1 {
+  margin: 4px 0 28px;
+}
+
 .login-card .admin-actions {
   justify-content: center;
+  margin-top: 0;
 }
 
 .login-logo {

@@ -64,7 +64,15 @@ class TestAnonymousVisitorSeesLoginPage:
     def test_upload_form_is_not_present_for_an_anonymous_visitor(self, db):
         resp = main.upload_page(_request(), session=db, current_user=None)
 
-        assert b"Sign in to continue" in resp.body
+        assert b"Submit a document" not in resp.body
+
+    def test_the_top_nav_is_not_present_for_an_anonymous_visitor(self, db):
+        """Issue #246/#248: an anonymous visitor never has anywhere the nav
+        would actually lead -- every link on it just bounces back to this
+        same login page -- so the header shouldn't render at all."""
+        resp = main.upload_page(_request(), session=db, current_user=None)
+
+        assert b"site-header" not in resp.body
 
 
 class TestAuthenticatedVisitorSeesRealPage:
@@ -76,7 +84,12 @@ class TestAuthenticatedVisitorSeesRealPage:
         resp = main.upload_page(_request(), session=db, current_user=user)
 
         assert resp.status_code == 200
-        assert b"Sign in to continue" not in resp.body
+        assert b"Submit a document" in resp.body
+
+    def test_top_nav_is_present_for_a_signed_in_user(self, db, user):
+        resp = main.upload_page(_request(), session=db, current_user=user)
+
+        assert b"site-header" in resp.body
 
     def test_admin_page_renders_for_a_non_admin_signed_in_user(self, db, user):
         """Issue #246 gates on authentication, not on the rag-admin role --
@@ -84,5 +97,4 @@ class TestAuthenticatedVisitorSeesRealPage:
         resp = main.admin_page(_request("/admin"), session=db, current_user=user)
 
         assert resp.status_code == 200
-        assert b"Sign in to continue" not in resp.body
         assert b"Portal settings" in resp.body

@@ -2,16 +2,11 @@
 {% block title %}Log in — {{ app_name }}{% endblock %}
 {% block main_class %}login-page{% endblock %}
 {% block content %}
-<section class="page-intro login-card">
+<section class="login-card">
   {% if logo_url %}
   <img class="login-logo" src="{{ logo_url }}" alt="{{ app_name }} logo" />
   {% endif %}
-  <p class="eyebrow">{{ app_name }}</p>
-  <h1>Sign in to continue</h1>
-  <p class="lede">
-    This is a controlled information workspace. Access, uploads, curation decisions,
-    and queries are all tied to your signed-in identity and audited against it.
-  </p>
+  <h1>{{ app_name }}</h1>
 
   <div class="admin-actions">
     <a class="btn btn-primary" href="/auth/login" id="loginButton"
