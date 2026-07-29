@@ -20,6 +20,9 @@ dependencies = [
     "python-docx>=1.1",
     "python-pptx>=1.0",
     "openpyxl>=3.1",
+    # #92: decode/size-filter embedded images before captioning; also what
+    # pypdf itself requires for its image-extraction API.
+    "pillow>=10.0",
     # #241: OCR wrapper; the tesseract binary itself comes from the Dockerfile.
     "pytesseract>=0.3.10",
     "beautifulsoup4>=4.12",
@@ -39,13 +42,14 @@ test = ["pytest>=9.0.3", "pytest-asyncio>=0.24", "pytest-cov>=7.0"]
 # same configuration orchestration-mcp already uses.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# #241: app/ocr.py joins the gated set, but it is added here rather than to
-# ci.yml's matrix `cov` string because that string is embedded in the derived
-# check name that both `Protect-Main*` rulesets pin as required (see the
-# comment on that matrix entry). `--cov` appends, so this unions with the
-# flags CI passes on the command line and the floor covers all three modules.
-# pytest-cov is in requirements-test.txt, and CI installs it explicitly.
-addopts = "--cov=app.ocr"
+# #241/#92: app/ocr.py and app/captioning.py join the gated set, but they are
+# added here rather than to ci.yml's matrix `cov` string because that string is
+# embedded in the derived check name that both `Protect-Main*` rulesets pin as
+# required (see the comment on that matrix entry). `--cov` appends, so this
+# unions with the flags CI passes on the command line and the floor covers all
+# four modules. pytest-cov is in requirements-test.txt, and CI installs it
+# explicitly.
+addopts = "--cov=app.ocr --cov=app.captioning"
 
 [build-system]
 requires = ["setuptools>=68"]
