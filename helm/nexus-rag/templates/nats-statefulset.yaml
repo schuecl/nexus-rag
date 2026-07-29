@@ -33,24 +33,36 @@ spec:
           # -js: JetStream (NFR-11's ack/redelivery semantics). -sd:
           # persist stream data to the mounted volume. -m: monitoring HTTP
           # endpoint (unauthenticated by design, used by the probes below),
-          # separate from the client protocol port that --auth protects.
+          # separate from the client protocol port that the mounted config's
+          # per-user permissions protect. Issue #212: a single shared --auth
+          # token let either service publish and consume everything on the
+          # client port; -c nats.conf gives ingestion-api and
+          # ingestion-worker their own publish-only/consume-only credential
+          # instead (see nats-configmap.yaml).
           args:
             - "-js"
             - "-sd"
             - "/data"
             - "-m"
             - {{ .Values.nats.service.monitorPort | quote }}
-            - "--auth"
-            - "$(NATS_AUTH_TOKEN)"
+            - "-c"
+            - "/etc/nats/nats.conf"
           env:
-            # NFR-11: shared token auth between ingestion-api (publisher) and
-            # ingestion-worker (consumer) -- pre-created Secret, same
-            # existingSecret pattern as externalPostgres/externalKeycloak.
-            - name: NATS_AUTH_TOKEN
+            # NFR-11/#212: two credentials, not one -- pre-created Secrets,
+            # same existingSecret pattern as externalPostgres/externalKeycloak.
+            # nats.conf's authorization block is what actually restricts each
+            # user to its own subjects; these env vars are just what it
+            # substitutes into the $VAR password references.
+            - name: NATS_INGESTION_API_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.nats.authToken.existingSecret }}
-                  key: {{ .Values.nats.authToken.secretKey }}
+                  name: {{ .Values.nats.credentials.ingestionApi.existingSecret }}
+                  key: {{ .Values.nats.credentials.ingestionApi.secretKey }}
+            - name: NATS_INGESTION_WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.credentials.ingestionWorker.existingSecret }}
+                  key: {{ .Values.nats.credentials.ingestionWorker.secretKey }}
           ports:
             - name: client
               containerPort: {{ .Values.nats.service.clientPort }}
@@ -59,6 +71,9 @@ spec:
           volumeMounts:
             - name: storage
               mountPath: /data
+            - name: nats-conf
+              mountPath: /etc/nats
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /healthz
@@ -73,6 +88,10 @@ spec:
             periodSeconds: 15
           resources:
             {{- toYaml .Values.nats.resources | nindent 12 }}
+      volumes:
+        - name: nats-conf
+          configMap:
+            name: {{ include "nexus-rag.fullname" . }}-nats-conf
   volumeClaimTemplates:
     - metadata:
         name: storage

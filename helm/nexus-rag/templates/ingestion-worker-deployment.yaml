@@ -148,14 +148,20 @@ spec:
                   name: {{ .Values.externalObjectStore.existingSecret }}
                   key: {{ .Values.externalObjectStore.secretKeySecretKey }}
             # NFR-11: durable ingestion queue -- ingestion-api publishes,
-            # this service is the durable JetStream consumer.
+            # this service is the durable JetStream consumer. Issue #212:
+            # consume-only credential -- nats-configmap.yaml's permissions
+            # deny this user publish on the data subject itself, only the
+            # JetStream consumer/ack API subjects it needs to pull and
+            # acknowledge jobs.
             - name: NATS_URL
               value: "nats://{{ include "nexus-rag.fullname" . }}-nats:{{ .Values.nats.service.clientPort }}"
-            - name: NATS_AUTH_TOKEN
+            - name: NATS_USER
+              value: "ingestion_worker"
+            - name: NATS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.nats.authToken.existingSecret }}
-                  key: {{ .Values.nats.authToken.secretKey }}
+                  name: {{ .Values.nats.credentials.ingestionWorker.existingSecret }}
+                  key: {{ .Values.nats.credentials.ingestionWorker.secretKey }}
           livenessProbe:
             httpGet:
               path: /health

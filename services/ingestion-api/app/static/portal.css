@@ -1,0 +1,2228 @@
+:root {
+  /* Issue #166: a dark operational theme rather than the light default. The
+     default is a neutral slate-blue: no strong hue association, and the accent
+     stays clear of the red/green range the reserved status colours occupy.
+     The phosphor green is still available, as an opt-in theme. Every value below is a token so the palette can be swapped
+     without touching a single rule. */
+  /* The page sits a step lighter than the first pass, and the surfaces a step
+     lighter again. The first version put near-black panels on a near-black
+     page: technically high contrast for text, but the panels read as holes
+     rather than as cards, and the form looked severe rather than legible.
+     Panels should be *of* the background, one step above it. */
+  --page: #0d1420;
+  --page-deep: #070b12;
+  --surface: rgba(26, 36, 53, 0.9);
+  --surface-muted: rgba(20, 29, 43, 0.85);
+  --text: #e6ecf7;
+  /* Lifted from #7ea992: secondary text was technically passing AA and still
+     reading as disabled, which is the wrong signal on a form label. */
+  --muted: #a3b1c8;
+  /* Borders were nearly invisible at 0.16 alpha, so fields had no edge and the
+     eye had nothing to follow down the form. */
+  --line: rgba(140, 170, 220, 0.2);
+  --line-strong: rgba(140, 170, 220, 0.38);
+
+  /* One accent, used for every interactive affordance. The previous theme had
+     a separate blue for links, a cyan for accents, and a third colour on
+     primary buttons, so nothing signalled "this is the action". */
+  --primary: #5b9dff;
+  --primary-dark: #3574d4;
+  --primary-soft: rgba(91, 157, 255, 0.14);
+  --cyan: #5ec8d8;
+
+  /* Status colours stay reserved for state and are never reused as accents.
+     Each is lifted enough to clear 4.5:1 on the dark surface -- the light
+     theme's values failed that badly once the background went dark. */
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+
+  --navy: #070d18;
+  --navy-soft: #141d2b;
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --radius-sm: 9px;
+  --radius-md: 13px;
+  --radius-lg: 19px;
+
+  /* CAPCO banner colours (DoDM 5200.01 Vol 2 / CAPCO register). These are
+     prescribed, not chosen -- they are the same colours on a paper cover
+     sheet, and changing them to fit a palette would defeat the point of a
+     standard marking. */
+  --cls-unclassified: #007a33;
+  --cls-cui: #502b85;
+  --cls-confidential: #0033a0;
+  --cls-secret: #c8102e;
+  --cls-top-secret: #ff8c00;
+
+  /* Theme-dependent surfaces and effects. These were literals until the
+     screenshots showed a green drop zone on the blue theme and a dark header
+     on the light one: a colour that is not a token is a colour no theme can
+     reach. */
+  --header-bg: rgba(13, 20, 32, 0.92);      /* opaque chrome, not --surface */
+  --dropzone-bg: rgba(20, 29, 43, 0.85);
+  --code-bg: rgba(5, 9, 16, 0.55);
+  --glow-a: rgba(91, 157, 255, 0.3);        /* ambient background wash */
+  --glow-b: rgba(94, 200, 216, 0.16);
+  --glow-accent: rgba(91, 157, 255, 0.22);  /* elevation under accent controls */
+  --ring: rgba(91, 157, 255, 0.18);         /* focus rings and inset hairlines */
+  --scanline: rgba(91, 157, 255, 0.035);
+  --on-primary: #101010;                    /* ink on the --primary fill */
+  --invert-bg: #101826;                     /* the one deliberately inverted card */
+  --invert-fg: #eef3fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  /* The layered gradient: a bright horizon low and left, falling away to near
+     black. Slightly oversized and slowly drifting, so the light moves the way
+     a scanning display does rather than sitting still. */
+  background:
+    radial-gradient(ellipse 120% 80% at 18% 108%, rgba(91, 157, 255, 0.4), transparent 62%),
+    radial-gradient(ellipse 90% 60% at 82% 96%, rgba(53, 116, 212, 0.26), transparent 58%),
+    radial-gradient(circle at 50% 0%, rgba(94, 200, 216, 0.1), transparent 46%),
+    linear-gradient(178deg, var(--page-deep) 0%, var(--page) 52%, #0b121d 100%);
+  background-attachment: fixed;
+  background-color: var(--page);
+  color: var(--text);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* The animated layer is a separate pseudo-element rather than an animation on
+   body's own background: animating background-position on a fixed,
+   multi-stop gradient repaints the whole page every frame. This composites on
+   the GPU via transform/opacity instead. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 45% at 25% 85%, var(--glow-accent), transparent 60%),
+    radial-gradient(ellipse 45% 35% at 75% 75%, var(--glow-b), transparent 62%);
+  animation: horizon-drift 26s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+
+/* A faint scanline wash. Kept very low contrast on purpose: it should be
+   noticeable as texture and invisible as pattern, and it must never interfere
+   with reading a classification marking. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--scanline) 0px,
+    var(--scanline) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  opacity: 0.5;
+}
+
+@keyframes horizon-drift {
+  from {
+    transform: translate3d(-2%, 1.5%, 0) scale(1);
+    opacity: 0.85;
+  }
+  to {
+    transform: translate3d(3%, -2%, 0) scale(1.08);
+    opacity: 1;
+  }
+}
+
+/* Motion is decorative here, so it goes away entirely when the OS asks. The
+   gradient itself stays -- it carries the theme, not the movement. */
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+  body::after {
+    display: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+label {
+  touch-action: manipulation;
+}
+
+a {
+  color: inherit;
+}
+
+svg {
+  display: block;
+}
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--navy);
+  color: #fff;
+  font-weight: 750;
+  text-decoration: none;
+  transform: translateY(-150%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--line);
+  background: var(--header-bg);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+.nav-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 26px;
+  width: min(1220px, calc(100% - 40px));
+  min-height: 74px;
+  margin: 0 auto;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: max-content;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 13px;
+  background: linear-gradient(145deg, var(--primary), var(--cyan));
+  box-shadow: 0 10px 22px var(--glow-accent);
+}
+
+.brand-mark svg {
+  width: 23px;
+  fill: none;
+  stroke: var(--on-primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.brand-copy strong,
+.brand-copy small {
+  display: block;
+}
+
+.brand-copy strong {
+  font-size: 0.94rem;
+  letter-spacing: -0.012em;
+}
+
+.brand-copy small {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 0.69rem;
+}
+
+.main-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.main-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 11px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 720;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.main-nav a:hover {
+  background: var(--surface-muted);
+  color: var(--navy);
+}
+
+.main-nav a.active {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.main-nav svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.user-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.user-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.user-copy small,
+.user-copy strong {
+  display: block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-copy small {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.user-copy strong {
+  font-size: 0.75rem;
+}
+
+.account-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.77rem;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.account-action:hover {
+  border-color: var(--primary);
+  background: var(--surface-muted);
+}
+
+.primary-account-action {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.primary-account-action:hover {
+  border-color: var(--primary-dark);
+  background: var(--primary-dark);
+}
+
+.nav-toggle {
+  display: none;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--navy);
+  cursor: pointer;
+}
+
+.nav-toggle svg {
+  width: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.9;
+}
+
+.nav-toggle .close-icon,
+.nav-toggle.open .menu-icon {
+  display: none;
+}
+
+.nav-toggle.open .close-icon {
+  display: block;
+}
+
+.page-shell {
+  width: min(1220px, calc(100% - 40px));
+  min-height: calc(100vh - 150px);
+  margin: 0 auto;
+  padding: 44px 0 72px;
+}
+
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  margin-bottom: 26px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  color: var(--primary-dark);
+  font-size: 0.71rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.eyebrow::before {
+  width: 19px;
+  height: 2px;
+  border-radius: 99px;
+  background: var(--primary);
+  content: "";
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.05rem, 3vw, 3rem);
+  line-height: 1.06;
+  letter-spacing: -0.045em;
+}
+
+.page-heading p {
+  max-width: 720px;
+  margin: 13px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.required {
+  color: var(--danger);
+}
+
+/* The FR-2 badge read as washed out: a translucent tint over a dark page left
+   it neither a chip nor plain text. Solid muted surface, a real border, and
+   full-strength label text. */
+.policy-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 760;
+}
+
+.policy-badge span {
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+}
+
+.submission-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  align-items: start;
+  gap: 24px;
+}
+
+.submission-card,
+.sidebar-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.submission-card {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+.form-section {
+  padding: 30px 34px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 22px;
+}
+
+.section-number {
+  display: grid;
+  width: 31px;
+  height: 31px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.77rem;
+  font-weight: 850;
+}
+
+.section-heading h2 {
+  margin: 1px 0 3px;
+  font-size: 1.03rem;
+  letter-spacing: -0.012em;
+}
+
+.section-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.drop-zone {
+  position: relative;
+  display: flex;
+  min-height: 190px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 26px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 15px;
+  outline: none;
+  background:
+    radial-gradient(circle at 50% 0%, var(--ring), transparent 46%),
+    linear-gradient(135deg, var(--dropzone-bg), var(--surface-muted));
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.drop-zone:hover,
+.drop-zone:focus-visible,
+.drop-zone.dragging {
+  border-color: var(--primary);
+  background: var(--surface-muted);
+  box-shadow: 0 0 0 5px var(--ring);
+  transform: translateY(-1px);
+}
+
+.drop-zone.dragging {
+  border-style: solid;
+}
+
+.drop-zone.invalid {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.upload-icon {
+  display: grid;
+  width: 53px;
+  height: 53px;
+  margin-bottom: 13px;
+  place-items: center;
+  border-radius: 15px;
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 10px 26px var(--glow-accent);
+}
+
+.upload-icon svg {
+  width: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.drop-zone > strong {
+  font-size: 0.96rem;
+}
+
+.drop-zone > span:not(.upload-icon) {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.browse-button {
+  min-height: 40px;
+  margin-top: 13px;
+  padding: 0 15px;
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  background: var(--primary);
+  box-shadow: 0 7px 17px var(--glow-accent);
+  color: var(--on-primary);
+  font-size: 0.8rem;
+  font-weight: 790;
+  cursor: pointer;
+}
+
+.browse-button:hover {
+  border-color: var(--primary-dark);
+  background: var(--primary-dark);
+}
+
+.drop-zone small {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+.field-error {
+  min-height: 0;
+  margin: 7px 0 0;
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.field-error:empty {
+  display: none;
+}
+
+.selected-file {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  border-radius: 12px;
+  background: var(--success-soft);
+}
+
+.selected-file[hidden] {
+  display: none;
+}
+
+.file-extension {
+  display: grid;
+  width: 44px;
+  height: 47px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--success);
+  font-size: 0.65rem;
+  font-weight: 900;
+}
+
+.file-details {
+  min-width: 0;
+  flex: 1;
+}
+
+.file-details strong,
+.file-details small {
+  display: block;
+}
+
+.file-details strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-details small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.file-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.text-button {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--success);
+  font-size: 0.73rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.text-button:hover {
+  background: var(--success-soft);
+}
+
+.danger-button {
+  color: var(--danger);
+}
+
+.danger-button:hover {
+  background: var(--danger-soft);
+}
+
+.field-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.two-columns {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.field {
+  min-width: 0;
+  margin-top: 19px;
+}
+
+.field-grid > .field {
+  margin-top: 0;
+}
+
+label,
+legend {
+  display: block;
+  margin: 0 0 7px;
+  color: var(--text);
+  font-size: 0.81rem;
+  font-weight: 780;
+}
+
+.field-label-hint {
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 450;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.optional {
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 760;
+}
+
+input[type="text"],
+input[type="date"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+textarea {
+  min-height: 110px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+.field-help {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 0.7rem;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.choice {
+  margin: 0;
+}
+
+.choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choice span {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.choice span:hover {
+  border-color: var(--primary);
+  background: var(--surface-muted);
+}
+
+.choice input:focus-visible + span {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.choice input:checked + span {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--ring);
+  /* --primary, not --primary-dark: the darker step was chosen against a white
+     background and drops to roughly 3:1 here. The selected chip should be the
+     most legible thing in the group, not the least. */
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.info-callout {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--surface-muted);
+}
+
+.info-callout > span {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--primary-dark);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.info-callout strong {
+  display: block;
+  font-size: 0.75rem;
+}
+
+.info-callout p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 21px 34px;
+  background: var(--surface-muted);
+}
+
+.form-security-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.71rem;
+}
+
+.form-security-note svg {
+  width: 18px;
+  fill: none;
+  stroke: var(--success);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 9px;
+}
+
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 17px;
+  border-radius: 10px;
+  font-size: 0.79rem;
+  font-weight: 790;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.secondary-button {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.secondary-button:hover {
+  background: var(--surface-muted);
+}
+
+.primary-button {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  box-shadow: 0 8px 18px var(--glow-accent);
+  color: var(--on-primary);
+}
+
+.primary-button:hover {
+  border-color: var(--primary-dark);
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+}
+
+.primary-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+}
+
+.primary-button svg {
+  width: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.submission-result {
+  display: flex;
+  gap: 12px;
+  margin: 20px 34px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.submission-result[hidden] {
+  display: none;
+}
+
+.submission-result .result-icon {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 5px var(--ring);
+}
+
+.submission-result.pending .result-icon {
+  background: var(--primary);
+  box-shadow: 0 0 0 5px var(--ring);
+}
+
+.submission-result.success {
+  border-color: rgba(74, 222, 128, 0.45);
+  background: var(--success-soft);
+}
+
+.submission-result.success .result-icon {
+  background: var(--success);
+  box-shadow: 0 0 0 5px rgba(74, 222, 128, 0.12);
+}
+
+.submission-result.error {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: var(--danger-soft);
+}
+
+.submission-result.error .result-icon {
+  background: var(--danger);
+  box-shadow: 0 0 0 5px rgba(248, 113, 113, 0.1);
+}
+
+.submission-result strong {
+  display: block;
+  font-size: 0.81rem;
+}
+
+.submission-result p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.submission-result details {
+  margin-top: 8px;
+  font-size: 0.72rem;
+}
+
+.submission-result summary {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.submission-result pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+}
+
+.submission-sidebar {
+  position: sticky;
+  top: 98px;
+  display: grid;
+  gap: 16px;
+}
+
+.sidebar-card {
+  padding: 21px;
+  border-radius: 15px;
+}
+
+.sidebar-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sidebar-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.sidebar-card h2 {
+  margin: 0;
+  font-size: 0.94rem;
+  letter-spacing: -0.012em;
+}
+
+.readiness-count {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.65rem;
+  font-weight: 850;
+}
+
+.readiness-progress {
+  height: 5px;
+  overflow: hidden;
+  margin: 17px 0;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.readiness-progress span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--cyan));
+  transition: width 180ms ease;
+}
+
+.check-list {
+  display: grid;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.check-list li > span {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.check-list li.done {
+  color: var(--text);
+}
+
+.check-list li.done > span {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.workflow-card > h2 {
+  margin-bottom: 16px;
+}
+
+.workflow-list {
+  display: grid;
+  gap: 13px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-list li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 29px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.workflow-list li:not(:last-child)::after {
+  position: absolute;
+  top: 31px;
+  bottom: -11px;
+  left: 14px;
+  width: 1px;
+  background: var(--line-strong);
+  content: "";
+}
+
+.workflow-list li > span {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.workflow-list strong,
+.workflow-list small {
+  display: block;
+}
+
+.workflow-list strong {
+  font-size: 0.76rem;
+}
+
+.workflow-list small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.69rem;
+}
+
+.guidance-card {
+  border: 0;
+  background: var(--invert-bg);
+  color: var(--invert-fg);
+}
+
+.guidance-icon {
+  display: grid;
+  width: 35px;
+  height: 35px;
+  margin-bottom: 13px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.guidance-icon svg {
+  width: 20px;
+  fill: none;
+  stroke: var(--invert-fg);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.guidance-card p {
+  margin: 7px 0 0;
+  /* --invert-fg, not --text: this card is deliberately inverted against the
+     page, so page-scoped ink is the wrong ink on it. On daylight that made
+     the paragraph dark-on-dark and invisible -- found by screenshotting the
+     theme rather than by reading the tokens. */
+  color: var(--invert-fg);
+  opacity: 0.78;
+  font-size: 0.73rem;
+}
+
+.mobile-action-bar {
+  display: none;
+}
+
+.site-footer {
+  display: flex;
+  width: min(1220px, calc(100% - 40px));
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 auto;
+  padding: 22px 0 30px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.site-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.footer-separator {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+/* Shared presentation for the smaller curation, notification, and search pages. */
+.page-shell:not(.upload-page) > h1 {
+  margin-bottom: 8px;
+}
+
+.page-shell:not(.upload-page) > p {
+  max-width: 820px;
+  color: var(--muted);
+}
+
+.page-shell:not(.upload-page) form,
+.page-shell:not(.upload-page) #queue,
+.page-shell:not(.upload-page) #notifications {
+  margin-top: 22px;
+}
+
+.page-shell:not(.upload-page) form {
+  max-width: 760px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.page-shell:not(.upload-page) button {
+  min-height: 40px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--primary);
+  border-radius: 9px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.msg {
+  max-width: 900px;
+  margin-top: 1rem;
+  padding: 0.8rem;
+  border-radius: 10px;
+  white-space: pre-wrap;
+}
+
+.msg.ok {
+  border: rgba(74, 222, 128, 0.45);
+  background: var(--success-soft);
+}
+
+.msg.err {
+  border: rgba(248, 113, 113, 0.45);
+  background: var(--danger-soft);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+@media (max-width: 1080px) {
+  .nav-shell {
+    gap: 16px;
+  }
+
+  .brand-copy small,
+  .user-copy {
+    display: none;
+  }
+
+  .submission-layout {
+    grid-template-columns: minmax(0, 1fr) 290px;
+  }
+}
+
+@media (max-width: 920px) {
+  .submission-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .submission-sidebar {
+    position: static;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .nav-shell {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 66px;
+  }
+
+  .nav-toggle {
+    display: grid;
+    grid-column: 3;
+  }
+
+  .account {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .main-nav {
+    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    align-items: stretch;
+    flex-direction: column;
+    padding: 0 0 12px;
+  }
+
+  .main-nav.open {
+    display: flex;
+  }
+
+  .main-nav a {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 12px;
+  }
+
+  .page-shell {
+    padding-top: 32px;
+  }
+
+  .page-heading {
+    display: block;
+  }
+
+  .policy-badge {
+    margin-top: 18px;
+  }
+
+  .two-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-security-note {
+    max-width: 260px;
+  }
+}
+
+@media (max-width: 680px) {
+  .nav-shell,
+  .page-shell,
+  .site-footer {
+    width: calc(100% - 24px);
+  }
+
+  .page-shell {
+    padding: 28px 0 96px;
+  }
+
+  .brand-copy small {
+    display: none;
+  }
+
+  h1 {
+    font-size: 2.05rem;
+  }
+
+  .page-heading p {
+    font-size: 0.87rem;
+  }
+
+  .policy-badge {
+    display: none;
+  }
+
+  .form-section {
+    padding: 24px 20px;
+  }
+
+  .drop-zone {
+    min-height: 205px;
+    padding: 23px 17px;
+  }
+
+  .choice-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .submission-result {
+    margin: 17px 20px 0;
+  }
+
+  .form-actions {
+    padding: 18px 20px;
+  }
+
+  .form-security-note {
+    display: none;
+  }
+
+  .action-buttons {
+    width: 100%;
+  }
+
+  .action-buttons button {
+    flex: 1;
+  }
+
+  .submission-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 460px) {
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+  }
+
+  .brand-copy strong {
+    font-size: 0.84rem;
+  }
+
+  .account-action {
+    min-height: 36px;
+    padding: 0 10px;
+  }
+
+  .nav-shell {
+    gap: 8px;
+  }
+
+  .section-heading p {
+    font-size: 0.77rem;
+  }
+
+  .choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .selected-file {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .file-details {
+    width: calc(100% - 60px);
+  }
+
+  .file-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .form-actions {
+    display: none;
+  }
+
+  .mobile-action-bar {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 25;
+    display: grid;
+    grid-template-columns: 0.75fr 1.4fr;
+    gap: 9px;
+    padding: 11px 12px calc(11px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--header-bg);
+    box-shadow: 0 -8px 25px rgba(0, 0, 0, 0.4);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  .mobile-action-bar button {
+    width: 100%;
+    padding: 0 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Classification banner (issue #166)
+
+   DoDM 5200.01 Vol 2 requires the overall classification of displayed
+   information at the top and bottom of the screen. Both are sticky so the
+   marking stays visible while scrolling -- a banner that scrolls away has
+   stopped doing its job halfway down a long curation queue.
+
+   The colours are the CAPCO register's, not the theme's. They deliberately
+   clash with the green: a marking that blended in would be decoration.
+   --------------------------------------------------------------------------- */
+.classification-banner {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.3rem 1rem;
+  background: var(--banner-color, var(--cls-unclassified));
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: center;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.classification-banner.banner-bottom {
+  position: sticky;
+  top: auto;
+  bottom: 0;
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* A thin animated sheen along the banner: enough to read as a live display,
+   not enough to compete with the text it sits behind. */
+.banner-rail {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.banner-rail::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.22) 45%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: banner-sweep 7s ease-in-out infinite;
+}
+
+@keyframes banner-sweep {
+  0%,
+  62% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-rail::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.banner-text {
+  position: relative;
+}
+
+/* Secondary line, so the banner states a ceiling rather than implying that
+   something at that level is necessarily on screen. */
+.banner-note {
+  position: relative;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  opacity: 0.8;
+  text-transform: none;
+}
+
+@media (max-width: 640px) {
+  .banner-note {
+    display: none;
+  }
+  .classification-banner {
+    letter-spacing: 0.1em;
+    font-size: 0.72rem;
+  }
+}
+
+/* No marking configured. Deliberately drab and deliberately not green: it
+   must not be mistakable for UNCLASSIFIED, which is a real marking meaning
+   "reviewed and found releasable". This bar means "nobody has said". */
+.banner-unset {
+  --banner-color: #3f4a44;
+  color: #c8d5cd;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  border-bottom: 1px dashed rgba(200, 213, 205, 0.35);
+}
+
+.banner-unset.banner-bottom {
+  border-bottom: none;
+  border-top: 1px dashed rgba(200, 213, 205, 0.35);
+}
+
+/* No sweep on the unset bar -- the animation reads as "live marking", which
+   is the opposite of what an absent one should convey. */
+.banner-unset .banner-rail::after {
+  animation: none;
+  opacity: 0;
+}
+
+.banner-unclassified {
+  --banner-color: var(--cls-unclassified);
+}
+.banner-cui {
+  --banner-color: var(--cls-cui);
+}
+.banner-confidential {
+  --banner-color: var(--cls-confidential);
+}
+.banner-secret {
+  --banner-color: var(--cls-secret);
+}
+.banner-top-secret {
+  --banner-color: var(--cls-top-secret);
+  /* The one CAPCO colour that fails contrast against white text, so this level
+     alone takes near-black ink -- the register specifies the fill, not the
+     foreground. */
+  color: #1a1000;
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+
+   Previously each surface styled its own: the nav action, the form submit,
+   and the queue's approve/reject were three different shapes and three
+   different colours, so nothing consistently signalled "primary action".
+   One base, three intents, applied everywhere.
+   --------------------------------------------------------------------------- */
+button,
+.btn,
+.account-action {
+  --btn-bg: var(--surface-muted);
+  --btn-fg: var(--text);
+  --btn-border: var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1.1rem;
+  min-height: 42px; /* comfortably above the 44px-ish touch target once padding lands */
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-weight: 600;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.12s ease,
+    box-shadow 0.18s ease;
+}
+
+button:hover,
+.btn:hover,
+.account-action:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+button:active,
+.btn:active,
+.account-action:active {
+  transform: translateY(1px);
+}
+
+/* Focus is visible on every control, and on the dark surface it needs its own
+   ring rather than relying on the browser default outline. */
+button:focus-visible,
+.btn:focus-visible,
+.account-action:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Primary: the one action a page is for. At most one per view. */
+.btn-primary,
+.primary-account-action,
+button[type="submit"] {
+  --btn-bg: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+  --btn-fg: var(--on-primary);
+  --btn-border: transparent;
+  box-shadow: 0 6px 18px var(--glow-accent);
+}
+
+.btn-primary:hover,
+.primary-account-action:hover,
+button[type="submit"]:hover {
+  --btn-bg: linear-gradient(180deg, #46e690 0%, var(--primary) 100%);
+  border-color: transparent;
+  box-shadow: 0 8px 22px var(--glow-accent);
+}
+
+/* Approve / reject carry status colour because they *are* status decisions --
+   this is the reserved-colour rule being used, not broken. */
+.btn-approve {
+  --btn-bg: var(--success-soft);
+  --btn-fg: var(--success);
+  --btn-border: rgba(74, 222, 128, 0.45);
+}
+
+.btn-approve:hover {
+  --btn-bg: rgba(74, 222, 128, 0.24);
+  border-color: var(--success);
+}
+
+.btn-danger,
+.btn-reject {
+  --btn-bg: var(--danger-soft);
+  --btn-fg: var(--danger);
+  --btn-border: rgba(248, 113, 113, 0.45);
+}
+
+.btn-danger:hover,
+.btn-reject:hover {
+  --btn-bg: rgba(248, 113, 113, 0.24);
+  border-color: var(--danger);
+}
+
+.btn-ghost {
+  --btn-bg: transparent;
+  --btn-border: var(--line);
+  --btn-fg: var(--muted);
+}
+
+/* Full-width actions below the phone breakpoint: a 42px control is easy to
+   miss on a narrow screen when it is also narrow. */
+@media (max-width: 560px) {
+  .btn-block-mobile,
+  button[type="submit"] {
+    width: 100%;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Admin page (issue #166)
+   --------------------------------------------------------------------------- */
+.admin-card {
+  max-width: 640px;
+  margin-top: 18px;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-card h2 {
+  margin: 0 0 6px;
+  font-size: 1.12rem;
+}
+
+.admin-card label {
+  display: block;
+  margin-top: 16px;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.admin-card .hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.banner-preview-wrap {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* The preview is an inline sample, not the page's own sticky marking. */
+.banner-preview-wrap .classification-banner {
+  position: static;
+  margin-top: 8px;
+  border-radius: var(--radius-sm);
+}
+
+.admin-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+
+@media (max-width: 560px) {
+  .admin-actions {
+    flex-direction: column-reverse;
+  }
+  .admin-actions button {
+    width: 100%;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Themes (issue #166)
+
+   The palette is entirely tokens, so a theme is a token block and nothing
+   else -- no per-component overrides, and a new theme cannot miss a
+   component. Selected in Admin > Portal settings and rendered server-side as
+   data-theme on <html>, so there is no flash of the default before it applies.
+
+   Two things every theme keeps, because they are not decoration:
+     - the CAPCO banner colours (--cls-*), prescribed by the register and
+       meaning the same thing regardless of palette;
+     - the status colours (--success/--warning/--danger), reserved for state
+       and never reused as an accent.
+   Both stay defined once at :root and are not overridden below.
+   --------------------------------------------------------------------------- */
+
+/* phosphor -- night-vision green. Was the default; now opt-in, because a
+   strong hue association is a poor default for everyone. */
+:root[data-theme="phosphor"] {
+  --page: #0a1a12;
+  --page-deep: #061009;
+  --surface: rgba(22, 47, 34, 0.9);
+  --surface-muted: rgba(17, 38, 27, 0.85);
+  --text: #e4f4ea;
+  --muted: #9dbfad;
+  --line: rgba(120, 200, 158, 0.22);
+  --line-strong: rgba(120, 200, 158, 0.4);
+  --primary: #35d67f;
+  --primary-dark: #1fa35c;
+  --primary-soft: var(--ring);
+  --cyan: #4fd6c1;
+  --navy: #041009;
+  --navy-soft: #0a2015;
+  --header-bg: rgba(7, 24, 15, 0.92);
+  --dropzone-bg: rgba(12, 38, 25, 0.85);
+  --code-bg: rgba(2, 10, 6, 0.55);
+  --glow-a: rgba(53, 214, 127, 0.3);
+  --glow-b: rgba(79, 214, 193, 0.16);
+  --glow-accent: rgba(53, 214, 127, 0.22);
+  --ring: rgba(53, 214, 127, 0.18);
+  --scanline: rgba(53, 214, 127, 0.035);
+  --on-primary: #04170d;
+  --invert-bg: #08170f;
+  --invert-fg: #e4f4ea;
+}
+
+/* slate -- no accent hue beyond a cool grey-blue. The quietest option. */
+:root[data-theme="slate"] {
+  --page: #14171c;
+  --page-deep: #0d0f13;
+  --surface: rgba(33, 38, 46, 0.92);
+  --surface-muted: rgba(26, 30, 37, 0.88);
+  --text: #e8eaee;
+  --muted: #a8afba;
+  --line: rgba(180, 190, 205, 0.18);
+  --line-strong: rgba(180, 190, 205, 0.34);
+  --primary: #8fa8c8;
+  --primary-dark: #6b83a3;
+  --primary-soft: rgba(143, 168, 200, 0.16);
+  --cyan: #7fb0bd;
+  --navy: #0d0f13;
+  --navy-soft: #1c2029;
+  --header-bg: rgba(20, 23, 28, 0.94);
+  --dropzone-bg: rgba(26, 30, 37, 0.88);
+  --code-bg: rgba(10, 12, 15, 0.6);
+  --glow-a: rgba(143, 168, 200, 0.22);
+  --glow-b: rgba(127, 176, 189, 0.12);
+  --glow-accent: rgba(143, 168, 200, 0.2);
+  --ring: rgba(143, 168, 200, 0.2);
+  --on-primary: #101010;
+  --invert-bg: #1c2029;
+  --invert-fg: #e8eaee;
+}
+
+/* amber -- warm and high contrast. The accent sits near --warning, which is
+   the one case where an accent could be confused with a status; status
+   colours are the only things that ship with an icon and a label beside them,
+   which is what keeps them distinguishable. */
+:root[data-theme="amber"] {
+  --page: #17130c;
+  --page-deep: #0e0b06;
+  --surface: rgba(43, 34, 21, 0.9);
+  --surface-muted: rgba(34, 27, 17, 0.86);
+  --text: #f5ecdc;
+  --muted: #c2ae90;
+  --line: rgba(220, 180, 110, 0.2);
+  --line-strong: rgba(220, 180, 110, 0.36);
+  --primary: #f0b429;
+  --primary-dark: #c2900f;
+  --primary-soft: rgba(240, 180, 41, 0.14);
+  --cyan: #d9a441;
+  --navy: #0e0b06;
+  --navy-soft: #241c11;
+  --header-bg: rgba(23, 19, 12, 0.94);
+  --dropzone-bg: rgba(34, 27, 17, 0.86);
+  --code-bg: rgba(10, 8, 4, 0.6);
+  --glow-a: rgba(240, 180, 41, 0.24);
+  --glow-b: rgba(217, 164, 65, 0.12);
+  --glow-accent: rgba(240, 180, 41, 0.22);
+  --ring: rgba(240, 180, 41, 0.2);
+  --on-primary: #17130c;
+  --invert-bg: #241c11;
+  --invert-fg: #f5ecdc;
+}
+
+/* daylight -- a real light theme, for a bright room or a projector. The token
+   layer makes this the same amount of work as any other theme. */
+:root[data-theme="daylight"] {
+  --page: #f4f7fb;
+  --page-deep: #e8eef6;
+  --surface: #ffffff;
+  --surface-muted: #f5f8fc;
+  --text: #16202f;
+  --muted: #55627a;
+  --line: rgba(30, 60, 100, 0.14);
+  --line-strong: rgba(30, 60, 100, 0.26);
+  --primary: #1f5fd0;
+  --primary-dark: #16469c;
+  --primary-soft: rgba(31, 95, 208, 0.09);
+  --cyan: #0d7f9c;
+  --navy: #16202f;
+  --navy-soft: #26344a;
+  --shadow-sm: 0 4px 14px rgba(19, 35, 58, 0.06);
+  --shadow-lg: 0 20px 52px rgba(19, 35, 58, 0.1);
+  --header-bg: rgba(255, 255, 255, 0.94);
+  --dropzone-bg: #f7fafd;
+  --code-bg: rgba(16, 32, 47, 0.05);
+  --glow-a: rgba(31, 95, 208, 0.08);
+  --glow-b: rgba(13, 127, 156, 0.05);
+  --glow-accent: rgba(31, 95, 208, 0.18);
+  --ring: rgba(31, 95, 208, 0.16);
+  --on-primary: #ffffff;
+  /* The one inverted card stays inverted -- on a light theme that means dark,
+     which is the point of it. */
+  --invert-bg: #16202f;
+  --invert-fg: #eef3fb;
+}
+
+/* Each theme's ambient gradient follows its own accent. */
+:root[data-theme="phosphor"] body {
+  background-image:
+    radial-gradient(ellipse 120% 80% at 18% 108%, rgba(53, 214, 127, 0.5), transparent 62%),
+    radial-gradient(ellipse 90% 60% at 82% 96%, rgba(31, 163, 92, 0.34), transparent 58%),
+    linear-gradient(178deg, var(--page-deep) 0%, var(--page) 52%, #071a10 100%);
+}
+
+:root[data-theme="slate"] body,
+:root[data-theme="amber"] body {
+  background-image:
+    radial-gradient(ellipse 120% 80% at 18% 108%, var(--primary-soft), transparent 62%),
+    linear-gradient(178deg, var(--page-deep) 0%, var(--page) 55%, var(--page-deep) 100%);
+}
+
+:root[data-theme="daylight"] body {
+  background-image:
+    radial-gradient(ellipse 110% 70% at 15% 105%, rgba(31, 95, 208, 0.07), transparent 60%),
+    linear-gradient(178deg, #ffffff 0%, var(--page) 60%, var(--page-deep) 100%);
+}
+
+/* The scanline wash belongs to phosphor's terminal association. Elsewhere it
+   is texture with no meaning, and on daylight it is just dirt. */
+:root:not([data-theme="phosphor"]) body::after {
+  display: none;
+}
+
+/* Ink on the primary fill rides on --on-primary, set per theme above: four of
+   the five accents are light enough that white fails AA on them (midnight's
+   #5b9dff is 2.72:1, slate's #8fa8c8 is 2.44:1), and daylight's deep blue is
+   the one that needs white. One token instead of six selectors per theme. */
+
+/* Theme swatches on the admin page. */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.theme-option {
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+.theme-option input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.theme-swatch {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.theme-option input:checked + .theme-swatch {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.theme-option input:focus-visible + .theme-swatch {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.theme-swatch strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 0.9rem;
+}
+
+.theme-swatch small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* A real sample of the palette, not a description of it. */
+.theme-chips {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.theme-chips i {
+  width: 22px;
+  height: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+}

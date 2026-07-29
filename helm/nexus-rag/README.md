@@ -46,6 +46,13 @@ doesn't render cleanly as a bug to fix, not a surprise.
   needed for the ingestion UI's browser OIDC login (ARCHITECTURE.md Section
   4.4: the auth-code exchange and token refresh are server-to-server calls
   against Keycloak's token endpoint)
+- A pre-created Secret matching `ingestionApi.sessionTokenEncryption.existingSecret` /
+  `.secretKey`, containing a Fernet key (32 url-safe base64-encoded bytes) —
+  encrypts the OIDC access/refresh/id tokens `ingestion-api` stores server-side
+  for browser sessions at rest (`common/token_crypto.py`), so a read-only
+  compromise of the app database alone doesn't yield usable Keycloak
+  credentials (issue #213). Generate one with `python3 -c "from
+  cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 - Either `ingestionApi.ingress.enabled: true` with `ingestionApi.ingress.host`
   set, or an explicit `ingestionApi.oidcRedirectUri` — the chart fails the
   render otherwise, rather than silently deploying a broken OIDC login
@@ -65,9 +72,17 @@ doesn't render cleanly as a bug to fix, not a surprise.
   key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
   read/write access to it — original uploaded files are stored there,
   independent of Qdrant/Postgres (NFR-12)
-- A pre-created Secret matching `nats.authToken.existingSecret` /
-  `.secretKey`, containing a token both `ingestion-api` (publisher) and
-  `ingestion-worker` (consumer) authenticate to NATS with (NFR-11)
+- Two pre-created Secrets, matching `nats.credentials.ingestionApi` and
+  `.ingestionWorker` (`.existingSecret`/`.secretKey` each) — `ingestion-api`
+  (publisher) and `ingestion-worker` (consumer) each authenticate to NATS
+  with their own password, restricted to publish-only/consume-only by
+  `templates/nats-configmap.yaml`'s per-subject permissions (NFR-11, issue
+  #212)
+- Optionally, a pre-created Secret matching
+  `rerankerService.sharedSecret.existingSecret` / `.secretKey` — see
+  [reranker-service shared secret](#reranker-service-shared-secret-issue-216)
+  below. Left empty by default, so the chart renders and runs without it,
+  same as before that issue.
 
 ## Network policy (issue #110)
 
@@ -81,8 +96,10 @@ caller's claims and hands it to Qdrant, which has no notion of clearance and
 applies whatever filter it is given. Chunk payloads also hold the source text
 in cleartext, so anything that can reach Qdrant reads the whole corpus at every
 classification level without inverting an embedding. `reranker-service` is
-sharper still: it takes no credential at all and receives full chunk text, so
-reachability *is* authorization for it today.
+sharper still: it receives full chunk text, so this NetworkPolicy was, until
+issue #216, the *only* control standing between an unauthorized caller and
+that content — see the next section for the credential now available in
+addition to it.
 
 **Two values must be set or things will not work**, deliberately left empty
 rather than guessed:
@@ -100,6 +117,32 @@ than an obvious outage. `helm install` prints both warnings.
 needs the external Postgres and Keycloak, and two also need the external object
 store, none of whose addresses this chart knows. Turning it on without
 populating `networkPolicy.egressAllow` will break the deployment.
+
+## reranker-service shared secret (issue #216)
+
+`/rerank` receives full retrieved chunk text — post-access-filter content
+already cleared for a specific caller, per FR-26 — and, before this issue, had
+no way to check who was asking beyond whatever the NetworkPolicy above let
+through. That's a real gap on a CNI that doesn't enforce policy at all.
+
+`rerankerService.sharedSecret.existingSecret` / `.secretKey` point at a
+pre-created Secret holding one value, read by both sides: `orchestration-mcp`
+sends it as an `X-Reranker-Shared-Secret` header, and `reranker-service`
+rejects any `/rerank` call that doesn't present the matching value (401).
+Deliberately **not** the caller's own OIDC token forwarded downstream —
+FR-26's enforcement already happened in `orchestration-mcp` before this hop,
+and re-verifying it in `reranker-service` too would duplicate that logic in a
+second place it can drift out of sync, for no additional access-control
+benefit (see the issue's discussion of that heavier alternative).
+
+Left empty by default: the chart renders and runs exactly as it did before
+this issue, and `reranker-service` logs a startup warning when it comes up
+without the secret configured, so that omission is visible in the pod logs
+rather than silent. Generate one (e.g. `openssl rand -hex 32`) and set it in
+any deployment where the NetworkPolicy might not be the only thing standing
+between an unauthorized caller and retrieved chunk content — which, given the
+CNI caveat above, is any deployment that hasn't specifically verified
+otherwise.
 
 Finally: a NetworkPolicy is inert unless the cluster's CNI enforces it
 (Calico, Cilium, and Antrea do; some managed CNIs silently do not). Kubernetes

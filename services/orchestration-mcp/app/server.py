@@ -10,12 +10,10 @@ plain HTTP routes to the *same* app and lifespan, sidestepping both problems.
 Verified against the real `mcp` client SDK, not just read from source -- see
 the commit message for what was checked and how.
 
-1. As an MCP tool at /mcp -- what LibreChat calls per Section 7.7. The bearer
-   token (raw-forwarded via addUserJwtToken, or OBO-exchanged per Section
-   7.7's recommendation -- this service can't tell the difference, and
-   doesn't need to, since both arrive as a normal Authorization header on the
-   streamable-http request) is read from the forwarded request itself, not
-   passed as a tool argument.
+1. As an MCP tool at /mcp -- what LibreChat calls per Section 7.7. LibreChat
+   obtains a dedicated MCP OAuth token from Keycloak. FastMCP verifies that
+   bearer at the HTTP boundary, and the tool reads the same header from the
+   request rather than accepting identity as a tool argument.
 2. As a plain REST endpoint at /debug/rag_search for curl-based smoke testing
    without needing an MCP client.
 """
@@ -26,15 +24,18 @@ import logging
 import os
 from typing import Annotated
 
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app import metrics
+from app.auth import KeycloakTokenVerifier
 from app.rag_search import DEFAULT_TOP_K, MAX_QUERY_CHARS, MAX_TOP_K, run_rag_search
+from common.claims import OIDC_ISSUERS
 from common.logging_setup import setup_logging
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
@@ -59,9 +60,30 @@ HTTPXClientInstrumentor().instrument()
 # rejects with a 421. Extend the allowlist to include that hostname instead
 # of disabling DNS-rebinding protection outright.
 logger = logging.getLogger("orchestration-mcp")
+#
+# OAuth is also enforced at this transport boundary, not only inside the tool:
+# LibreChat keeps a streamable-HTTP connection open longer than Keycloak's
+# access-token lifetime. When the connection's bearer expires, FastMCP now
+# returns 401/invalid_token, which makes LibreChat redeem its refresh token and
+# retry. A tool-level {"error": "Signature has expired"} over HTTP 200 gave the
+# client no auth failure to react to and left the connection permanently stale.
+MCP_RESOURCE_SERVER_URL = os.environ.get(
+    "MCP_RESOURCE_SERVER_URL", "http://orchestration-mcp:8002/mcp"
+)
+MCP_AUTHORIZATION_SERVER = os.environ.get("MCP_AUTHORIZATION_SERVER", OIDC_ISSUERS[-1])
 
 mcp_server = FastMCP(
     "nexus-rag-orchestration",
+    token_verifier=KeycloakTokenVerifier(),
+    auth=AuthSettings(
+        # AuthSettings types both of these as AnyHttpUrl, not str. Passing the
+        # raw environment string works at runtime (pydantic coerces it) but
+        # fails the enforced mypy gate, and coercing here also means a
+        # malformed MCP_RESOURCE_SERVER_URL fails loudly at import rather than
+        # producing a subtly wrong OAuth metadata document.
+        issuer_url=AnyHttpUrl(MCP_AUTHORIZATION_SERVER),
+        resource_server_url=AnyHttpUrl(MCP_RESOURCE_SERVER_URL),
+    ),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "orchestration-mcp:*"],
@@ -81,10 +103,9 @@ mcp_server = FastMCP(
 # numbers). The auth/security context that used to live here is unaffected
 # by the shortening: it's implementation rationale for future maintainers,
 # not something the calling model needs repeated on every call --
-# Authorization is read from the request's Authorization header (forwarded
-# or OBO-exchanged by LibreChat per Section 7.7), never a client-supplied
-# argument, so the access filter (Section 6.1) can't be spoofed from tool-
-# call arguments; and every real response already carries its own
+# Authorization is read from the request's verified OAuth bearer header,
+# never a client-supplied argument, so the access filter (Section 6.1) can't
+# be spoofed from tool-call arguments; and every real response already carries its own
 # "security_notice" field (app/rag_search.py) marking retrieved content as
 # untrusted data, not instructions -- restating that in the tool
 # description would just be redundant token cost, not a lost safeguard.

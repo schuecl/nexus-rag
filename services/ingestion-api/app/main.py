@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
@@ -18,7 +21,7 @@ from common.db import get_engine, get_session, init_db
 from common.job_queue import ensure_stream, get_nats_connection
 from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
-from common.models import ClassificationLevel, ReleasabilityValue
+from common.models import ClassificationLevel, PortalSettings, ReleasabilityValue
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -80,14 +83,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await nc.close()
 
 
+APP_DIR = Path(__file__).resolve().parent
+
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.middleware("http")(metrics.http_metrics_middleware)
 # #134: one request span per route, with incoming traceparent honored; the
 # import lives here rather than at the top so the app object exists first.
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
 
 FastAPIInstrumentor.instrument_app(app)
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 app.include_router(auth.router)
 app.include_router(upload.router)
@@ -133,6 +139,52 @@ def _live_controlled_vocab(session: Session) -> dict:
     }
 
 
+def _asset_version() -> str:
+    """Cache-busting suffix for the stylesheet, from its own content.
+
+    Issue #166: a theme change looked like it had not applied because the
+    browser was still serving the previous portal.css -- the link carried no
+    version, so nothing told the cache the file had changed. That cost a real
+    debugging round chasing a CSS bug that was not there.
+
+    Hashing the file rather than using a timestamp means the URL only changes
+    when the bytes do, so an unchanged deploy keeps the cache warm.
+    """
+    css = Path(__file__).parent / "static" / "portal.css"
+    try:
+        return hashlib.sha256(css.read_bytes()).hexdigest()[:12]
+    except OSError:  # pragma: no cover - the file ships with the image
+        return "dev"
+
+
+ASSET_VERSION = _asset_version()
+
+
+def _page_context(session: Session, current_user: UserClaims | None) -> dict:
+    """Context every rendered page needs.
+
+    Issue #166: the classification banner goes through here rather than each
+    route adding it, because a banner missing from one page is a real defect,
+    not a cosmetic one -- and four routes each assembling their own dict is
+    exactly how one of them ends up without it.
+
+    An unset or inactive banner is passed through as None. base.html then says
+    so explicitly instead of falling back to a level: "no marking has been
+    configured" and "this system holds unclassified material" are different
+    statements, and rendering the second when the first is true puts a wrong
+    marking on a screen.
+    """
+    settings = session.get(PortalSettings, 1)
+    return {
+        "asset_version": ASSET_VERSION,
+        "current_user": current_user,
+        "banner": settings if (settings and settings.active and settings.text) else None,
+        # Empty string is the built-in default; base.html emits it as a
+        # data-theme attribute and portal.css keys its token block off it.
+        "theme": (settings.theme if settings else "") or "",
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def upload_page(
     request: Request,
@@ -140,8 +192,26 @@ def upload_page(
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
-    ctx["current_user"] = current_user
+    ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "upload.html", ctx)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
+) -> HTMLResponse:
+    """Issue #166: the UI for the settings /admin/* already exposed as an API.
+
+    Deliberately not gated here. The page renders for anyone; every action on
+    it goes through /admin/*, which is behind require_admin, and the page shows
+    the resulting 403 rather than pretending the route does not exist.
+    Authorization belongs on the endpoints that change state, not on the HTML
+    that describes them -- and a 404 for a non-admin would be a worse lie than
+    an honest "you do not hold this role".
+    """
+    return templates.TemplateResponse(request, "admin.html", _page_context(session, current_user))
 
 
 @app.get("/curate", response_class=HTMLResponse)
@@ -151,19 +221,25 @@ def curate_page(
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
     ctx = _live_controlled_vocab(session)
-    ctx["current_user"] = current_user
+    ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "curate.html", ctx)
 
 
 @app.get("/notifications", response_class=HTMLResponse)
 def notifications_page(
-    request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
-    return templates.TemplateResponse(request, "notifications.html", {"current_user": current_user})
+    return templates.TemplateResponse(
+        request, "notifications.html", _page_context(session, current_user)
+    )
 
 
 @app.get("/search", response_class=HTMLResponse)
 def search_page(
-    request: Request, current_user: UserClaims | None = Depends(get_current_user_optional)
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
-    return templates.TemplateResponse(request, "search.html", {"current_user": current_user})
+    return templates.TemplateResponse(request, "search.html", _page_context(session, current_user))
