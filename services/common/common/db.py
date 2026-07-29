@@ -57,6 +57,7 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "app_name": "VARCHAR DEFAULT ''",
         "logo_url": "VARCHAR DEFAULT ''",
         "login_button_text": "VARCHAR DEFAULT ''",
+        "login_popup_title": "VARCHAR DEFAULT ''",
         "login_popup_text": "VARCHAR DEFAULT ''",
         "login_popup_active": "BOOLEAN DEFAULT FALSE",
     },

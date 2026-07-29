@@ -194,6 +194,7 @@ def _page_context(session: Session, current_user: UserClaims | None) -> dict:
 # whenever no admin has set a PortalSettings value yet.
 DEFAULT_APP_NAME = "Document Portal"
 DEFAULT_LOGIN_BUTTON_TEXT = "Login via OIDC"
+DEFAULT_LOGIN_POPUP_TITLE = "Notice"
 
 
 def _login_page(request: Request, session: Session) -> HTMLResponse:
@@ -215,6 +216,9 @@ def _login_page(request: Request, session: Session) -> HTMLResponse:
     # as a clean "don't render anything", not a default message.
     ctx["login_popup_text"] = (
         settings.login_popup_text if (settings and settings.login_popup_active) else ""
+    )
+    ctx["login_popup_title"] = (settings.login_popup_title if settings else "") or (
+        DEFAULT_LOGIN_POPUP_TITLE
     )
     return templates.TemplateResponse(request, "login.html", ctx)
 

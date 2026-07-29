@@ -169,6 +169,15 @@
     placeholder="Login via OIDC"
   />
 
+  <label for="loginPopupTitle">Warning banner title</label>
+  <input
+    type="text"
+    id="loginPopupTitle"
+    name="title"
+    maxlength="80"
+    placeholder="Notice"
+  />
+
   <label for="loginPopupText">Warning banner text</label>
   <textarea
     id="loginPopupText"
@@ -310,6 +319,7 @@
   const loginBannerForm = document.getElementById('loginBannerForm');
   const loginBannerResult = document.getElementById('loginBannerResult');
   const loginButtonTextEl = document.getElementById('loginButtonText');
+  const loginPopupTitleEl = document.getElementById('loginPopupTitle');
   const loginPopupTextEl = document.getElementById('loginPopupText');
   const loginPopupActiveEl = document.getElementById('loginPopupActive');
 
@@ -319,6 +329,7 @@
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        title: loginPopupTitleEl.value.trim(),
         text: loginPopupTextEl.value.trim(),
         active: loginPopupActiveEl.checked,
         button_text: loginButtonTextEl.value.trim(),
@@ -354,6 +365,7 @@
     appNameEl.value = settings.app_name || '';
     logoUrlEl.value = settings.logo_url || '';
     loginButtonTextEl.value = settings.login_button_text || '';
+    loginPopupTitleEl.value = settings.login_popup_title || '';
     loginPopupTextEl.value = settings.login_popup_text || '';
     loginPopupActiveEl.checked = !!settings.login_popup_active;
   })();

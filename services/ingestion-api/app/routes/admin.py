@@ -297,6 +297,7 @@ def set_branding(
 
 
 class LoginBannerIn(BaseModel):
+    title: str = ""
     text: str
     active: bool = True
     button_text: str = ""
@@ -312,9 +313,12 @@ def set_login_banner(
     """The login landing page's (#246) mandatory-acceptance popup -- distinct
     from the CAPCO classification banner above. An empty text cannot be
     active, same reasoning as set_banner: a popup with nothing in it is a
-    broken dialog, not the absence of one.
+    broken dialog, not the absence of one. The title has no such rule -- it's
+    cosmetic (login.html falls back to "Notice" when unset), not what gates
+    whether the popup shows at all.
     """
     settings = _load_banner(session)
+    settings.login_popup_title = body.title.strip()
     settings.login_popup_text = body.text.strip()
     settings.login_popup_active = body.active and bool(settings.login_popup_text)
     settings.login_button_text = body.button_text.strip()
@@ -328,6 +332,7 @@ def set_login_banner(
             action="admin.login_banner_set",
             target_id="portal_settings",
             detail={
+                "login_popup_title": settings.login_popup_title,
                 "login_popup_text": settings.login_popup_text,
                 "login_popup_active": settings.login_popup_active,
                 "login_button_text": settings.login_button_text,

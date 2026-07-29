@@ -92,6 +92,7 @@ class PortalSettings(SQLModel, table=True):
     # above). Mirrors text/active's "no admin has set a marking" reasoning --
     # empty text can't be active, since a popup with nothing in it would just
     # be a broken dialog rather than the absence of one.
+    login_popup_title: str = Field(default="")
     login_popup_text: str = Field(default="")
     login_popup_active: bool = Field(default=False)
 

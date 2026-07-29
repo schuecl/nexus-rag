@@ -88,14 +88,20 @@ class TestSetBranding:
 
 
 class TestSetLoginBanner:
-    def test_persists_text_button_and_active_flag(self, db, admin_user):
+    def test_persists_title_text_button_and_active_flag(self, db, admin_user):
         result = admin.set_login_banner(
-            LoginBannerIn(text="Authorized use only.", active=True, button_text="Enter"),
+            LoginBannerIn(
+                title="Consent to monitoring",
+                text="Authorized use only.",
+                active=True,
+                button_text="Enter",
+            ),
             user=admin_user,
             session=db,
             _csrf=None,
         )
 
+        assert result.login_popup_title == "Consent to monitoring"
         assert result.login_popup_text == "Authorized use only."
         assert result.login_popup_active is True
         assert result.login_button_text == "Enter"
@@ -165,7 +171,7 @@ class TestLoginPageRendersBranding:
         assert b"Login via OIDC" in resp.body
 
     def test_inactive_popup_leaves_the_login_button_visible(self, db):
-        self._seed(db, login_popup_text="Notice", login_popup_active=False)
+        self._seed(db, login_popup_text="Unused while inactive", login_popup_active=False)
 
         resp = main.upload_page(_request(), session=db, current_user=None)
 
@@ -180,6 +186,25 @@ class TestLoginPageRendersBranding:
         assert b"Authorized use only." in resp.body
         assert b"bannerModalBackdrop" in resp.body
         assert b'id="loginButton"\n       hidden' in resp.body
+
+    def test_popup_title_defaults_to_notice_when_unset(self, db):
+        self._seed(db, login_popup_text="Authorized use only.", login_popup_active=True)
+
+        resp = main.upload_page(_request(), session=db, current_user=None)
+
+        assert b'id="bannerModalTitle">Notice<' in resp.body
+
+    def test_popup_title_is_configurable(self, db):
+        self._seed(
+            db,
+            login_popup_title="Consent to monitoring",
+            login_popup_text="Authorized use only.",
+            login_popup_active=True,
+        )
+
+        resp = main.upload_page(_request(), session=db, current_user=None)
+
+        assert b'id="bannerModalTitle">Consent to monitoring<' in resp.body
 
 
 class TestLoginDeclinedPage:

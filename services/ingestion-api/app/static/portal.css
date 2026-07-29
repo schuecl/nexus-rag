@@ -826,6 +826,7 @@ fieldset {
 input[type="text"],
 input[type="date"],
 input[type="number"],
+input[type="url"],
 select,
 textarea {
   width: 100%;
