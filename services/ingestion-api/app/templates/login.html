@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Log in — Document Portal{% endblock %}
+{% block main_class %}login-page{% endblock %}
+{% block content %}
+<section class="page-intro login-card">
+  {% if login_logo_url %}
+  <img class="login-logo" src="{{ login_logo_url }}" alt="{{ login_app_name or 'Document Portal' }} logo" />
+  {% endif %}
+  <p class="eyebrow">{{ login_app_name or "Document Portal" }}</p>
+  <h1>Sign in to continue</h1>
+  <p class="lede">
+    This is a controlled information workspace. Access, uploads, curation decisions,
+    and queries are all tied to your signed-in identity and audited against it.
+  </p>
+
+  <div class="admin-actions">
+    <a class="btn-primary" href="/auth/login">{{ login_button_text or "Login via OIDC" }}</a>
+  </div>
+</section>
+{% endblock %}

@@ -185,12 +185,35 @@ def _page_context(session: Session, current_user: UserClaims | None) -> dict:
     }
 
 
+# Issue #246: default login-button text, hoisted to a constant rather than
+# inlined in login.html -- issue #248 replaces this with an admin-configurable
+# PortalSettings value, and the template will read the same context key either
+# way.
+DEFAULT_LOGIN_BUTTON_TEXT = "Login via OIDC"
+
+
+def _login_page(request: Request, session: Session) -> HTMLResponse:
+    """Issue #246: every page route renders this instead of its real content
+    for an anonymous visitor -- the app no longer shows a fully-featured page
+    that then fails on the first action a logged-out visitor takes.
+
+    Takes session (not a pre-built context) because it still needs the
+    classification banner: that marking is a property of the deployment, not
+    of whoever is or isn't signed in, so it belongs on this page too.
+    """
+    ctx = _page_context(session, None)
+    ctx["login_button_text"] = DEFAULT_LOGIN_BUTTON_TEXT
+    return templates.TemplateResponse(request, "login.html", ctx)
+
+
 @app.get("/", response_class=HTMLResponse)
 def upload_page(
     request: Request,
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
     ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "upload.html", ctx)
@@ -204,13 +227,16 @@ def admin_page(
 ) -> HTMLResponse:
     """Issue #166: the UI for the settings /admin/* already exposed as an API.
 
-    Deliberately not gated here. The page renders for anyone; every action on
-    it goes through /admin/*, which is behind require_admin, and the page shows
-    the resulting 403 rather than pretending the route does not exist.
-    Authorization belongs on the endpoints that change state, not on the HTML
-    that describes them -- and a 404 for a non-admin would be a worse lie than
-    an honest "you do not hold this role".
+    Signed-in but non-admin visitors still see this page render (issue #246
+    only gates on *authentication*, not on the rag-admin role) -- every action
+    on it goes through /admin/*, which is behind require_admin, and the page
+    shows the resulting 403 rather than pretending the route does not exist.
+    Role authorization belongs on the endpoints that change state, not on the
+    HTML that describes them -- and a 404 for a non-admin would be a worse lie
+    than an honest "you do not hold this role".
     """
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(request, "admin.html", _page_context(session, current_user))
 
 
@@ -220,6 +246,8 @@ def curate_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
     ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "curate.html", ctx)
@@ -231,6 +259,8 @@ def notifications_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(
         request, "notifications.html", _page_context(session, current_user)
     )
@@ -242,4 +272,6 @@ def search_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(request, "search.html", _page_context(session, current_user))
