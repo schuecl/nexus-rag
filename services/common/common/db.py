@@ -14,7 +14,22 @@ DATABASE_URL = os.environ.get(
 
 @lru_cache(maxsize=1)
 def get_engine():
-    return create_engine(DATABASE_URL, echo=False)
+    return create_engine(
+        DATABASE_URL,
+        echo=False,
+        # Issue #236: after a Postgres restart every pooled connection is dead,
+        # and without a checkout-time liveness check the first query on each one
+        # raises OperationalError -- services then serve 500s until manually
+        # restarted. pre_ping issues a cheap round trip on checkout and
+        # transparently replaces a dead connection.
+        pool_pre_ping=True,
+        # Retire connections after 30 minutes so anything in front of Postgres
+        # (PgBouncer server_idle_timeout, cloud proxy/LB idle limits,
+        # idle_session_timeout) can't silently drop one first: common defaults
+        # for those sit at 60 minutes or above, and 30 minutes is still far
+        # coarser than this stack's request rate, so recycling cost is noise.
+        pool_recycle=1800,
+    )
 
 
 # Columns added to an already-shipped table after deployments may have created
