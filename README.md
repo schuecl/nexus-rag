@@ -129,6 +129,7 @@ nexus-rag/
 
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — scope, functional/non-functional requirements, open questions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — component diagram, data model, per-flow sequences
+- **[docs/architecture/diagrams.md](docs/architecture/diagrams.md)** — Mermaid diagrams of the full system: every application, both data pipelines, the tagging model, lifecycle, and Helm topology (#129)
 - **[docs/dev-setup.md](docs/dev-setup.md)** — local stack, seeded users, full walkthrough, and the honest what's-stubbed-vs-working list
 - **[docs/testing.md](docs/testing.md)** — the test pyramid, coverage/mutation policy, and known gaps
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability
