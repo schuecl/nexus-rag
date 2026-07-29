@@ -4,7 +4,7 @@ How this repo verifies itself: the local/CI test pyramid, what each GitHub
 Actions workflow enforces, and the honest current state of each gate. Related:
 [docs/dev-setup.md](dev-setup.md) for the live-stack walkthrough, and
 [scripts/evaluate_retrieval.py](../scripts/evaluate_retrieval.py) for the
-golden-query harness the e2e workflow reuses unchanged.
+golden-query harness the e2e workflow reuses.
 
 ## The pyramid
 
@@ -267,8 +267,19 @@ bug.
 Attribution is by **canary phrase, not filename**. Every document repeats a
 unique token (`MARBLE-HORIZON-7` and friends) through its body, so a hit is
 attributable to exactly one source even when two documents share a filename at
-different classifications — the failure mode issue #226 records in the
-filename-matching golden-query harness.
+different classifications — the failure mode issue #226 originally recorded in
+the golden-query harness.
+
+`scripts/evaluate_retrieval.py` no longer has that failure mode either: its
+leak check now asserts each returned chunk's own `status` payload field is
+`"approved"` (the access filter's own invariant, `common/qdrant_filters.py`)
+rather than matching `golden_queries.json`'s `forbid` filenames against
+returned filenames. A duplicate filename across two documents in different
+states — e.g. from re-running the non-idempotent `seed_sample_data.py`
+against an already-seeded stack — can no longer produce a false FR-26 alarm,
+since the check no longer depends on filename identity at all. The `forbid`
+list is still checked, but only as an informational `content_overlap` note in
+the report; it is not what fails the build.
 
 ```bash
 python scripts/create_classification_corpus.py      # regenerate (needs python-docx)
