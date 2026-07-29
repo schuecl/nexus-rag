@@ -34,7 +34,13 @@ from starlette.responses import JSONResponse, Response
 
 from app import metrics
 from app.auth import KeycloakTokenVerifier
-from app.rag_search import DEFAULT_TOP_K, MAX_QUERY_CHARS, MAX_TOP_K, run_rag_search
+from app.rag_search import (
+    DEFAULT_TOP_K,
+    MAX_QUERY_CHARS,
+    MAX_TOP_K,
+    format_rag_search_for_model,
+    run_rag_search,
+)
 from common.claims import OIDC_ISSUERS
 from common.logging_setup import setup_logging
 from common.siem import enable_siem_export
@@ -124,7 +130,7 @@ async def rag_search(
     # calling model sees, not just in a server-side check it can't anticipate.
     top_k: Annotated[int, Field(ge=1, le=MAX_TOP_K)] = DEFAULT_TOP_K,
     content_type_boosts: dict[str, float] | None = None,
-) -> dict:
+) -> str:
     """Search the approved, access-filtered document corpus.
 
     content_type_boosts: optional per-content-type score multiplier, e.g.
@@ -134,8 +140,14 @@ async def rag_search(
     request = ctx.request_context.request
     bearer_token = request.headers.get("authorization") if request is not None else None
     if not bearer_token:
-        return {"error": "no Authorization header on the MCP request"}
-    return await run_rag_search(bearer_token, query, top_k, content_type_boosts=content_type_boosts)
+        return "Retrieval failed: no Authorization header on the MCP request"
+    result = await run_rag_search(
+        bearer_token,
+        query,
+        top_k,
+        content_type_boosts=content_type_boosts,
+    )
+    return format_rag_search_for_model(result)
 
 
 @mcp_server.custom_route("/health", methods=["GET"])
