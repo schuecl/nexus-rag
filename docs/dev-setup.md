@@ -724,6 +724,18 @@ the docs, not a silent "it works" — flag it if you find one.
   to a hand-built `UserClaims` in a direct function call) are exercised by
   `tests/test_login_gate.py`/`tests/test_branding_login_banner.py` at the sandbox level, not
   against a live Keycloak session yet.
+- **Nav gated per role, not just per authentication (issue #249).** The "Curation queue"
+  link (`base.html`) now only renders for a user holding a `rag-curate:<org>` role,
+  matching the existing `is_admin` gating on the Admin link — closing the gap between what
+  the tab showed and what `/curate/*` already enforced (`require_curator`, `app/deps.py`),
+  since a non-curator following the link only ever reached a 403. Notifications stays
+  visible to every signed-in user rather than admin-gated as the issue originally proposed:
+  notifications are uploader-scoped (`recipient_sub == doc.uploader_sub`, FR-15), and
+  `rag-admin` grants no data access, so gating that tab on it would have hidden it from the
+  users who actually receive one. Validated against a real `docker compose up`: rebuilt the
+  `ingestion-api` container and confirmed in a real browser that `carol-curator` sees the
+  Curation queue tab and `alice-ingest`/`bob-query`/`dave-admin` do not, with Notifications
+  visible to all four. Sandbox-level coverage in `tests/test_login_gate.py`.
 - **CSRF protection on cookie-authenticated routes (NFR-14)** — a double-submit cookie
   (`nexus_rag_csrf`, set alongside the session cookie at login, deliberately *not*
   `HttpOnly` so the page's own JS can read and echo it) checked against an `X-CSRF-Token`
