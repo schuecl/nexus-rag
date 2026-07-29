@@ -121,16 +121,12 @@ mcpServers:
     # app-level startup connection pool the way the old token-forwarding
     # config could be.
     startup: false
-    # requiresOAuth defaults to auto-detection, which failed here: confirmed
-    # live that LibreChat connected to orchestration-mcp with no OAuth
-    # handshake attempted at all ("OAuth Required: false" logged, then
-    # "Connection successfully established" with no redirect). Root cause --
-    # our MCP server doesn't enforce auth at the transport level (no 401/
-    # WWW-Authenticate challenge on connect; the Authorization check only
-    # happens inside the rag_search tool call itself, see app/server.py), so
-    # auto-detection never sees a signal that OAuth is needed and just
-    # proceeds unauthenticated. Forcing it explicitly bypasses that
-    # detection instead of fixing the server to challenge on connect.
+    # Kept explicit even though orchestration-mcp now also returns a standard
+    # 401/WWW-Authenticate challenge at the transport boundary. That boundary
+    # enforcement is essential after connection setup too: when a 15-minute
+    # Keycloak access token expires, LibreChat recognizes the 401, refreshes
+    # the token, and reconnects instead of receiving a tool-level
+    # {"error":"Signature has expired"} inside an HTTP 200 response.
     requiresOAuth: true
     oauth:
       # Browser-facing: matches OPENID_ISSUER's host/port below (the
@@ -151,3 +147,6 @@ mcpServers:
       # throwaway local dev).
       client_secret: dev-rag-app-secret
       scope: "openid profile email"
+      # Without an explicit endpoint LibreChat guesses /revoke on the MCP
+      # origin, which is not Keycloak and returns 404 when a user disconnects.
+      revocation_endpoint: "https://keycloak:8443/realms/nexus-rag/protocol/openid-connect/revoke"

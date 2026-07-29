@@ -23,14 +23,21 @@ from nats.js.client import JetStreamContext
 from common.tracing import inject_trace_context
 
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
-NATS_AUTH_TOKEN = os.environ.get("NATS_AUTH_TOKEN", "dev-nats-token")
+# Issue #212: NATS_USER/NATS_PASSWORD replace the single shared
+# NATS_AUTH_TOKEN both services used to connect with -- ingestion-api and
+# ingestion-worker each set these to their own credential (see
+# infra/nats/nats.conf's per-user permissions), so this module stays
+# agnostic to which caller it is; the split is entirely in which
+# environment variables each deployment gives each service.
+NATS_USER = os.environ.get("NATS_USER", "ingestion_api")
+NATS_PASSWORD = os.environ.get("NATS_PASSWORD", "dev-nats-api-password")
 
 INGESTION_STREAM = "INGESTION_JOBS"
 INGESTION_SUBJECT = "ingestion.jobs"
 
 
 async def get_nats_connection() -> nats.NATS:
-    return await nats.connect(servers=[NATS_URL], token=NATS_AUTH_TOKEN)
+    return await nats.connect(servers=[NATS_URL], user=NATS_USER, password=NATS_PASSWORD)
 
 
 async def ensure_stream(js: JetStreamContext) -> None:

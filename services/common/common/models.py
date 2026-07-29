@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
+from common.token_crypto import EncryptedString
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -154,23 +156,30 @@ class UserSession(SQLModel, table=True):
     """Server-side session backing the ingestion UI's browser login (Section
     4.4). The cookie only carries this row's id (an opaque token), never the
     access/refresh token itself, so a session is individually revocable
-    (delete the row) and the tokens never touch JS-reachable storage."""
+    (delete the row) and the tokens never touch JS-reachable storage.
+
+    Issue #213: access_token/refresh_token/id_token are encrypted at rest
+    (EncryptedString, common/token_crypto.py) -- a read-only compromise of
+    the app database alone must not yield live, usable Keycloak credentials.
+    Application code (app/deps.py, app/routes/auth.py) is unaffected: the
+    TypeDecorator encrypts/decrypts transparently at the ORM boundary, so
+    these are still read and written as plain `str`."""
 
     __tablename__ = "user_sessions"
 
     id: str = Field(primary_key=True)
-    access_token: str
+    access_token: str = Field(sa_column=Column(EncryptedString, nullable=False))
     # Issue #108: `created_at` below is load-bearing, not just informational
     # -- deps.session_expired() enforces an absolute SESSION_LIFETIME from
     # it. Without that, _refresh_session would renew this row for as long as
     # Keycloak honoured the refresh token, so a captured session id outlived
     # the lifetime the cookie's max_age implied.
-    refresh_token: str | None = None
+    refresh_token: str | None = Field(default=None, sa_column=Column(EncryptedString))
     # Kept only for Keycloak RP-initiated logout's `id_token_hint` param
     # (app/routes/auth.py's logout()) -- never used for claims/auth checks,
     # which stay on access_token via the same parse_claims() as the
     # header-auth path.
-    id_token: str | None = None
+    id_token: str | None = Field(default=None, sa_column=Column(EncryptedString))
     expires_at: datetime
     created_at: datetime = Field(default_factory=_utcnow)
 
