@@ -1,7 +1,10 @@
 # Architecture
 
 A visual companion to [REQUIREMENTS.md](REQUIREMENTS.md) — this document shows how the
-pieces fit together and how data moves through them. It describes what's actually built
+pieces fit together and how data moves through them. For rendered Mermaid diagrams of
+the full system — every running application, the ingestion and retrieval pipelines, the
+classification/tagging model, the document lifecycle, and the Helm topology — see
+[docs/architecture/diagrams.md](docs/architecture/diagrams.md) (issue #129). It describes what's actually built
 (see `docs/dev-setup.md`'s "What's stubbed vs working" for the authoritative, current
 list) plus one flow that's designed but not yet implemented, called out explicitly where
 it appears.
