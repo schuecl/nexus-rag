@@ -46,6 +46,13 @@ doesn't render cleanly as a bug to fix, not a surprise.
   needed for the ingestion UI's browser OIDC login (ARCHITECTURE.md Section
   4.4: the auth-code exchange and token refresh are server-to-server calls
   against Keycloak's token endpoint)
+- A pre-created Secret matching `ingestionApi.sessionTokenEncryption.existingSecret` /
+  `.secretKey`, containing a Fernet key (32 url-safe base64-encoded bytes) —
+  encrypts the OIDC access/refresh/id tokens `ingestion-api` stores server-side
+  for browser sessions at rest (`common/token_crypto.py`), so a read-only
+  compromise of the app database alone doesn't yield usable Keycloak
+  credentials (issue #213). Generate one with `python3 -c "from
+  cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 - Either `ingestionApi.ingress.enabled: true` with `ingestionApi.ingress.host`
   set, or an explicit `ingestionApi.oidcRedirectUri` — the chart fails the
   render otherwise, rather than silently deploying a broken OIDC login
@@ -65,9 +72,12 @@ doesn't render cleanly as a bug to fix, not a surprise.
   key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
   read/write access to it — original uploaded files are stored there,
   independent of Qdrant/Postgres (NFR-12)
-- A pre-created Secret matching `nats.authToken.existingSecret` /
-  `.secretKey`, containing a token both `ingestion-api` (publisher) and
-  `ingestion-worker` (consumer) authenticate to NATS with (NFR-11)
+- Two pre-created Secrets, matching `nats.credentials.ingestionApi` and
+  `.ingestionWorker` (`.existingSecret`/`.secretKey` each) — `ingestion-api`
+  (publisher) and `ingestion-worker` (consumer) each authenticate to NATS
+  with their own password, restricted to publish-only/consume-only by
+  `templates/nats-configmap.yaml`'s per-subject permissions (NFR-11, issue
+  #212)
 
 ## Network policy (issue #110)
 

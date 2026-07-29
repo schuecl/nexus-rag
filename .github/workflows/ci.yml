@@ -208,6 +208,11 @@ jobs:
           # what the guard's own tests need.
           pip install "pyyaml==6.0.3"
           python scripts/check_compose_hardening.py
+      # Issue #212: the same NATS per-user permissions exist as two files
+      # (infra/nats/nats.conf and helm/nexus-rag/files/nats.conf) because
+      # Helm can't reference files outside its own chart directory.
+      - name: Issue #212 -- NATS ACL config matches across compose and chart
+        run: python scripts/check_nats_conf_sync.py
 
   build:
     runs-on: ubuntu-latest
