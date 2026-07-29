@@ -102,3 +102,33 @@ def test_load_content_type_boosts_ignores_malformed_env(monkeypatch):
 def test_load_content_type_boosts_defaults_to_empty(monkeypatch):
     monkeypatch.delenv("CONTENT_TYPE_BOOSTS", raising=False)
     assert reranking._load_content_type_boosts() == {}
+
+
+async def test_sends_shared_secret_header_when_configured(monkeypatch):
+    monkeypatch.setattr(reranking, "RERANKER_SHARED_SECRET", "s3cr3t")
+    seen_headers = {}
+
+    async def fake_post(self, url, json=None, headers=None, **kwargs):
+        seen_headers.update(headers or {})
+        return _FakeResponse([{"id": "a", "score": 0.5}])
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
+
+    assert seen_headers == {"X-Reranker-Shared-Secret": "s3cr3t"}
+
+
+async def test_omits_shared_secret_header_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(reranking, "RERANKER_SHARED_SECRET", "")
+    seen_headers = {}
+
+    async def fake_post(self, url, json=None, headers=None, **kwargs):
+        seen_headers.update(headers or {})
+        return _FakeResponse([{"id": "a", "score": 0.5}])
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
+
+    assert seen_headers == {}

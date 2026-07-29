@@ -108,13 +108,21 @@ services:
     # FastAPI BackgroundTasks mechanism this replaces. -sd persists stream
     # data to the mounted volume; -m exposes the monitoring HTTP endpoint
     # (port 8222, unauthenticated by design, used by the healthcheck below)
-    # separate from the client protocol port (4222, which --auth protects).
+    # separate from the client protocol port (4222, which the mounted
+    # config's per-user permissions protect -- issue #212: a single shared
+    # --auth token let either service publish and consume everything;
+    # ingestion-api/ingestion-worker now each connect with their own
+    # publish-only/consume-only credential).
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     image: nats:2.14.3-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222", "--auth", "${NATS_AUTH_TOKEN:-dev-nats-token}"]
+    command: ["-js", "-sd", "/data", "-m", "8222", "-c", "/etc/nats/nats.conf"]
+    environment:
+      NATS_INGESTION_API_PASSWORD: ${NATS_INGESTION_API_PASSWORD:-dev-nats-api-password}
+      NATS_INGESTION_WORKER_PASSWORD: ${NATS_INGESTION_WORKER_PASSWORD:-dev-nats-worker-password}
     volumes:
       - nats-data:/data
+      - ./infra/nats/nats.conf:/etc/nats/nats.conf:ro
     ports:
       # Bound to localhost only, same reasoning as qdrant's port binding
       # above -- other containers reach it via nats:4222 regardless.
@@ -263,6 +271,11 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # Issue #216: /rerank otherwise has no authorization model of its own.
+      # Same value as orchestration-mcp's RERANKER_SHARED_SECRET below --
+      # dev default matches the QDRANT_API_KEY pattern (a real deployment
+      # sets its own via .env, same as that one).
+      RERANKER_SHARED_SECRET: ${RERANKER_SHARED_SECRET:-dev-reranker-shared-secret}
     volumes:
       - reranker-cache:/srv/.cache/huggingface
     ports:
@@ -338,6 +351,8 @@ services:
       RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
       OIDC_REDIRECT_URI: http://localhost:8001/auth/callback
       COOKIE_SECURE: "false"
+      # Issue #213: encrypts the UserSession rows this service writes below.
+      SESSION_TOKEN_ENCRYPTION_KEY: ${SESSION_TOKEN_ENCRYPTION_KEY:-VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=}
       QDRANT_URL: http://qdrant:6333
       # NFR-15: full read/write key -- app/routes/curate.py updates/deletes
       # points directly (approve/reject/supersede); ingestion-worker (below)
@@ -353,8 +368,11 @@ services:
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
       # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
+      # Issue #212: publish-only credential -- infra/nats/nats.conf denies
+      # this user any subscribe/consume permission.
       NATS_URL: nats://nats:4222
-      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
+      NATS_USER: ingestion_api
+      NATS_PASSWORD: ${NATS_INGESTION_API_PASSWORD:-dev-nats-api-password}
     volumes:
       - object-store-data:/srv/object-store
     ports:
@@ -434,8 +452,12 @@ services:
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
+      # Issue #212: consume-only credential -- infra/nats/nats.conf denies
+      # this user publish on the data subject itself, only the JetStream
+      # consumer/ack API subjects it needs to pull and acknowledge jobs.
       NATS_URL: nats://nats:4222
-      NATS_AUTH_TOKEN: ${NATS_AUTH_TOKEN:-dev-nats-token}
+      NATS_USER: ingestion_worker
+      NATS_PASSWORD: ${NATS_INGESTION_WORKER_PASSWORD:-dev-nats-worker-password}
     volumes:
       - ingestion-worker-cache:/srv/.cache/huggingface
       - object-store-data:/srv/object-store
@@ -515,6 +537,9 @@ services:
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       RERANKER_URL: http://reranker-service:8003
+      # Issue #216: same value as reranker-service's RERANKER_SHARED_SECRET
+      # above -- this is what it sends as the X-Reranker-Shared-Secret header.
+      RERANKER_SHARED_SECRET: ${RERANKER_SHARED_SECRET:-dev-reranker-shared-secret}
       # issue #89: optional {content_type: multiplier} JSON map applied to
       # cross-encoder scores during reranking, e.g. '{"table": 1.15}' --
       # unset (the default) means no boost, every content type weighted 1.0.
@@ -814,7 +839,11 @@ services:
       # #133: SVG flowchart panel (draw.io-style live topology). Downloaded
       # at startup; in an air-gapped install, pre-seed the plugin into
       # /var/lib/grafana/plugins instead and drop this line.
-      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel"
+      # grafana-graphviz-panel renders the system-flow diagram from DOT
+      # (#133). Listed here rather than installed by hand so a fresh
+      # `docker compose up` has it -- a panel whose plugin is missing
+      # renders as an empty box with no explanation.
+      GF_INSTALL_PLUGINS: "andrewbmchugh-flow-panel,grafana-graphviz-panel,jdbranham-diagram-panel"
       # #133: consumed by the provisioned Postgres datasource (documents dashboard).
       GRAFANA_DB_USER: ${GRAFANA_DB_USER:-grafana_ro}
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}

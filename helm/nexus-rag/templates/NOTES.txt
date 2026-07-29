@@ -71,3 +71,12 @@ and reranker-service now accept traffic only from this chart's own components.
   (Calico/Cilium/Antrea do; some managed CNIs silently do not). Kubernetes
   reports no error either way -- verify rather than assume.
 {{- end }}
+{{- if not .Values.rerankerService.sharedSecret.existingSecret }}
+
+  Note: rerankerService.sharedSecret.existingSecret is unset (issue #216).
+  reranker-service accepts /rerank calls from anything that can reach it on
+  the network, with no credential of its own -- the NetworkPolicy above (if
+  enabled and enforced by your CNI) is what's standing between an
+  unauthorized caller and retrieved chunk content. See the chart README's
+  "reranker-service shared secret" section.
+{{- end }}
