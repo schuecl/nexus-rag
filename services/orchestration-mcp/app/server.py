@@ -26,15 +26,20 @@ import logging
 import os
 from typing import Annotated
 
+import jwt
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app import metrics
 from app.rag_search import DEFAULT_TOP_K, MAX_QUERY_CHARS, MAX_TOP_K, run_rag_search
+from common.claims import OIDC_ISSUERS, parse_claims
+from common.log_safety import log_safe
 from common.logging_setup import setup_logging
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
@@ -60,8 +65,64 @@ HTTPXClientInstrumentor().instrument()
 # of disabling DNS-rebinding protection outright.
 logger = logging.getLogger("orchestration-mcp")
 
+
+class KeycloakTokenVerifier:
+    """Issue #200: adapts the shared `common.claims.parse_claims` verifier
+    (issuer/audience/signature/expiry, same check every other service in this
+    repo uses) to FastMCP's `TokenVerifier` protocol, so an invalid or expired
+    bearer is rejected by FastMCP's own auth middleware *before* a request
+    reaches the streamable-HTTP session -- as an RFC 6750 401 `invalid_token`
+    with a `WWW-Authenticate` challenge, not an HTTP 200 tool-call payload
+    with an error string buried in it. That distinction is what lets
+    LibreChat (or any OAuth-aware MCP client) recognize expiry and redeem its
+    refresh token instead of leaving a stale bearer on a long-lived
+    connection.
+
+    This does not replace the token check inside `rag_search`
+    (app/rag_search.py's `parse_claims` call): that one derives the actual
+    `UserClaims` used to build the access filter, per FR-26, and also has to
+    keep working for `/debug/rag_search`, which never goes through FastMCP's
+    auth middleware. The two checks doing the same verification twice on a
+    real MCP call is a deliberate no-weakening trade, not an oversight.
+    """
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        try:
+            claims = parse_claims(token)
+        except jwt.PyJWTError as exc:
+            # Same reasoning as rag_search.py's #214 note: the exception type
+            # (e.g. ExpiredSignatureError) is useful operator signal; PyJWT's
+            # message text names the expected issuer/audience/algorithm,
+            # which fingerprints the deployment for anyone probing with a
+            # junk token.
+            logger.warning(
+                "MCP transport rejected bearer: %s: %s", type(exc).__name__, log_safe(exc)
+            )
+            return None
+        return AccessToken(
+            token=token,
+            client_id=claims.sub,
+            scopes=claims.rag_roles,
+            subject=claims.sub,
+        )
+
+
 mcp_server = FastMCP(
     "nexus-rag-orchestration",
+    token_verifier=KeycloakTokenVerifier(),
+    # required_scopes deliberately omitted: `rag-query` authorization stays
+    # inside rag_search (run_rag_search's `claims.can_query` check), which
+    # audits a denied query (FR-31). Enforcing a scope here would let
+    # FastMCP's middleware reject a role-less-but-authenticated caller before
+    # that audit write ever happens.
+    auth=AuthSettings(
+        # Descriptive only here (no auth_server_provider, no
+        # resource_server_url below) -- FastMCP doesn't use it to verify
+        # anything itself; the actual issuer allowlist enforced by
+        # parse_claims is common.claims.OIDC_ISSUERS in full.
+        issuer_url=AnyHttpUrl(OIDC_ISSUERS[0]),
+        resource_server_url=None,
+    ),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "orchestration-mcp:*"],

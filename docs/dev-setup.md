@@ -1113,6 +1113,34 @@ the docs, not a silent "it works" — flag it if you find one.
   claims-filtered results -- not just a clean tool call (the earlier milestone), the actual
   retrieval working through the full LibreChat → MCP OAuth → Keycloak → orchestration-mcp →
   Qdrant chain.
+- **Issue #200 follow-up (2026-07-29): the `requiresOAuth` auto-detection gap noted above
+  (`orchestration-mcp` not challenging with a 401 at the transport level) is now closed
+  server-side, and a stale/expired token no longer surfaces as an HTTP 200 tool-call
+  payload.** `app/server.py`'s `mcp_server` now constructs `FastMCP` with a
+  `KeycloakTokenVerifier` (adapts `common.claims.parse_claims` to FastMCP's `TokenVerifier`
+  protocol) and an `AuthSettings`, so FastMCP's own `RequireAuthMiddleware` wraps `/mcp` and
+  rejects a missing, malformed, or expired bearer with a real RFC 6750 `401 invalid_token`
+  plus a `WWW-Authenticate: Bearer ...` challenge *before* the request reaches
+  `rag_search` -- `/health`/`/metrics`/`/debug/rag_search` are unaffected (FastMCP only wraps
+  the one `streamable_http_path` route). `rag_search`'s own `parse_claims` call is
+  unchanged and still runs on every real tool call (it derives the `UserClaims` used to
+  build the FR-26 access filter, and it's the only check `/debug/rag_search` has, since that
+  route never goes through FastMCP's auth middleware) -- the two checks doing the same
+  verification twice on a real MCP call is deliberate, not an oversight.
+  `infra/librechat/librechat.yaml`'s `oauth` block also gained a `revocation_endpoint`
+  pointing at Keycloak's real RFC 7009 endpoint, replacing the previous gap where
+  LibreChat's "Disconnect" guessed a `/revoke` route on the MCP origin itself (404, since
+  `orchestration-mcp` never had one -- Keycloak was always the actual OAuth server).
+  **Confidence level: tested against mocks only** (a `starlette.testclient.TestClient`
+  round trip against the real ASGI app, `parse_claims` monkeypatched to raise the same
+  `jwt.ExpiredSignatureError`/`jwt.InvalidTokenError` a real expired/malformed Keycloak
+  token would -- `services/orchestration-mcp/tests/test_transport_auth.py`). **Not yet
+  validated against a live environment**: nobody has run this against a real
+  `docker compose up` and watched LibreChat actually redeem a refresh token after a real
+  15-minute Keycloak expiry, or clicked "Disconnect" and confirmed Keycloak's session
+  actually revokes. That live end-to-end check is the natural next step before closing
+  #200, not a reason to hold this fix back -- the transport behavior itself (401 vs. a
+  buried error string) is fully exercised by the test above.
 - **`orchestration-mcp`'s MCP endpoint rejected every LibreChat request with `421
   Invalid Host header`, even after the `addUserJwtToken` fix above got the OBO/auth layer
   itself working.** Confirmed live (2026-07-26): `docker logs` on both sides showed

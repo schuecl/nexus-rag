@@ -121,16 +121,21 @@ mcpServers:
     # app-level startup connection pool the way the old token-forwarding
     # config could be.
     startup: false
-    # requiresOAuth defaults to auto-detection, which failed here: confirmed
-    # live that LibreChat connected to orchestration-mcp with no OAuth
-    # handshake attempted at all ("OAuth Required: false" logged, then
+    # requiresOAuth defaults to auto-detection, which failed here originally:
+    # confirmed live that LibreChat connected to orchestration-mcp with no
+    # OAuth handshake attempted at all ("OAuth Required: false" logged, then
     # "Connection successfully established" with no redirect). Root cause --
-    # our MCP server doesn't enforce auth at the transport level (no 401/
+    # the MCP server didn't enforce auth at the transport level (no 401/
     # WWW-Authenticate challenge on connect; the Authorization check only
-    # happens inside the rag_search tool call itself, see app/server.py), so
-    # auto-detection never sees a signal that OAuth is needed and just
-    # proceeds unauthenticated. Forcing it explicitly bypasses that
-    # detection instead of fixing the server to challenge on connect.
+    # happened inside the rag_search tool call itself), so auto-detection
+    # never saw a signal that OAuth was needed and just proceeded
+    # unauthenticated. Issue #200 fixed that root cause server-side
+    # (app/server.py's KeycloakTokenVerifier now makes /mcp challenge with a
+    # real 401 on connect) -- forcing it explicitly here is kept anyway as
+    # the deliberate, no-guessing config rather than relying on
+    # auto-detection now working, since that hasn't been re-verified against
+    # a live LibreChat reconnect (see docs/dev-setup.md's stubbed-vs-working
+    # notes for #200's status).
     requiresOAuth: true
     oauth:
       # Browser-facing: matches OPENID_ISSUER's host/port below (the
@@ -140,6 +145,14 @@ mcpServers:
       # Backend-to-backend (LibreChat's Node server calls this directly,
       # not the browser) -- same trusted host as above.
       token_url: "https://keycloak:8443/realms/nexus-rag/protocol/openid-connect/token"
+      # Issue #200: LibreChat previously had no revocation_endpoint
+      # configured, so its "Disconnect" action guessed a /revoke route on
+      # the MCP origin itself (orchestration-mcp has no such route -- 404).
+      # The actual OAuth server is Keycloak, not this MCP server; pointing
+      # disconnect at Keycloak's real RFC 7009 endpoint (same host/protocol
+      # as authorization_url/token_url above) is what lets it revoke the
+      # token instead of just discarding it locally.
+      revocation_endpoint: "https://keycloak:8443/realms/nexus-rag/protocol/openid-connect/revoke"
       client_id: rag-app
       # ${VAR} substitution is NOT supported for oauth.client_secret --
       # confirmed from the bundled data-provider schema: only
