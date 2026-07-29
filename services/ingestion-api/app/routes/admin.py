@@ -142,11 +142,17 @@ def retire_releasability(
 
 
 def _load_banner(session: Session) -> PortalSettings:
-    """The single banner row, created inactive on first read.
+    """The single deployment-wide settings row, created on first read.
 
-    Inactive is the correct default: "no authority has set a marking" is not
-    the same statement as "this system holds unclassified material", and
-    defaulting to the second is how a wrong marking reaches a screen.
+    Named for its original purpose (the classification banner) but now also
+    backs the theme, branding, and login popup-banner settings below -- all of
+    them are the same "one row, admin-set, deployment-wide" shape, so a second
+    table would just be this one with different column names.
+
+    Inactive is the correct default for the classification banner
+    specifically: "no authority has set a marking" is not the same statement
+    as "this system holds unclassified material", and defaulting to the
+    second is how a wrong marking reaches a screen.
     """
     banner = session.get(PortalSettings, 1)
     if banner is None:
@@ -245,6 +251,92 @@ def set_theme(
             action="admin.theme_set",
             target_id="portal_settings",
             detail={"theme": theme or "default"},
+        )
+    )
+    session.commit()
+    session.refresh(settings)
+    return settings
+
+
+# --------------------------------------------------------------------------
+# Issue #248: branding (application name + logo) and the login landing
+# page's (#246) mandatory-acceptance warning popup.
+# --------------------------------------------------------------------------
+
+
+class BrandingIn(BaseModel):
+    app_name: str = ""
+    logo_url: str = ""
+
+
+@router.post("/branding")
+def set_branding(
+    body: BrandingIn,
+    user: UserClaims = Depends(require_admin),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> PortalSettings:
+    settings = _load_banner(session)
+    settings.app_name = body.app_name.strip()
+    settings.logo_url = body.logo_url.strip()
+    settings.updated_by = user.preferred_username
+    settings.updated_at = datetime.now(UTC)
+    session.add(settings)
+    session.add(
+        AuditLogEntry(
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            action="admin.branding_set",
+            target_id="portal_settings",
+            detail={"app_name": settings.app_name, "logo_url": settings.logo_url},
+        )
+    )
+    session.commit()
+    session.refresh(settings)
+    return settings
+
+
+class LoginBannerIn(BaseModel):
+    title: str = ""
+    text: str
+    active: bool = True
+    button_text: str = ""
+
+
+@router.post("/login-banner")
+def set_login_banner(
+    body: LoginBannerIn,
+    user: UserClaims = Depends(require_admin),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> PortalSettings:
+    """The login landing page's (#246) mandatory-acceptance popup -- distinct
+    from the CAPCO classification banner above. An empty text cannot be
+    active, same reasoning as set_banner: a popup with nothing in it is a
+    broken dialog, not the absence of one. The title has no such rule -- it's
+    cosmetic (login.html falls back to "Notice" when unset), not what gates
+    whether the popup shows at all.
+    """
+    settings = _load_banner(session)
+    settings.login_popup_title = body.title.strip()
+    settings.login_popup_text = body.text.strip()
+    settings.login_popup_active = body.active and bool(settings.login_popup_text)
+    settings.login_button_text = body.button_text.strip()
+    settings.updated_by = user.preferred_username
+    settings.updated_at = datetime.now(UTC)
+    session.add(settings)
+    session.add(
+        AuditLogEntry(
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            action="admin.login_banner_set",
+            target_id="portal_settings",
+            detail={
+                "login_popup_title": settings.login_popup_title,
+                "login_popup_text": settings.login_popup_text,
+                "login_popup_active": settings.login_popup_active,
+                "login_button_text": settings.login_button_text,
+            },
         )
     )
     session.commit()

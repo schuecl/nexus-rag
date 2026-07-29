@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Access declined — {{ app_name }}{% endblock %}
+{% block main_class %}login-page{% endblock %}
+{% block content %}
+<section class="page-intro login-card">
+  <p class="eyebrow">{{ app_name }}</p>
+  <h1>Acceptance is mandatory</h1>
+  <p class="lede">
+    You declined the notice shown before login. Accepting it is required to access
+    this system -- there is no other way in.
+  </p>
+  <div class="admin-actions">
+    <a class="btn btn-primary" href="/">Try again</a>
+  </div>
+</section>
+{% endblock %}

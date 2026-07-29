@@ -4,7 +4,7 @@ How this repo verifies itself: the local/CI test pyramid, what each GitHub
 Actions workflow enforces, and the honest current state of each gate. Related:
 [docs/dev-setup.md](dev-setup.md) for the live-stack walkthrough, and
 [scripts/evaluate_retrieval.py](../scripts/evaluate_retrieval.py) for the
-golden-query harness the e2e workflow reuses unchanged.
+golden-query harness the e2e workflow reuses.
 
 ## The pyramid
 
@@ -250,6 +250,61 @@ baseline, on any of:
 - **A change to chunking or retrieval logic** (`ingestion-worker` chunking,
   `orchestration-mcp` fusion/rerank).
 - **The nightly `e2e.yml` schedule**, which covers the "periodic" cadence.
+
+## Access-control corpus (classification matrix)
+
+The golden-query harness asks whether the right document is *retrievable*.
+`scripts/create_classification_corpus.py` builds a corpus for the adjacent
+question: whether each persona sees exactly the documents their claims entitle
+them to, at a realistic corpus size and across the whole classification ladder.
+
+Fifteen documents — five formats (`txt`, `md`, `html`, `pdf`, `docx`) at each of
+`UNCLASSIFIED`, `CUI` and `SECRET`, with the releasability rotated so no two
+documents at a level share a holding. Each is ~4KB of prose, which chunks two to
+five times; a single-chunk document cannot show a ranking or partial-visibility
+bug.
+
+Attribution is by **canary phrase, not filename**. Every document repeats a
+unique token (`MARBLE-HORIZON-7` and friends) through its body, so a hit is
+attributable to exactly one source even when two documents share a filename at
+different classifications — the failure mode issue #226 originally recorded in
+the golden-query harness.
+
+`scripts/evaluate_retrieval.py` no longer has that failure mode either: its
+leak check now asserts each returned chunk's own `status` payload field is
+`"approved"` (the access filter's own invariant, `common/qdrant_filters.py`)
+rather than matching `golden_queries.json`'s `forbid` filenames against
+returned filenames. A duplicate filename across two documents in different
+states — e.g. from re-running the non-idempotent `seed_sample_data.py`
+against an already-seeded stack — can no longer produce a false FR-26 alarm,
+since the check no longer depends on filename identity at all. The `forbid`
+list is still checked, but only as an informational `content_overlap` note in
+the report; it is not what fails the build.
+
+```bash
+python scripts/create_classification_corpus.py      # regenerate (needs python-docx)
+docker compose --profile corpus run --rm ingest-classification-corpus
+docker compose --profile corpus run --rm verify-corpus-access
+```
+
+Both steps run **inside the compose network** deliberately: a token minted
+against `127.0.0.1:8080` carries that issuer, the services verify against
+`http://keycloak:8080`, and the mismatch surfaces as a bare 401 that is
+confusing to diagnose from the host.
+
+`verify_corpus_access.py` derives each persona's expected visibility from the
+manifest and the realm's role grants rather than hard-coding it, so adding a
+document to the matrix extends the test without editing it. A `LEAK` is an FR-26
+access-control defect; a `MISSING` is an ingestion gap or a recall problem.
+
+Validated against the live stack: `bob-query` and `carol-curator` (SECRET,
+FVEY/NATO) each saw 9 of 9 permitted documents and none of the six NOFORN/USA
+ones; `dave-admin` (SECRET, all four holdings) saw 15 of 15.
+
+The same run also establishes, empirically, that all three classification levels
+share one Qdrant collection today — 72 points in `nexus_rag_chunks`, 24
+UNCLASSIFIED / 27 CUI / 21 SECRET. That is the current design, and the evidence
+behind issue #229's proposal to split it.
 
 ## Known gaps / follow-ups
 

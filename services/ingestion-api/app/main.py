@@ -182,7 +182,57 @@ def _page_context(session: Session, current_user: UserClaims | None) -> dict:
         # Empty string is the built-in default; base.html emits it as a
         # data-theme attribute and portal.css keys its token block off it.
         "theme": (settings.theme if settings else "") or "",
+        # Issue #248: branding shown persistently (header, tab title,
+        # favicon), not just on the login page -- so this lives in the
+        # context every page gets, not just _login_page's below.
+        "app_name": (settings.app_name if settings else "") or DEFAULT_APP_NAME,
+        "logo_url": (settings.logo_url if settings else "") or None,
     }
+
+
+# Issue #246/#248: defaults for the login page's branding/button text, used
+# whenever no admin has set a PortalSettings value yet.
+DEFAULT_APP_NAME = "Document Portal"
+DEFAULT_LOGIN_BUTTON_TEXT = "Login via OIDC"
+DEFAULT_LOGIN_POPUP_TITLE = "Notice"
+
+
+def _login_page(request: Request, session: Session) -> HTMLResponse:
+    """Issue #246: every page route renders this instead of its real content
+    for an anonymous visitor -- the app no longer shows a fully-featured page
+    that then fails on the first action a logged-out visitor takes.
+
+    Takes session (not a pre-built context) because it still needs the
+    classification banner: that marking is a property of the deployment, not
+    of whoever is or isn't signed in, so it belongs on this page too.
+    """
+    settings = session.get(PortalSettings, 1)
+    ctx = _page_context(session, None)
+    ctx["login_button_text"] = (settings.login_button_text if settings else "") or (
+        DEFAULT_LOGIN_BUTTON_TEXT
+    )
+    # Issue #248: the mandatory-acceptance popup. Mirrors _page_context's
+    # classification-banner treatment -- inactive-or-unset is passed through
+    # as a clean "don't render anything", not a default message.
+    ctx["login_popup_text"] = (
+        settings.login_popup_text if (settings and settings.login_popup_active) else ""
+    )
+    ctx["login_popup_title"] = (settings.login_popup_title if settings else "") or (
+        DEFAULT_LOGIN_POPUP_TITLE
+    )
+    return templates.TemplateResponse(request, "login.html", ctx)
+
+
+@app.get("/login/declined", response_class=HTMLResponse)
+def login_declined_page(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    """Issue #248: where a visitor lands after declining the mandatory
+    acceptance popup. No current_user dependency at all -- a visitor who just
+    declined the banner is by definition not signed in yet, and this page
+    itself requires no authority to view."""
+    return templates.TemplateResponse(request, "login_declined.html", _page_context(session, None))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -191,6 +241,8 @@ def upload_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
     ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "upload.html", ctx)
@@ -204,13 +256,16 @@ def admin_page(
 ) -> HTMLResponse:
     """Issue #166: the UI for the settings /admin/* already exposed as an API.
 
-    Deliberately not gated here. The page renders for anyone; every action on
-    it goes through /admin/*, which is behind require_admin, and the page shows
-    the resulting 403 rather than pretending the route does not exist.
-    Authorization belongs on the endpoints that change state, not on the HTML
-    that describes them -- and a 404 for a non-admin would be a worse lie than
-    an honest "you do not hold this role".
+    Signed-in but non-admin visitors still see this page render (issue #246
+    only gates on *authentication*, not on the rag-admin role) -- every action
+    on it goes through /admin/*, which is behind require_admin, and the page
+    shows the resulting 403 rather than pretending the route does not exist.
+    Role authorization belongs on the endpoints that change state, not on the
+    HTML that describes them -- and a 404 for a non-admin would be a worse lie
+    than an honest "you do not hold this role".
     """
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(request, "admin.html", _page_context(session, current_user))
 
 
@@ -220,6 +275,8 @@ def curate_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
     ctx.update(_page_context(session, current_user))
     return templates.TemplateResponse(request, "curate.html", ctx)
@@ -231,6 +288,8 @@ def notifications_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(
         request, "notifications.html", _page_context(session, current_user)
     )
@@ -242,4 +301,6 @@ def search_page(
     session: Session = Depends(get_session),
     current_user: UserClaims | None = Depends(get_current_user_optional),
 ) -> HTMLResponse:
+    if current_user is None:
+        return _login_page(request, session)
     return templates.TemplateResponse(request, "search.html", _page_context(session, current_user))

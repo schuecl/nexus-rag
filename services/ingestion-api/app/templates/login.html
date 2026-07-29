@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Log in — {{ app_name }}{% endblock %}
+{% block main_class %}login-page{% endblock %}
+{% block content %}
+<section class="login-card">
+  {% if logo_url %}
+  <img class="login-logo" src="{{ logo_url }}" alt="{{ app_name }} logo" />
+  {% endif %}
+  <h1>{{ app_name }}</h1>
+
+  <div class="admin-actions">
+    <a class="btn btn-primary" href="/auth/login" id="loginButton"
+       {% if login_popup_text %}hidden{% endif %}>{{ login_button_text }}</a>
+  </div>
+</section>
+
+{% if login_popup_text %}
+{#
+  Issue #248: mandatory-acceptance warning banner. The login button above
+  starts hidden (server-rendered, not a JS-added class -- a client that fails
+  to run this script still can't reach it) and this dialog is the only thing
+  that reveals it, so there is no path to /auth/login that skips acceptance.
+#}
+<div class="banner-modal-backdrop" id="bannerModalBackdrop" role="presentation">
+  <div class="banner-modal" role="alertdialog" aria-modal="true" aria-labelledby="bannerModalTitle">
+    <h2 id="bannerModalTitle">{{ login_popup_title }}</h2>
+    <p class="banner-modal-text">{{ login_popup_text }}</p>
+    <div class="admin-actions">
+      <button type="button" class="btn-ghost" id="bannerDecline">Decline</button>
+      <button type="button" class="btn-primary" id="bannerAccept">Accept</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if login_popup_text %}
+<script>
+  document.getElementById('bannerAccept').addEventListener('click', () => {
+    document.getElementById('bannerModalBackdrop').remove();
+    document.getElementById('loginButton').hidden = false;
+  });
+  document.getElementById('bannerDecline').addEventListener('click', () => {
+    window.location.href = '/login/declined';
+  });
+</script>
+{% endif %}
+{% endblock %}

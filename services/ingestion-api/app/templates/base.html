@@ -8,8 +8,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#ffffff" />
-  <title>{% block title %}Document Portal{% endblock %}</title>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/portal.css') }}?v={{ asset_version }}" />
+  {# Issue #248: admin-set logo (Admin > Branding), reused as the favicon --
+     an external URL rather than a file this app ships, so no fallback if it
+     404s or the deployment hasn't set one; browsers already handle a missing
+     favicon by just not showing one. #}
+  {% if logo_url %}
+  <link rel="icon" href="{{ logo_url }}" />
+  {% endif %}
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -52,9 +59,19 @@
 
   {{ classification_banner('top') }}
 
+  {#
+    Issue #246/#248: with the whole app gated behind login, an anonymous
+    visitor only ever lands on login.html or login_declined.html -- every nav
+    link here points to a page they'd just be bounced right back off of. The
+    header only earns its place once there's somewhere it actually leads.
+  #}
+  {% if current_user %}
   <header class="site-header">
     <div class="nav-shell">
-      <a class="brand" href="/" aria-label="Document Portal home">
+      <a class="brand" href="/" aria-label="{{ app_name }} home">
+        {% if logo_url %}
+        <img class="brand-mark brand-logo" src="{{ logo_url }}" alt="" aria-hidden="true" />
+        {% else %}
         <span class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24">
             <path d="M7 3.75h6.75L18.25 8v12.25H7z"></path>
@@ -62,8 +79,9 @@
             <path d="M9.75 12h5.5M9.75 15h5.5"></path>
           </svg>
         </span>
+        {% endif %}
         <span class="brand-copy">
-          <strong>Document Portal</strong>
+          <strong>{{ app_name }}</strong>
           <small>Controlled information workspace</small>
         </span>
       </a>
@@ -91,12 +109,17 @@
           </svg>
           Upload
         </a>
+        {# Issue #249: mirrors the /curate/queue API's own require_curator
+           check (app/deps.py) -- a user with no rag-curate:<org> role would
+           just get a 403 from every action this tab leads to. #}
+        {% if current_user and current_user.curatable_orgs %}
         <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"></path>
           </svg>
           Curation queue
         </a>
+        {% endif %}
         <a
           class="{% if request.url.path == '/notifications' %}active{% endif %}"
           href="/notifications"
@@ -125,7 +148,6 @@
       </nav>
 
       <div class="account">
-        {% if current_user %}
         <span class="user-summary">
           <span class="user-avatar" aria-hidden="true">
             {{ current_user.preferred_username[:1] | upper }}
@@ -138,12 +160,10 @@
         <!-- Issue #215: logout is a state change -- POST with the CSRF header,
              not a link a third-party page can embed. -->
         <button type="button" class="account-action" onclick="logout()">Log out</button>
-        {% else %}
-        <a class="account-action primary-account-action" href="/auth/login">Log in</a>
-        {% endif %}
       </div>
     </div>
   </header>
+  {% endif %}
 
   <main id="main-content" class="page-shell {% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
@@ -151,7 +171,7 @@
 
   <footer class="site-footer">
     <div>
-      <span>Document Portal</span>
+      <span>{{ app_name }}</span>
       <span class="footer-separator" aria-hidden="true"></span>
       <span>Controlled information workspace</span>
     </div>
@@ -170,12 +190,19 @@
     }
 
     // Issue #215: POST, so the CSRF check applies and a third-party page
-    // can't log the user out by embedding the URL. The server answers 303,
-    // so fetch() follows the RP-initiated logout redirect through Keycloak
-    // with GET; we then land the browser wherever it ended up.
+    // can't log the user out by embedding the URL.
+    //
+    // Issue #254: the server answers with the Keycloak RP-initiated-logout
+    // URL as JSON rather than a redirect, and we navigate to it via
+    // `window.location` -- a real top-level navigation -- instead of letting
+    // fetch() follow a redirect there itself. fetch() would carry that hop
+    // out as a same-origin-credentialed request, not a top-level navigation,
+    // so Keycloak's own SameSite=Lax session cookie never rode along and its
+    // SSO session outlived every logout.
     async function logout() {
       const res = await fetch('/auth/logout', { method: 'POST', headers: authHeaders() });
-      window.location.href = res.url || '/';
+      const data = await res.json();
+      window.location.href = data.redirect || '/';
     }
   </script>
   <script src="{{ url_for('static', path='/portal.js') }}" defer></script>
