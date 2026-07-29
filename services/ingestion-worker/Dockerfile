@@ -1,5 +1,12 @@
 FROM python:3.11-slim
 
+# Issue #241: OCR for scanned PDFs and image uploads (app/ocr.py). Baked into
+# the image -- never downloaded at runtime (NFR-1 air-gap). eng traineddata
+# only; other languages (OCR_LANG) need their package added here.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv
 
 COPY services/common /srv/common-pkg

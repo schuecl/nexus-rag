@@ -100,7 +100,7 @@ def main() -> None:
         f"\nUpload test corpus ready for RAG: {imported} imported, "
         f"{skipped} already present, {len(files)} total supported files."
     )
-    print("PNG and JPG samples remain available for unsupported-format validation.")
+    print("PNG and JPG samples exercise the OCR no-readable-text failure path (#241).")
 
 
 if __name__ == "__main__":

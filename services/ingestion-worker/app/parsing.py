@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from docx.document import Document as DocxDocument
     from docx.table import Table as DocxTable
     from docx.text.paragraph import Paragraph as DocxParagraph
+    from pypdf import PdfReader
 
 
 logger = logging.getLogger("ingestion-worker")
@@ -135,6 +136,8 @@ def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
         if ext == ".xlsx":
             _check_zip_bomb(content)
             return _parse_xlsx(content)
+        if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
+            return _parse_image(content)
     except ParsingError:
         # Raised deliberately by this module -- "password-protected PDF",
         # "unsupported file type", the page/zip bounds. Those messages are
@@ -218,6 +221,31 @@ def _parse_html(content: bytes) -> list[ParsedSection]:
     return sections
 
 
+def _parse_image(content: bytes) -> list[ParsedSection]:
+    """Issue #241: a standalone image upload -- a scanned memo, a photographed
+    whiteboard. OCR is the only content path for this format, so unlike the
+    scanned-PDF fallback below, failure here is an FR-8 error the uploader can
+    act on, not a silent skip: an empty "success" would be a lie."""
+    from app import ocr
+
+    if not ocr.ocr_available():
+        raise ParsingError(
+            "this deployment cannot read image files (OCR is unavailable); "
+            "supply the content as a text-bearing format instead"
+        )
+    text = ocr.ocr_image(content)
+    if not text:
+        raise ParsingError(
+            "no readable text was recognized in this image -- if it holds a "
+            "figure rather than text, embed it in a document instead"
+        )
+    # content_type "ocr" (issue #89's tagging): provenance for curators
+    # reviewing machine-read text, and weightable via CONTENT_TYPE_BOOSTS.
+    # Chunked by the normal sliding window (see chunking.py) -- OCR output is
+    # prose, unlike the atomic table/image section kinds.
+    return [ParsedSection(text=text, content_type="ocr")]
+
+
 def _table_to_markdown(grid: list[list[str | None]]) -> str:
     """Render a pdfplumber/python-docx table grid (rows of cell strings, may
     contain None for empty cells) as a markdown table. Rows that are entirely
@@ -266,6 +294,9 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
     import pdfplumber
 
     sections = []
+    # Issue #241: shared OCR budget for this document's scanned-page fallback,
+    # decremented per image OCR'd (see ocr.py for why it exists).
+    ocr_budget = _MAX_OCR_IMAGES
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for i, page in enumerate(pdf.pages):
             tables = page.find_tables()
@@ -290,7 +321,83 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
                         ParsedSection(text=markdown, page_or_slide=i + 1, content_type="table")
                     )
 
+            # Issue #241: scanned-page fallback. Fires only when this page
+            # contributed nothing at all -- no prose, no tables -- so a PDF
+            # with a text layer parses byte-identically to before. A page
+            # that *has* text plus a figure is #92 captioning's territory,
+            # not OCR's.
+            if not prose and not tables:
+                ocr_sections, ocr_budget = _ocr_pdf_page(reader, i, ocr_budget)
+                sections.extend(ocr_sections)
+
     return sections
+
+
+# Read once at import (matches ocr.py's own constant) so the per-document
+# budget in _parse_pdf is testable by monkeypatching this module.
+def _default_ocr_budget() -> int:
+    from app.ocr import MAX_OCR_IMAGES_PER_DOCUMENT
+
+    return MAX_OCR_IMAGES_PER_DOCUMENT
+
+
+_MAX_OCR_IMAGES = _default_ocr_budget()
+
+
+def _ocr_pdf_page(
+    reader: PdfReader, page_index: int, budget: int
+) -> tuple[list[ParsedSection], int]:
+    """OCR the embedded images of one text-less PDF page. Degrade-only: a
+    missing tesseract, an undecodable image, or an exhausted budget costs
+    text that today contributes nothing anyway -- logged, never raised."""
+    from app import ocr
+
+    if not ocr.ocr_available():
+        # One line per page, so a fully scanned document shows the gap
+        # loudly in the logs rather than failing with a bare "no
+        # extractable text" and no explanation.
+        logger.warning(
+            "PDF page %d has no text layer and OCR is unavailable; its content is skipped",
+            page_index + 1,
+        )
+        return [], budget
+    try:
+        page_images = list(reader.pages[page_index].images)
+    except Exception as exc:
+        logger.warning(
+            "could not read images on text-less PDF page %d: %s: %s",
+            page_index + 1,
+            type(exc).__name__,
+            log_safe(exc),
+        )
+        return [], budget
+
+    texts: list[str] = []
+    for image_file in page_images:
+        if budget <= 0:
+            logger.warning(
+                "OCR image budget exhausted at PDF page %d; remaining scanned pages are skipped",
+                page_index + 1,
+            )
+            break
+        budget -= 1
+        try:
+            text = ocr.ocr_image(image_file.data)
+        except Exception as exc:  # ocr_image shouldn't raise; belt and braces
+            logger.warning(
+                "OCR failed on PDF page %d: %s: %s",
+                page_index + 1,
+                type(exc).__name__,
+                log_safe(exc),
+            )
+            continue
+        if text:
+            texts.append(text)
+    if not texts:
+        return [], budget
+    return [
+        ParsedSection(text="\n".join(texts), page_or_slide=page_index + 1, content_type="ocr")
+    ], budget
 
 
 def _iter_docx_block_items(document: DocxDocument) -> Iterator[DocxParagraph | DocxTable]:

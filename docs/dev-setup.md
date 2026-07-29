@@ -107,6 +107,37 @@ Host prerequisites for the GPU path: an NVIDIA driver, the
 `nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
 Air-gapped (NFR-1): mirror the chosen torch index internally and point
 `TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## OCR for scanned and image content (#241)
+
+Always on -- OCR is parsing, not an optional enrichment, and it involves no
+network call: Tesseract is baked into the `ingestion-worker` image (eng
+traineddata; set `OCR_LANG` and add the matching Debian package to the
+Dockerfile for other languages -- never downloaded at runtime, NFR-1).
+
+Two paths use it:
+
+- **Image uploads** (`.png`/`.jpg`/`.jpeg`/`.tif`/`.tiff`, new in the #211
+  allowlist): the recognized text becomes the document's content. No
+  recognizable text is an actionable FR-8 failure ("no readable text was
+  recognized"), not an empty success.
+- **Scanned PDF pages**: a per-page fallback that fires only when the page
+  yielded no prose and no tables -- a PDF with a text layer parses
+  byte-identically to before. A missing/broken tesseract here degrades to a
+  logged skip (those pages contributed nothing before #241 either).
+
+OCR-derived chunks carry `content_type: "ocr"` (issue #89) -- visible to
+curators as machine-read provenance and weightable via `CONTENT_TYPE_BOOSTS`.
+Unlike `table`/`image` sections they are chunked by the normal sliding
+window. Work is bounded by `MAX_OCR_IMAGES_PER_DOCUMENT` (default 50),
+`OCR_MIN_IMAGE_DIMENSION`, and #208's per-document processing timeout.
+
+Status: parse/degrade/failure paths are tested against mocks
+(`services/ingestion-worker/tests/test_ocr_parsing.py`; stubbed pytesseract,
+in-memory fixtures); the end-to-end path is validated against a live
+environment (a real `docker compose up` build with tesseract in the image: a
+rendered-text scanned PDF and a PNG memo ingested, approved, and retrieved
+via `/debug/rag_search` by querying for their pixel-only text).
+
 ## Container hardening (#111)
 
 Every Compose service runs with `security_opt: ["no-new-privileges:true"]`, and
