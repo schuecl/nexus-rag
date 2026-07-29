@@ -233,12 +233,18 @@ nats:
     # NFR-6: see qdrant.persistence.storageClassName's comment above -- same
     # applies here.
     storageClassName: ""
-  # NFR-11: shared token auth between ingestion-api (publisher) and
-  # ingestion-worker (consumer) -- pre-created Secret, same existingSecret
+  # Issue #212: two credentials, not one shared token -- ingestion-api
+  # (publish-only) and ingestion-worker (consume-only) each authenticate as
+  # their own NATS user, restricted by templates/nats-configmap.yaml's
+  # per-subject permissions. Pre-created Secrets, same existingSecret
   # pattern as externalPostgres/externalKeycloak.
-  authToken:
-    existingSecret: "nexus-rag-nats-token"
-    secretKey: "token"
+  credentials:
+    ingestionApi:
+      existingSecret: "nexus-rag-nats-ingestion-api"
+      secretKey: "password"
+    ingestionWorker:
+      existingSecret: "nexus-rag-nats-ingestion-worker"
+      secretKey: "password"
   resources:
     requests:
       cpu: "250m"
@@ -357,6 +363,13 @@ ingestionApi:
   # this should ever be false (docker-compose.yml sets COOKIE_SECURE=false
   # there, since it serves the UI over http://localhost).
   cookieSecure: true
+  # Issue #213: encrypts UserSession's stored access/refresh/id tokens at
+  # rest (common/token_crypto.py) -- pre-created Secret, same existingSecret
+  # pattern as externalKeycloak.clientSecret. Must be a Fernet key (32
+  # url-safe base64-encoded bytes); see .env.example for how to generate one.
+  sessionTokenEncryption:
+    existingSecret: "nexus-rag-session-token-key"
+    secretKey: "key"
   resources:
     requests:
       cpu: "250m"

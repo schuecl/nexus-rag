@@ -22,7 +22,7 @@ needed a real HTTPS setup, not just config — see "One-time host setup" below.
 
 **The MCP tool-calling path is now confirmed fully working end to end (issue #99
 follow-up, 2026-07-26)** — `bob-query` driving `rag_search` through a real LibreChat Agent
-returns real, claims-filtered search results. Getting there took five real bugs, in order:
+returns real, claims-filtered search results. Getting there took six real bugs, in order:
 
 1. **Wrong OBO grant type.** LibreChat's actual `OboTokenService` calls Keycloak with
    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` (RFC 7523), not
@@ -59,16 +59,22 @@ returns real, claims-filtered search results. Getting there took five real bugs,
    relationship needed at all.
 5. **Two more bugs surfaced getting the OAuth login itself to actually trigger and
    complete**, both found via live logs, not guessing: `requiresOAuth` needed to be forced
-   to `true` explicitly (auto-detection never fired, because `orchestration-mcp` doesn't
-   challenge with a 401 at the transport level — its auth check only lives inside the
-   `rag_search` tool call itself); and the Keycloak authorization URL was rejected as
-   resolving to a private IP address even after adding it to `mcpSettings.allowedAddresses`
-   (the correct-looking SSRF-exemption field) — reading `packages/api`'s actual
-   `isOAuthUrlAllowed()` showed that once `allowedDomains` is non-empty (ours already was,
-   for the orchestration-mcp entry), it becomes the *sole* authority for this check and
-   `allowedAddresses` is ignored outright, by design. Fixed by adding Keycloak to
-   `allowedDomains` instead. See the `oauth`/`requiresOAuth`/`allowedDomains` bullets below
-   for the full details on each.
+   to `true` explicitly because the original MCP transport did not issue an authentication
+   challenge; and the Keycloak authorization URL was rejected as resolving to a private IP
+   address even after adding it to `mcpSettings.allowedAddresses` (the correct-looking
+   SSRF-exemption field) — reading `packages/api`'s actual `isOAuthUrlAllowed()` showed
+   that once `allowedDomains` is non-empty (ours already was, for the orchestration-mcp
+   entry), it becomes the *sole* authority for this check and `allowedAddresses` is ignored
+   outright, by design. Fixed by adding Keycloak to `allowedDomains` instead. See the
+   `oauth`/`requiresOAuth`/`allowedDomains` bullets below for the full details on each.
+6. **The MCP connection retained an expired 15-minute Keycloak bearer** (issue #200,
+   2026-07-28). JWT verification previously happened only inside `rag_search`, which
+   returned `{"error":"invalid token: Signature has expired"}` as a successful HTTP 200
+   tool result. LibreChat therefore had no OAuth failure signal and did not redeem its
+   refresh token. `orchestration-mcp` now verifies the bearer at the FastMCP transport
+   boundary and returns RFC 6750 `401 invalid_token`; LibreChat can refresh, reconnect, and
+   retry. `requiresOAuth: true` remains explicit, and disconnect now uses Keycloak's real
+   revocation endpoint instead of the MCP server's nonexistent `/revoke` route.
 
 Also fixed along the way, independent of the auth-forwarding saga above: a `421 Invalid
 Host header` MCP transport bug (see the `transport_security`/`TransportSecuritySettings`
@@ -684,7 +690,15 @@ the docs, not a silent "it works" — flag it if you find one.
   `TestClient`-level verification. "Log in" redirects to Keycloak; the callback
   (`app/routes/auth.py`) exchanges the code for tokens server-to-server and stores them in
   a new `user_sessions` Postgres row, keyed by an opaque session ID in an `HttpOnly` cookie
-  (never the token itself in browser-reachable storage). `app/deps.get_current_user`
+  (never the token itself in browser-reachable storage). Issue #213: the stored
+  access/refresh/id tokens are encrypted at rest (`common/token_crypto.py`, keyed by
+  `SESSION_TOKEN_ENCRYPTION_KEY`) rather than dropped or hashed — both alternatives were
+  considered and rejected because `refresh_token` drives real silent renewal and
+  `access_token` is forwarded verbatim to downstream calls, so the app has to be able to
+  read them back in plaintext; encryption is the only option that doesn't regress that.
+  Confirmed live against a real Postgres: a raw SQL read of `user_sessions` returns
+  ciphertext, the ORM round-trip returns the original token. This is the project's chosen
+  position, not an open gap. `app/deps.get_current_user`
   resolves that cookie to the same `UserClaims` as the header-based bearer-token path used
   by curl/API/MCP callers — transparently refreshing an expired access token via the
   stored refresh token — so no enforcement logic forks between the two. "Log out" performs
@@ -1079,13 +1093,15 @@ the docs, not a silent "it works" — flag it if you find one.
   and passes `orchestration-mcp`'s existing `common.claims.parse_claims` check unmodified --
   no same-realm trust relationship required at all. Getting the login to actually trigger
   and complete took two more real, live-debugged bugs:
-  - `requiresOAuth` defaults to auto-detection, which never fired here (`OAuth Required:
-    false` logged, then "Connection successfully established" with zero auth attempted).
-    Root cause: `orchestration-mcp` doesn't challenge with a 401/`WWW-Authenticate` at the
-    transport level -- the `Authorization` check only happens inside the `rag_search` tool
-    call itself (`app/server.py`), so LibreChat's auto-detection has no signal to act on and
-    just proceeds unauthenticated. Forced `requiresOAuth: true` explicitly rather than
-    changing the server to challenge on connect.
+  - `requiresOAuth` defaults to auto-detection, which never fired against the original
+    server (`OAuth Required: false` logged, then "Connection successfully established" with
+    zero auth attempted). At that point, `orchestration-mcp` did not challenge at the HTTP
+    boundary; the check happened inside `rag_search`, so auto-detection had no signal.
+    `requiresOAuth: true` was forced explicitly and remains so. As of the 2026-07-28 token
+    expiry fix, the transport also validates every bearer and returns
+    `401`/`WWW-Authenticate: Bearer ... invalid_token`; that lets LibreChat refresh an
+    expired access token instead of surfacing a tool result containing `Signature has
+    expired`.
   - Even with the OAuth config in place, LibreChat refused to redirect at all: `Failed to
     initiate OAuth flow OAuth authorization_url resolves to a private IP address` --
     `keycloak` resolves to a private Docker-network IP from this container's own DNS, even
@@ -1104,7 +1120,10 @@ the docs, not a silent "it works" — flag it if you find one.
   browser, clicks "Connect", completes a real Keycloak login, and `rag_search` returns real,
   claims-filtered results -- not just a clean tool call (the earlier milestone), the actual
   retrieval working through the full LibreChat → MCP OAuth → Keycloak → orchestration-mcp →
-  Qdrant chain.
+  Qdrant chain. Reconfirmed from a live authenticated MCP session on 2026-07-28 after
+  adding transport authentication: an unauthenticated initialize receives `401
+  invalid_token`, while a Keycloak-authenticated `rag_search` for the password policy
+  succeeds through hybrid retrieval and reranking.
 - **`orchestration-mcp`'s MCP endpoint rejected every LibreChat request with `421
   Invalid Host header`, even after the `addUserJwtToken` fix above got the OBO/auth layer
   itself working.** Confirmed live (2026-07-26): `docker logs` on both sides showed

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
+from typing import Any
 
 import jwt
 from jwt import PyJWKClient
@@ -141,23 +142,34 @@ def _jwk_client() -> PyJWKClient:
     return PyJWKClient(f"{OIDC_ISSUERS[0]}/protocol/openid-connect/certs")
 
 
-def parse_claims(bearer_token: str) -> UserClaims:
-    """Verify a Keycloak-issued access token and extract the claims defined in
-    REQUIREMENTS.md Section 6.2. Raises jwt.PyJWTError on an invalid/expired token.
+def decode_verified_token(bearer_token: str) -> dict[str, Any]:
+    """Verify a Keycloak access token and return its complete claim payload.
+
+    Most callers should use :func:`parse_claims`. The full payload is exposed
+    for protocol boundaries such as MCP bearer authentication, which also
+    needs standard JWT fields (``exp``, ``scope``, ``azp``) after performing
+    the exact same signature/audience/issuer validation as the access filter.
     """
     token = bearer_token.removeprefix("Bearer ").strip()
 
     if OIDC_SKIP_VERIFY:
-        payload = jwt.decode(token, options={"verify_signature": False})
-    else:
-        signing_key = _jwk_client().get_signing_key_from_jwt(token)
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=OIDC_AUDIENCE,
-            issuer=OIDC_ISSUERS,
-        )
+        return jwt.decode(token, options={"verify_signature": False})
+
+    signing_key = _jwk_client().get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=OIDC_AUDIENCE,
+        issuer=OIDC_ISSUERS,
+    )
+
+
+def parse_claims(bearer_token: str) -> UserClaims:
+    """Verify a Keycloak-issued access token and extract the claims defined in
+    REQUIREMENTS.md Section 6.2. Raises jwt.PyJWTError on an invalid/expired token.
+    """
+    payload = decode_verified_token(bearer_token)
 
     return UserClaims(
         sub=payload["sub"],
