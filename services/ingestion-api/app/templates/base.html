@@ -59,6 +59,13 @@
 
   {{ classification_banner('top') }}
 
+  {#
+    Issue #246/#248: with the whole app gated behind login, an anonymous
+    visitor only ever lands on login.html or login_declined.html -- every nav
+    link here points to a page they'd just be bounced right back off of. The
+    header only earns its place once there's somewhere it actually leads.
+  #}
+  {% if current_user %}
   <header class="site-header">
     <div class="nav-shell">
       <a class="brand" href="/" aria-label="{{ app_name }} home">
@@ -136,7 +143,6 @@
       </nav>
 
       <div class="account">
-        {% if current_user %}
         <span class="user-summary">
           <span class="user-avatar" aria-hidden="true">
             {{ current_user.preferred_username[:1] | upper }}
@@ -149,12 +155,10 @@
         <!-- Issue #215: logout is a state change -- POST with the CSRF header,
              not a link a third-party page can embed. -->
         <button type="button" class="account-action" onclick="logout()">Log out</button>
-        {% else %}
-        <a class="account-action primary-account-action" href="/auth/login">Log in</a>
-        {% endif %}
       </div>
     </div>
   </header>
+  {% endif %}
 
   <main id="main-content" class="page-shell {% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
