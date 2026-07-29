@@ -195,7 +195,7 @@ The enforced `--cov-fail-under=85` applies to:
   `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
   "Expected — waiting for status to be reported" until an admin re-pins it.
   Making the names independent of the flags needs that same coordinated
-  ruleset edit, so it is a follow-up rather than something done here.
+  ruleset edit, so it is tracked as #256 rather than done here.
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured

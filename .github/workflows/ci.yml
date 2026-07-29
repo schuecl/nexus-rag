@@ -101,7 +101,7 @@ jobs:
           # re-pins it. Add newly gated modules via the service's own
           # `[tool.pytest.ini_options] addopts` instead (see ingestion-worker's
           # pyproject.toml). Making the check names independent of the flags
-          # needs a coordinated ruleset edit, so it is its own follow-up.
+          # needs a coordinated ruleset edit, tracked as #256.
           - service: ingestion-api
             cov: ""
           - service: ingestion-worker
