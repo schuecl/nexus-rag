@@ -98,3 +98,30 @@ class TestAuthenticatedVisitorSeesRealPage:
 
         assert resp.status_code == 200
         assert b"Portal settings" in resp.body
+
+    def test_nav_hides_curate_tab_for_a_user_with_no_curate_role(self, db, user):
+        """Issue #249: a user with no rag-curate:<org> role only ever gets a
+        403 from every action the curate tab leads to (require_curator in
+        app/deps.py), so the tab itself should not be offered."""
+        resp = main.upload_page(_request(), session=db, current_user=user)
+
+        assert b"Curation queue" not in resp.body
+
+    def test_nav_shows_curate_tab_for_a_user_with_a_curate_role(self, db):
+        curator = UserClaims(
+            sub="carol-sub",
+            preferred_username="carol",
+            rag_roles=["rag-curate:org-a"],
+        )
+        resp = main.upload_page(_request(), session=db, current_user=curator)
+
+        assert b"Curation queue" in resp.body
+
+    def test_nav_shows_notifications_tab_regardless_of_role(self, db, user):
+        """Issue #249 gates the curate tab on role; notifications stays
+        available to every signed-in user, since notifications are scoped to
+        the recipient (the document's uploader, FR-15) rather than to any
+        particular rag_roles grant."""
+        resp = main.upload_page(_request(), session=db, current_user=user)
+
+        assert b"Notifications" in resp.body
