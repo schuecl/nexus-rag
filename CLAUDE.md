@@ -77,7 +77,7 @@ pytest tests/unit/common/test_purge.py::TestIdempotenceAndErrors::test_unknown_d
 # first's already-imported `app` package). `pytest` at the repo root does NOT
 # reach these.
 (cd services/ingestion-api && pytest tests -q)
-(cd services/ingestion-worker && pytest tests -q --cov=app.chunking --cov=app.parsing --cov=app.ocr --cov-fail-under=85)
+(cd services/ingestion-worker && pytest tests -q --cov=app.chunking --cov=app.parsing --cov-fail-under=85)
 (cd services/orchestration-mcp && pytest tests -q --cov=app.reranking --cov-fail-under=85)
 
 # Full-stack e2e (identical to e2e.yml's golden-query job)
@@ -165,7 +165,9 @@ independently of both.
   stubbed JWKS client. Classification ranking runs against in-memory SQLite.
 - **Coverage gate (`--cov-fail-under=85`) is scoped, not repo-wide**: `services/common`
   (excluding `db.py`/`qdrant_store.py`/`sparse_embedding.py` — need live Postgres/Qdrant or
-  a model download, see `.coveragerc`), `app.chunking`+`app.parsing` in ingestion-worker,
+  a model download, see `.coveragerc`), `app.chunking`+`app.parsing`+`app.ocr` in
+  ingestion-worker (the last via that service's `pyproject.toml` `addopts`, since
+  ci.yml's matrix string is the required check's name — see `docs/testing.md`),
   `app.reranking` in orchestration-mcp. `ingestion-api`'s route layer and
   `orchestration-mcp/app/rag_search.py` are measured but not gated — they need a
   containerized integration layer to test meaningfully (open gap, not hidden).

@@ -186,9 +186,16 @@ The enforced `--cov-fail-under=85` applies to:
   Postgres/Qdrant or a model download and are therefore covered by the
   compose-level e2e, not the unit gate. Everything else in `common` measures
   ~99% today.
-- `app.chunking` + `app.parsing` (ingestion-worker) — the pure FR-3/FR-4
-  logic. `app.processing`/`app.embedding` are pipeline glue exercised by the
-  e2e job.
+- `app.chunking` + `app.parsing` + `app.ocr` (ingestion-worker) — the pure
+  FR-3/FR-4 logic. `app.processing`/`app.embedding` are pipeline glue
+  exercised by the e2e job. `app.ocr` (#241) is added by the service's own
+  `[tool.pytest.ini_options] addopts` rather than by ci.yml's matrix, because
+  that matrix string *is* part of the required check's name (see the
+  required-checks list above): editing it renames the check, the context both
+  `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
+  "Expected — waiting for status to be reported" until an admin re-pins it.
+  Making the names independent of the flags needs that same coordinated
+  ruleset edit, so it is a follow-up rather than something done here.
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured

@@ -90,10 +90,22 @@ jobs:
           # ungated on purpose -- its FastAPI route layer needs the
           # containerized integration layer to be meaningfully covered (see
           # docs/testing.md's known-gaps list).
+          #
+          # These strings are load-bearing beyond the command line: with no
+          # explicit `name:` on this job, GitHub derives the check name from
+          # the matrix values, so `service-tests (ingestion-worker,
+          # --cov=app.chunking --cov=app.parsing)` is the literal context
+          # pinned in both `Protect-Main*` rulesets. Editing one renames the
+          # check, the pinned context then never reports, and every PR sits
+          # on "Expected -- waiting for status to be reported" until an admin
+          # re-pins it. Add newly gated modules via the service's own
+          # `[tool.pytest.ini_options] addopts` instead (see ingestion-worker's
+          # pyproject.toml). Making the check names independent of the flags
+          # needs a coordinated ruleset edit, so it is its own follow-up.
           - service: ingestion-api
             cov: ""
           - service: ingestion-worker
-            cov: "--cov=app.chunking --cov=app.parsing --cov=app.ocr"
+            cov: "--cov=app.chunking --cov=app.parsing"
           - service: orchestration-mcp
             cov: "--cov=app.reranking"
           - service: reranker-service
