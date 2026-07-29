@@ -27,6 +27,10 @@ import os
 import httpx
 
 RERANKER_URL = os.environ.get("RERANKER_URL", "http://reranker-service:8003")
+# Issue #216: matches reranker-service's own RERANKER_SHARED_SECRET (app/main.py) --
+# same value on both sides, out of band. Empty by default so this stays a no-op
+# against a reranker-service that also hasn't set one (today's posture).
+RERANKER_SHARED_SECRET = os.environ.get("RERANKER_SHARED_SECRET", "")
 
 
 def _load_content_type_boosts() -> dict[str, float]:
@@ -66,6 +70,7 @@ async def rerank(
 
     boosts = CONTENT_TYPE_BOOSTS if content_type_boosts is None else content_type_boosts
 
+    headers = {"X-Reranker-Shared-Secret": RERANKER_SHARED_SECRET} if RERANKER_SHARED_SECRET else {}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -76,6 +81,7 @@ async def rerank(
                         {"id": c["id"], "text": c["payload"].get("text", "")} for c in candidates
                     ],
                 },
+                headers=headers,
             )
             resp.raise_for_status()
             scores = {row["id"]: row["score"] for row in resp.json()}

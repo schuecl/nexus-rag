@@ -127,6 +127,15 @@ spec:
               value: {{ .Values.embeddingService.model | quote }}
             - name: RERANKER_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-reranker-service:{{ .Values.rerankerService.service.port }}"
+            {{- if .Values.rerankerService.sharedSecret.existingSecret }}
+            # Issue #216: same Secret/key reranker-service itself reads to
+            # verify the header this sends (reranker-service-deployment.yaml).
+            - name: RERANKER_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rerankerService.sharedSecret.existingSecret }}
+                  key: {{ .Values.rerankerService.sharedSecret.secretKey }}
+            {{- end }}
             - name: CONTENT_TYPE_BOOSTS
               value: {{ .Values.orchestrationMcp.contentTypeBoosts | quote }}
           livenessProbe:

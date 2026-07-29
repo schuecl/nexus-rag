@@ -271,6 +271,11 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # Issue #216: /rerank otherwise has no authorization model of its own.
+      # Same value as orchestration-mcp's RERANKER_SHARED_SECRET below --
+      # dev default matches the QDRANT_API_KEY pattern (a real deployment
+      # sets its own via .env, same as that one).
+      RERANKER_SHARED_SECRET: ${RERANKER_SHARED_SECRET:-dev-reranker-shared-secret}
     volumes:
       - reranker-cache:/srv/.cache/huggingface
     ports:
@@ -532,6 +537,9 @@ services:
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       RERANKER_URL: http://reranker-service:8003
+      # Issue #216: same value as reranker-service's RERANKER_SHARED_SECRET
+      # above -- this is what it sends as the X-Reranker-Shared-Secret header.
+      RERANKER_SHARED_SECRET: ${RERANKER_SHARED_SECRET:-dev-reranker-shared-secret}
       # issue #89: optional {content_type: multiplier} JSON map applied to
       # cross-encoder scores during reranking, e.g. '{"table": 1.15}' --
       # unset (the default) means no boost, every content type weighted 1.0.

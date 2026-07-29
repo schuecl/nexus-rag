@@ -5,12 +5,14 @@ session -- small enough to finish now, and orchestration-mcp's hybrid search
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -84,7 +86,43 @@ MODEL_REVISION = os.environ.get(
 # falling back to fused order *and saying so* in its response note.
 MAX_RERANK_CHUNKS = int(os.environ.get("MAX_RERANK_CHUNKS", "512"))
 
+# Issue #216: /rerank otherwise has no authorization model of its own --
+# reachability is authorization, and the chart's NetworkPolicy restricting who
+# can reach it (#131) is inert on a CNI that doesn't enforce policy. A shared
+# secret means that gap alone no longer hands an attacker the post-access-
+# filter chunk text (classified content) this service receives. Deliberately
+# not the caller's OIDC token: FR-26 enforcement already happened in
+# orchestration-mcp before this hop, and re-verifying it here would duplicate
+# that logic in a second place it can drift out of sync (see the issue's own
+# discussion of that heavier option). Empty by default so the local dev stack
+# and any environment that hasn't set it up yet keep working unauthenticated,
+# same posture as today -- but loudly, not silently (see the warning below).
+RERANKER_SHARED_SECRET = os.environ.get("RERANKER_SHARED_SECRET", "")
+
+if not RERANKER_SHARED_SECRET:  # pragma: no cover - startup-time side effect
+    logging.getLogger("reranker-service").warning(
+        "RERANKER_SHARED_SECRET is not set -- /rerank accepts any caller that can "
+        "reach this service on the network, with no credential of its own "
+        "(issue #216). Acceptable for local dev; set this in any deployment where "
+        "the NetworkPolicy might not be the only thing standing between an "
+        "unauthorized caller and retrieved chunk content."
+    )
+
 _model: CrossEncoder | None = None
+
+
+def _check_shared_secret(
+    x_reranker_shared_secret: Annotated[str | None, Header()] = None,
+) -> None:
+    if not RERANKER_SHARED_SECRET:
+        return
+    if not x_reranker_shared_secret or not hmac.compare_digest(
+        x_reranker_shared_secret, RERANKER_SHARED_SECRET
+    ):
+        metrics.requests_total.labels(outcome="unauthorized").inc()
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "missing or invalid X-Reranker-Shared-Secret"
+        )
 
 
 @asynccontextmanager
@@ -133,7 +171,11 @@ class RerankedChunk(BaseModel):
     score: float
 
 
-@app.post("/rerank", response_model=list[RerankedChunk])
+@app.post(
+    "/rerank",
+    response_model=list[RerankedChunk],
+    dependencies=[Depends(_check_shared_secret)],
+)
 def rerank(body: RerankRequest) -> list[RerankedChunk]:
     if _model is None:
         metrics.requests_total.labels(outcome="unavailable").inc()

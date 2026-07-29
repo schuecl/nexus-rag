@@ -90,6 +90,37 @@ Two properties worth stating explicitly for a reviewer:
 - **It fails closed.** An unknown clearance resolves to an empty allowed-
   classification list, which matches nothing rather than everything.
 
+### The reranker-service boundary (issue #216)
+
+`reranker-service` is downstream of that filter, not a participant in it. By
+the time a chunk's text reaches `POST /rerank`, FR-26 has already run in
+`orchestration-mcp` and the content is cleared for that specific caller —
+`reranker-service` receives it with no notion of who that caller was.
+
+That makes it a deliberate exception to "authorization is derived server-side
+from verified claims": this service does not check claims at all, because it
+is not an access-control decision point. Its authorization question is
+narrower — *is this caller orchestration-mcp* — and is answered by a shared
+secret (`rerankerService.sharedSecret` in the Helm chart,
+`RERANKER_SHARED_SECRET` in Compose), checked in addition to the Helm chart's
+NetworkPolicy (issue #110/#131) restricting who can reach it on the network.
+
+Forwarding the caller's own OIDC token instead and re-verifying it in
+`reranker-service` was considered and rejected: FR-26 enforcement already
+happened once, upstream, and duplicating it here would put the same
+classification logic in a second place it can drift out of sync with the
+first — a maintenance liability with no additional access-control benefit,
+since a caller who can reach `reranker-service` at all has already been
+authorized by `orchestration-mcp` for the specific content in the request.
+
+The shared secret is optional and unset by default — the chart and Compose
+stack both run exactly as before this issue if it isn't configured, and
+`reranker-service` logs a startup warning in that case rather than staying
+silent about it. Set it in any deployment where the NetworkPolicy might not
+be the only thing standing between an unauthorized caller and retrieved
+chunk content, which — given a NetworkPolicy's dependence on CNI support — is
+any deployment that hasn't specifically verified its CNI enforces policy.
+
 ## Data quality
 
 The curation queue **is** the data-quality control. Nothing reaches retrieval

@@ -301,6 +301,18 @@ rerankerService:
     tag: "0.1.0"
   model: "cross-encoder/ms-marco-MiniLM-L6-v2"
   replicas: 1
+  # Issue #216: /rerank has no authorization model of its own -- reachability
+  # is authorization, and that's only as strong as the NetworkPolicy above it
+  # (inert on a CNI that doesn't enforce policy). Empty by default so the
+  # chart still renders and runs unauthenticated as before -- same posture as
+  # today, but the reranker-service pod logs a startup warning when this is
+  # unset, so leaving it empty is a visible choice rather than a silent one.
+  # Set to a pre-created Secret (same existingSecret pattern as
+  # qdrant.apiKey) to require it: orchestration-mcp reads the same key to
+  # send the header, reranker-service reads it to check the header.
+  sharedSecret:
+    existingSecret: ""
+    secretKey: "shared-secret"
   service:
     port: 8003
   persistence:
