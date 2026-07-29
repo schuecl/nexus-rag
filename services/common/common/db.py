@@ -51,6 +51,15 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "queue_published_at": "TIMESTAMP WITH TIME ZONE",
         "processing_started_at": "TIMESTAMP WITH TIME ZONE",
     },
+    "portal_settings": {
+        # #248: branding + login popup banner, all defaulted so an existing
+        # single-row deployment upgrades without a rewrite.
+        "app_name": "VARCHAR DEFAULT ''",
+        "logo_url": "VARCHAR DEFAULT ''",
+        "login_button_text": "VARCHAR DEFAULT ''",
+        "login_popup_text": "VARCHAR DEFAULT ''",
+        "login_popup_active": "BOOLEAN DEFAULT FALSE",
+    },
 }
 
 

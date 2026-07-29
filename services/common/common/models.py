@@ -75,6 +75,26 @@ class PortalSettings(SQLModel, table=True):
     # the same page, and a per-user theme is a small step towards them not
     # doing so. Empty means the built-in default.
     theme: str = Field(default="")
+
+    # Issue #248: branding, shown on the login landing page (#246) and
+    # persistently in the site header/tab title everywhere else. Empty means
+    # the built-in "Document Portal" default and no logo -- base.html falls
+    # back rather than rendering an empty <img>.
+    app_name: str = Field(default="")
+    logo_url: str = Field(default="")
+
+    # Issue #246/#248: the login page's call-to-action button. Empty means
+    # the DEFAULT_LOGIN_BUTTON_TEXT constant in app/main.py.
+    login_button_text: str = Field(default="")
+
+    # Issue #248: mandatory-acceptance warning banner shown as a popup on the
+    # login landing page (distinct from the CAPCO classification banner
+    # above). Mirrors text/active's "no admin has set a marking" reasoning --
+    # empty text can't be active, since a popup with nothing in it would just
+    # be a broken dialog rather than the absence of one.
+    login_popup_text: str = Field(default="")
+    login_popup_active: bool = Field(default=False)
+
     updated_by: str | None = Field(default=None)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
