@@ -1118,6 +1118,10 @@ services:
   #   docker compose --profile corpus run --rm verify-corpus-access
   ingest-classification-corpus:
     profiles: ["corpus"]
+    # Issue #111 hardening applies here even though these are one-shots: unlike
+    # the ONE_SHOT-exempt seeders they never need root or extra privileges --
+    # they only make HTTP calls against a read-only mount.
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       dockerfile: scripts/Dockerfile
@@ -1138,6 +1142,7 @@ services:
 
   verify-corpus-access:
     profiles: ["corpus"]
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       dockerfile: scripts/Dockerfile
