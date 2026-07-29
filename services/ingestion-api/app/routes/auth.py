@@ -15,8 +15,8 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlmodel import Session, delete
 
 from app.deps import (
@@ -230,14 +230,29 @@ def logout(
     request: Request,
     db: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
-) -> RedirectResponse:
-    """Clears this app's session *and* redirects through Keycloak's
-    RP-initiated logout (end_session_endpoint) so the browser's Keycloak SSO
-    session ends too -- otherwise logging back in wouldn't re-prompt for
-    credentials. Uses `id_token_hint` (not just `client_id`, which newer
-    Keycloak versions reject) -- requires the id_token captured at /callback,
-    so a session predating that change, or one that's already gone, just
-    falls back to a local-only redirect to "/".
+) -> JSONResponse:
+    """Clears this app's session and hands the browser the URL for Keycloak's
+    RP-initiated logout (end_session_endpoint), so the Keycloak SSO session
+    ends too -- otherwise logging back in wouldn't re-prompt for credentials.
+    Uses `id_token_hint` (not just `client_id`, which newer Keycloak versions
+    reject) -- requires the id_token captured at /callback, so a session
+    predating that change, or one that's already gone, just falls back to a
+    local-only target of "/".
+
+    Issue #254: this used to answer with a 303 redirect and let base.html's
+    `fetch()` follow it straight through to Keycloak. That silently failed to
+    end the SSO session: fetch() follows a redirect with the same credentials
+    mode it started with, so the hop to Keycloak's origin was still a
+    same-origin-credentialed fetch, not a top-level navigation. Keycloak's
+    own session cookie is SameSite=Lax, which browsers only attach to
+    top-level navigations (typed URLs, link clicks, form submits,
+    `window.location` assignments) -- never to a fetch-driven request. So the
+    Keycloak session survived every logout, and the next "Login via OIDC"
+    silently re-authenticated the same user via that still-live session
+    instead of prompting for credentials. Returning the target as JSON and
+    having the client do a real `window.location` navigation (see
+    base.html) makes that hop an actual top-level navigation, so the cookie
+    rides along as it would for a normal link.
     """
     session_id = request.cookies.get(SESSION_COOKIE)
     id_token = None
@@ -262,10 +277,10 @@ def logout(
     # state change" is the rule the rest of the app follows and there was no
     # reason for this one to be the exception.
     #
-    # 303, not the RedirectResponse default of 307: 307 preserves the method,
-    # which would POST to Keycloak's end_session_endpoint. 303 tells the
-    # browser to follow with GET, which is what RP-initiated logout expects.
-    resp = RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+    # The response itself is JSON, not a redirect (#254, see docstring): the
+    # actual browser navigation to `target` happens client-side, in
+    # base.html, via `window.location`.
+    resp = JSONResponse({"redirect": target})
     resp.delete_cookie(SESSION_COOKIE)
     resp.delete_cookie(CSRF_COOKIE)
     return resp

@@ -190,12 +190,19 @@
     }
 
     // Issue #215: POST, so the CSRF check applies and a third-party page
-    // can't log the user out by embedding the URL. The server answers 303,
-    // so fetch() follows the RP-initiated logout redirect through Keycloak
-    // with GET; we then land the browser wherever it ended up.
+    // can't log the user out by embedding the URL.
+    //
+    // Issue #254: the server answers with the Keycloak RP-initiated-logout
+    // URL as JSON rather than a redirect, and we navigate to it via
+    // `window.location` -- a real top-level navigation -- instead of letting
+    // fetch() follow a redirect there itself. fetch() would carry that hop
+    // out as a same-origin-credentialed request, not a top-level navigation,
+    // so Keycloak's own SameSite=Lax session cookie never rode along and its
+    // SSO session outlived every logout.
     async function logout() {
       const res = await fetch('/auth/logout', { method: 'POST', headers: authHeaders() });
-      window.location.href = res.url || '/';
+      const data = await res.json();
+      window.location.href = data.redirect || '/';
     }
   </script>
   <script src="{{ url_for('static', path='/portal.js') }}" defer></script>

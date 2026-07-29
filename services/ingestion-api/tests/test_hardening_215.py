@@ -70,12 +70,16 @@ class TestLogoutIsAStateChange:
         assert '@router.get("/logout")' not in source
         assert "_csrf: None = Depends(verify_csrf)" in inspect.getsource(auth.logout)
 
-    def test_redirect_is_303_so_the_browser_follows_with_get(self):
-        """RedirectResponse defaults to 307, which preserves the method -- that
-        would POST to Keycloak's end_session_endpoint, which expects GET."""
+    def test_response_is_json_not_a_redirect(self):
+        """Issue #254: a 303 here let base.html's fetch() follow the
+        RP-initiated-logout redirect itself, which silently failed to end the
+        Keycloak SSO session -- see test_logout_254.py. The client now
+        navigates there itself, so this route must hand back the target
+        rather than redirect to it."""
         source = inspect.getsource(auth.logout)
 
-        assert "HTTP_303_SEE_OTHER" in source
+        assert "JSONResponse" in source
+        assert "RedirectResponse" not in source
 
     def test_the_nav_no_longer_links_to_it(self):
         source = (TEMPLATES / "base.html").read_text()
