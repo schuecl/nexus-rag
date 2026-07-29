@@ -1,48 +1,169 @@
 <!doctype html>
-<html lang="en">
+{# Issue #166: the admin-selected theme, as an attribute portal.css keys its
+   token block off. Server-rendered rather than applied by script, so there is
+   no flash of the default palette before a theme loads. #}
+<html lang="en"{% if theme %} data-theme="{{ theme }}"{% endif %}>
 <head>
   <meta charset="utf-8" />
-  <title>{% block title %}nexus-rag{% endblock %}</title>
-  <style>
-    .linklike { background: none; border: none; padding: 0; color: #06c; text-decoration: underline; cursor: pointer; font: inherit; }
-    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
-    nav a { margin-right: 1rem; }
-    label { display: block; margin-top: 0.75rem; font-weight: 600; }
-    input, select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; }
-    button { margin-top: 1rem; padding: 0.5rem 1rem; }
-    .row { display: flex; gap: 1rem; justify-content: space-between; align-items: center; border: 1px solid #ccc; padding: 0.5rem; margin-top: 0.5rem; }
-    .msg { margin-top: 1rem; padding: 0.5rem; white-space: pre-wrap; }
-    .msg.ok { background: #e6ffed; }
-    .msg.err { background: #ffe6e6; }
-    .hint { color: #666; font-size: 0.85rem; font-weight: normal; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>{% block title %}Document Portal{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/portal.css') }}?v={{ asset_version }}" />
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <nav>
-    <a href="/">Upload</a>
-    <a href="/curate">Curation Queue</a>
-    <a href="/notifications">Notifications</a>
-    <a href="/search">Search</a>
-    {% if current_user %}
-    <span class="hint">Logged in as <strong>{{ current_user.preferred_username }}</strong></span>
-    <!-- Issue #215: logout is a state change, so it goes through POST with
-         the same CSRF header every other state-changing request carries. -->
-    <button type="button" class="linklike" onclick="logout()">Log out</button>
-    {% else %}
-    <a href="/auth/login">Log in</a>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  {#
+    Issue #166: CAPCO-style classification banner, top and bottom.
+
+    DoDM 5200.01 Vol 2 requires the overall classification of displayed
+    information at both edges of the screen, so a cropped screenshot or a
+    printed page still carries it.
+
+    Admin-set (PortalSettings, /admin/banner), never derived from the viewer. A
+    marking states what the *system* is accredited to hold -- deriving it from
+    whoever is signed in would put different markings on the same page for
+    different people, which is the one thing a marking must not do.
+
+    Unset renders "NO LABEL SET" in a neutral style, not UNCLASSIFIED. "Nobody
+    has configured a marking" and "this system holds unclassified material" are
+    different statements, and rendering the second when the first is true is
+    how a wrong marking reaches a screen.
+  #}
+  {% macro classification_banner(position) %}
+  {% if banner %}
+  <div class="classification-banner banner-{{ position }} banner-{{ banner.level | lower | replace(' ', '-') | replace('//', '-') if banner.level else 'unset' }}"
+       role="note" aria-label="Classification banner">
+    <span class="banner-rail" aria-hidden="true"></span>
+    <span class="banner-text">{{ banner.text }}</span>
+  </div>
+  {% else %}
+  <div class="classification-banner banner-{{ position }} banner-unset" role="note"
+       aria-label="Classification banner: none configured">
+    <span class="banner-text">No label set</span>
+    {% if current_user and current_user.is_admin %}
+    <a class="banner-note" href="/admin">Set one in Admin &rsaquo;</a>
     {% endif %}
-  </nav>
-  <hr />
-  {% block content %}{% endblock %}
+  </div>
+  {% endif %}
+  {% endmacro %}
+
+  {{ classification_banner('top') }}
+
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="/" aria-label="Document Portal home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M7 3.75h6.75L18.25 8v12.25H7z"></path>
+            <path d="M13.5 3.75V8h4.75"></path>
+            <path d="M9.75 12h5.5M9.75 15h5.5"></path>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <strong>Document Portal</strong>
+          <small>Controlled information workspace</small>
+        </span>
+      </a>
+
+      <button
+        class="nav-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="primary-navigation"
+        aria-label="Open navigation"
+      >
+        <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"></path>
+        </svg>
+        <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m6 6 12 12M18 6 6 18"></path>
+        </svg>
+      </button>
+
+      <nav class="main-nav" id="primary-navigation" aria-label="Primary navigation">
+        <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"></path>
+            <path d="M5 14v4.25A1.75 1.75 0 0 0 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V14"></path>
+          </svg>
+          Upload
+        </a>
+        <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"></path>
+          </svg>
+          Curation queue
+        </a>
+        <a
+          class="{% if request.url.path == '/notifications' %}active{% endif %}"
+          href="/notifications"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 8.5h18C21 16 18 16 18 9zM10 20h4"></path>
+          </svg>
+          Notifications
+        </a>
+        {% if current_user and current_user.is_admin %}
+        <a class="{% if request.url.path == '/admin' %}active{% endif %}" href="/admin">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6"></path>
+          </svg>
+          Admin
+        </a>
+        {% endif %}
+        <a class="{% if request.url.path == '/search' %}active{% endif %}" href="/search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.5"></circle>
+            <path d="m15.5 15.5 4.5 4.5"></path>
+          </svg>
+          Search
+        </a>
+      </nav>
+
+      <div class="account">
+        {% if current_user %}
+        <span class="user-summary">
+          <span class="user-avatar" aria-hidden="true">
+            {{ current_user.preferred_username[:1] | upper }}
+          </span>
+          <span class="user-copy">
+            <small>Signed in as</small>
+            <strong>{{ current_user.preferred_username }}</strong>
+          </span>
+        </span>
+        <!-- Issue #215: logout is a state change -- POST with the CSRF header,
+             not a link a third-party page can embed. -->
+        <button type="button" class="account-action" onclick="logout()">Log out</button>
+        {% else %}
+        <a class="account-action primary-account-action" href="/auth/login">Log in</a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <main id="main-content" class="page-shell {% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div>
+      <span>Document Portal</span>
+      <span class="footer-separator" aria-hidden="true"></span>
+      <span>Controlled information workspace</span>
+    </div>
+    <span>Access and actions are audited</span>
+  </footer>
+
+  {{ classification_banner('bottom') }}
+
   <script>
-    // Auth is a browser session cookie now (ARCHITECTURE.md Section 4.4,
-    // set by /auth/login -> /auth/callback) -- fetch() already sends it
-    // same-origin, so there's no Authorization header to attach here. What
-    // this still needs to attach is the CSRF token (NFR-14, deps.verify_csrf):
-    // the session cookie alone rides along on a forged cross-site request,
-    // but this app's own JS is the only thing that can read the sibling
-    // nexus_rag_csrf cookie (not HttpOnly, unlike the session cookie) and
-    // echo it back as a header -- a cross-site attacker can't.
+    // Auth is a browser session cookie (ARCHITECTURE.md Section 4.4).
+    // Mutating requests also echo the sibling CSRF cookie in a header
+    // (NFR-14); a cross-site caller cannot read this cookie.
     function authHeaders() {
       const match = document.cookie.match(/(?:^|; )nexus_rag_csrf=([^;]*)/);
       return match ? { 'X-CSRF-Token': decodeURIComponent(match[1]) } : {};
@@ -57,5 +178,7 @@
       window.location.href = res.url || '/';
     }
   </script>
+  <script src="{{ url_for('static', path='/portal.js') }}" defer></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
