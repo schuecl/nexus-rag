@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Administration — Document Portal{% endblock %}
+{% block title %}Administration — {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page-intro">
   <p class="eyebrow">Administration</p>
@@ -128,6 +128,72 @@
 
   <div class="msg" id="themeResult" hidden></div>
 </form>
+
+<form class="admin-card" id="brandingForm" autocomplete="off">
+  <h2>Branding</h2>
+  <p class="lede">
+    The application name and logo shown on the login page, the browser tab, the
+    favicon, and the top-left of every page.
+  </p>
+
+  <label for="appName">Application name</label>
+  <input type="text" id="appName" name="app_name" maxlength="80" placeholder="Document Portal" />
+
+  <label for="logoUrl">Logo URL</label>
+  <input type="url" id="logoUrl" name="logo_url" placeholder="https://example.mil/logo.png" />
+  <p class="hint">
+    A URL this browser can reach -- not an upload. Left empty, the portal falls
+    back to its default name and icon.
+  </p>
+
+  <div class="admin-actions">
+    <button type="submit" class="btn-primary">Save branding</button>
+  </div>
+
+  <div class="msg" id="brandingResult" hidden></div>
+</form>
+
+<form class="admin-card" id="loginBannerForm" autocomplete="off">
+  <h2>Login page</h2>
+  <p class="lede">
+    The button text on the login landing page (issue #246), and an optional
+    warning banner a visitor must accept or decline before it appears.
+  </p>
+
+  <label for="loginButtonText">Login button text</label>
+  <input
+    type="text"
+    id="loginButtonText"
+    name="button_text"
+    maxlength="60"
+    placeholder="Login via OIDC"
+  />
+
+  <label for="loginPopupText">Warning banner text</label>
+  <textarea
+    id="loginPopupText"
+    name="text"
+    rows="4"
+    maxlength="2000"
+    placeholder="e.g. This is a controlled information system..."
+  ></textarea>
+  <p class="hint">
+    Shown as a popup on the login page. Declining sends the visitor to a page
+    stating that acceptance is mandatory, instead of the login button. Leave
+    empty and save to remove the popup entirely.
+  </p>
+
+  <label class="checkbox-label">
+    <input type="checkbox" id="loginPopupActive" name="active" checked />
+    Require acceptance before the login button appears
+  </label>
+
+  <div class="admin-actions">
+    <button type="submit" class="btn-primary">Save login page settings</button>
+  </div>
+
+  <div class="msg" id="loginBannerResult" hidden></div>
+</form>
 {% endblock %}
 
 {% block scripts %}
@@ -219,19 +285,77 @@
 
   // Load whatever is currently set, so the form shows the live value rather
   // than an empty box that looks like "nothing is configured".
+  // ---- branding -----------------------------------------------------------
+  const brandingForm = document.getElementById('brandingForm');
+  const brandingResult = document.getElementById('brandingResult');
+  const appNameEl = document.getElementById('appName');
+  const logoUrlEl = document.getElementById('logoUrl');
+
+  brandingForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const res = await fetch('/admin/branding', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_name: appNameEl.value.trim(), logo_url: logoUrlEl.value.trim() }),
+    });
+    const body = await res.json().catch(() => ({}));
+    brandingResult.hidden = false;
+    brandingResult.className = 'msg ' + (res.ok ? 'ok' : 'err');
+    brandingResult.textContent = res.ok
+      ? 'Branding saved. Reload to see it applied.'
+      : body.detail || `Failed: HTTP ${res.status}`;
+  });
+
+  // ---- login page (button text + mandatory-acceptance popup, issue #248) --
+  const loginBannerForm = document.getElementById('loginBannerForm');
+  const loginBannerResult = document.getElementById('loginBannerResult');
+  const loginButtonTextEl = document.getElementById('loginButtonText');
+  const loginPopupTextEl = document.getElementById('loginPopupText');
+  const loginPopupActiveEl = document.getElementById('loginPopupActive');
+
+  loginBannerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const res = await fetch('/admin/login-banner', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: loginPopupTextEl.value.trim(),
+        active: loginPopupActiveEl.checked,
+        button_text: loginButtonTextEl.value.trim(),
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    loginBannerResult.hidden = false;
+    loginBannerResult.className = 'msg ' + (res.ok ? 'ok' : 'err');
+    loginBannerResult.textContent = res.ok
+      ? 'Login page settings saved. Reload the login page to see them applied.'
+      : body.detail || `Failed: HTTP ${res.status}`;
+  });
+
+  // Load whatever is currently set, so every form shows the live value rather
+  // than an empty box that looks like "nothing is configured". One shared
+  // GET since every setting above lives on the same PortalSettings row.
   (async () => {
     const res = await fetch('/admin/banner', { headers: authHeaders() });
     if (!res.ok) {
-      report(false, res.status === 403 ? 'You do not hold the rag-admin role.' : `HTTP ${res.status}`);
-      form.querySelectorAll('input, select, button').forEach((el) => (el.disabled = true));
+      const message = res.status === 403 ? 'You do not hold the rag-admin role.' : `HTTP ${res.status}`;
+      report(false, message);
+      [form, themeForm, brandingForm, loginBannerForm].forEach((f) =>
+        f.querySelectorAll('input, select, textarea, button').forEach((el) => (el.disabled = true))
+      );
       return;
     }
-    const banner = await res.json();
-    textEl.value = banner.text || '';
-    levelEl.value = banner.level || '';
+    const settings = await res.json();
+    textEl.value = settings.text || '';
+    levelEl.value = settings.level || '';
     renderPreview();
-    const current = themeForm.querySelector(`input[name="theme"][value="${banner.theme || ''}"]`);
+    const current = themeForm.querySelector(`input[name="theme"][value="${settings.theme || ''}"]`);
     if (current) current.checked = true;
+    appNameEl.value = settings.app_name || '';
+    logoUrlEl.value = settings.logo_url || '';
+    loginButtonTextEl.value = settings.login_button_text || '';
+    loginPopupTextEl.value = settings.login_popup_text || '';
+    loginPopupActiveEl.checked = !!settings.login_popup_active;
   })();
 </script>
 {% endblock %}

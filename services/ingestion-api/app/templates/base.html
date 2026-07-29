@@ -8,8 +8,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#ffffff" />
-  <title>{% block title %}Document Portal{% endblock %}</title>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/portal.css') }}?v={{ asset_version }}" />
+  {# Issue #248: admin-set logo (Admin > Branding), reused as the favicon --
+     an external URL rather than a file this app ships, so no fallback if it
+     404s or the deployment hasn't set one; browsers already handle a missing
+     favicon by just not showing one. #}
+  {% if logo_url %}
+  <link rel="icon" href="{{ logo_url }}" />
+  {% endif %}
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -54,7 +61,10 @@
 
   <header class="site-header">
     <div class="nav-shell">
-      <a class="brand" href="/" aria-label="Document Portal home">
+      <a class="brand" href="/" aria-label="{{ app_name }} home">
+        {% if logo_url %}
+        <img class="brand-mark brand-logo" src="{{ logo_url }}" alt="" aria-hidden="true" />
+        {% else %}
         <span class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24">
             <path d="M7 3.75h6.75L18.25 8v12.25H7z"></path>
@@ -62,8 +72,9 @@
             <path d="M9.75 12h5.5M9.75 15h5.5"></path>
           </svg>
         </span>
+        {% endif %}
         <span class="brand-copy">
-          <strong>Document Portal</strong>
+          <strong>{{ app_name }}</strong>
           <small>Controlled information workspace</small>
         </span>
       </a>
@@ -151,7 +162,7 @@
 
   <footer class="site-footer">
     <div>
-      <span>Document Portal</span>
+      <span>{{ app_name }}</span>
       <span class="footer-separator" aria-hidden="true"></span>
       <span>Controlled information workspace</span>
     </div>

@@ -182,13 +182,17 @@ def _page_context(session: Session, current_user: UserClaims | None) -> dict:
         # Empty string is the built-in default; base.html emits it as a
         # data-theme attribute and portal.css keys its token block off it.
         "theme": (settings.theme if settings else "") or "",
+        # Issue #248: branding shown persistently (header, tab title,
+        # favicon), not just on the login page -- so this lives in the
+        # context every page gets, not just _login_page's below.
+        "app_name": (settings.app_name if settings else "") or DEFAULT_APP_NAME,
+        "logo_url": (settings.logo_url if settings else "") or None,
     }
 
 
-# Issue #246: default login-button text, hoisted to a constant rather than
-# inlined in login.html -- issue #248 replaces this with an admin-configurable
-# PortalSettings value, and the template will read the same context key either
-# way.
+# Issue #246/#248: defaults for the login page's branding/button text, used
+# whenever no admin has set a PortalSettings value yet.
+DEFAULT_APP_NAME = "Document Portal"
 DEFAULT_LOGIN_BUTTON_TEXT = "Login via OIDC"
 
 
@@ -201,9 +205,30 @@ def _login_page(request: Request, session: Session) -> HTMLResponse:
     classification banner: that marking is a property of the deployment, not
     of whoever is or isn't signed in, so it belongs on this page too.
     """
+    settings = session.get(PortalSettings, 1)
     ctx = _page_context(session, None)
-    ctx["login_button_text"] = DEFAULT_LOGIN_BUTTON_TEXT
+    ctx["login_button_text"] = (settings.login_button_text if settings else "") or (
+        DEFAULT_LOGIN_BUTTON_TEXT
+    )
+    # Issue #248: the mandatory-acceptance popup. Mirrors _page_context's
+    # classification-banner treatment -- inactive-or-unset is passed through
+    # as a clean "don't render anything", not a default message.
+    ctx["login_popup_text"] = (
+        settings.login_popup_text if (settings and settings.login_popup_active) else ""
+    )
     return templates.TemplateResponse(request, "login.html", ctx)
+
+
+@app.get("/login/declined", response_class=HTMLResponse)
+def login_declined_page(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    """Issue #248: where a visitor lands after declining the mandatory
+    acceptance popup. No current_user dependency at all -- a visitor who just
+    declined the banner is by definition not signed in yet, and this page
+    itself requires no authority to view."""
+    return templates.TemplateResponse(request, "login_declined.html", _page_context(session, None))
 
 
 @app.get("/", response_class=HTMLResponse)
