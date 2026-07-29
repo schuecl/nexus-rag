@@ -13,8 +13,10 @@ import pytest
 # scripts/ ships no package; put it on the path the same way the harness runs.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+import evaluate_retrieval
 from evaluate_retrieval import (
     compare_to_baseline,
+    evaluate,
     latest_prior_report,
     persist_report,
 )
@@ -91,3 +93,53 @@ class TestTrendStore:
 
     def test_latest_prior_report_is_none_on_empty_history(self, tmp_path):
         assert latest_prior_report(tmp_path / "empty") is None
+
+
+def _result(filename: str, status: str = "approved", document_id: str = "id-0") -> dict:
+    return {"filename": filename, "document_id": document_id, "status": status}
+
+
+class TestLeakDetectionIsIdentityNotFilename:
+    """Issue #226: two documents can share a filename in different states, so
+    the leak check must key off each returned chunk's own `status` -- which
+    the access filter guarantees is "approved" for anything retrievable at
+    all -- rather than matching golden_queries.json's `forbid` filenames
+    against the filenames of whatever came back.
+    """
+
+    def test_duplicate_filename_in_a_different_state_is_not_a_leak(self, monkeypatch):
+        # An approved document shares a filename with an unrelated
+        # pending_review document that golden_queries.json lists as
+        # forbidden. Only the approved copy is ever returned by the real
+        # filter, so this must not be reported as a leak.
+        returned = [_result("draft-travel-policy.md", status="approved", document_id="approved-id")]
+        monkeypatch.setattr(evaluate_retrieval, "run_query", lambda *a, **k: returned)
+        golden_set = [
+            {
+                "query": "TDY travel reimbursement procedures",
+                "expect": [],
+                "forbid": ["draft-travel-policy.md"],
+                "top_k": 5,
+            }
+        ]
+
+        report = evaluate(golden_set, token="t", persona="dave-admin")
+
+        assert report["total_forbidden_leaks"] == 0
+        q = report["queries"][0]
+        assert q["unapproved_leaks"] == []
+        # Still surfaced for human diagnosis, just not fatal.
+        assert q["content_overlap"] == ["draft-travel-policy.md"]
+
+    def test_unapproved_status_is_a_hard_leak_even_without_a_filename_match(self, monkeypatch):
+        # A result whose status isn't "approved" is a genuine FR-26 defect
+        # (the access filter itself failed) regardless of whether its
+        # filename happens to appear in this query's `forbid` list.
+        returned = [_result("some-other-doc.md", status="pending_review", document_id="leaked-id")]
+        monkeypatch.setattr(evaluate_retrieval, "run_query", lambda *a, **k: returned)
+        golden_set = [{"query": "anything", "expect": [], "forbid": [], "top_k": 5}]
+
+        report = evaluate(golden_set, token="t", persona="dave-admin")
+
+        assert report["total_forbidden_leaks"] == 1
+        assert report["queries"][0]["unapproved_leaks"] == returned

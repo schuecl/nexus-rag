@@ -1,10 +1,25 @@
 """FR-30/FR-32: fixed golden-query regression harness for retrieval quality.
 Runs each query in golden_queries.json through the real rag_search pipeline
 (via orchestration-mcp's debug endpoint) and computes recall@K, precision@K,
-and first-relevant-rank against the expected documents -- plus a separate
-"forbidden" check that pending/rejected/superseded content never leaks into
-results regardless of the querying persona's clearance, which is as much a
-security regression check (FR-26) as a quality one.
+and first-relevant-rank against the expected documents -- plus a hard FR-26
+check that no unapproved (pending/rejected/superseded) chunk is ever returned,
+regardless of the querying persona's clearance.
+
+That check is done by inspecting each returned chunk's own `status` payload
+field, not by matching golden_queries.json's `forbid` filenames against
+`returned` filenames (issue #226). Filename is user-supplied and explicitly
+not unique (see CLAUDE.md's data model section) -- two documents can share a
+filename while in different states, and a name-based check has no way to
+tell a legitimately-returned approved copy from an unrelated forbidden one
+sharing its name. The retrieval-time access filter
+(common/qdrant_filters.py) already guarantees `status == "approved"` on both
+legs of hybrid search before a chunk can be returned at all, so asserting
+that directly on every result is both simpler and immune to name collisions
+-- it inspects the identity of the chunk actually returned instead of
+comparing names. `forbid` is kept and still checked, but only as an
+informational content-overlap note (`content_overlap` below): it can flag
+a false positive whenever the corpus has a duplicate filename, so it must
+never be the thing that fails the build.
 
 Deliberately not the `ragas` library itself (REQUIREMENTS.md Section 7.6):
 RAGAS's more interesting metrics (faithfulness, LLM-judged context
@@ -47,7 +62,7 @@ DEFAULT_GOLDEN_SET = Path(__file__).parent / "golden_queries.json"
 EVAL_PERSONA = os.environ.get("EVAL_PERSONA", "dave-admin")
 
 
-def run_query(token: str, query: str, top_k: int) -> list[str]:
+def run_query(token: str, query: str, top_k: int) -> list[dict]:
     resp = httpx.post(
         f"{ORCHESTRATION_MCP_URL}/debug/rag_search",
         params={"query": query, "top_k": top_k},
@@ -56,14 +71,22 @@ def run_query(token: str, query: str, top_k: int) -> list[str]:
     )
     resp.raise_for_status()
     body = resp.json()
-    return [r["payload"]["filename"] for r in body.get("results", [])]
+    return [
+        {
+            "filename": r["payload"]["filename"],
+            "document_id": r["payload"].get("document_id"),
+            "status": r["payload"].get("status"),
+        }
+        for r in body.get("results", [])
+    ]
 
 
 def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
     per_query = []
     for case in golden_set:
         top_k = case.get("top_k", 5)
-        returned = run_query(token, case["query"], top_k)
+        results = run_query(token, case["query"], top_k)
+        returned = [r["filename"] for r in results]
         expect = case.get("expect", [])
         forbid = case.get("forbid", [])
 
@@ -71,7 +94,13 @@ def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
         recall = (len(found) / len(expect)) if expect else None
         precision = (len(found) / len(returned)) if (expect and returned) else None
         rank = next((i + 1 for i, f in enumerate(returned) if f in expect), None)
-        leaked = [f for f in forbid if f in returned]
+        # Hard FR-26 check: the access filter guarantees only `approved`
+        # chunks can ever be returned, so any other status here means the
+        # filter itself was bypassed -- unambiguous regardless of filename.
+        unapproved = [r for r in results if r["status"] != "approved"]
+        # Informational only (see module docstring): a forbidden filename
+        # appearing among approved, unrelated results is not a leak.
+        overlap = [f for f in forbid if f in returned]
 
         per_query.append(
             {
@@ -82,14 +111,15 @@ def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
                 "recall_at_k": recall,
                 "precision_at_k": precision,
                 "first_relevant_rank": rank,
-                "leaked_forbidden": leaked,
+                "unapproved_leaks": unapproved,
+                "content_overlap": overlap,
                 "note": case.get("note"),
             }
         )
 
     recalls = [q["recall_at_k"] for q in per_query if q["recall_at_k"] is not None]
     precisions = [q["precision_at_k"] for q in per_query if q["precision_at_k"] is not None]
-    total_leaks = sum(len(q["leaked_forbidden"]) for q in per_query)
+    total_leaks = sum(len(q["unapproved_leaks"]) for q in per_query)
 
     return {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -110,10 +140,19 @@ def print_report(report: dict) -> None:
         status = "OK"
         if q["expect"] and not any(f in q["returned"] for f in q["expect"]):
             status = "MISS"
-        if q["leaked_forbidden"]:
+        if q["content_overlap"] and not q["unapproved_leaks"]:
+            status = "OVERLAP"
+        if q["unapproved_leaks"]:
             status = "LEAK"
         note = f"  ({q['note']})" if q["note"] else ""
         print(f"  [{status}] {q['query']!r} -> {q['returned']}{note}")
+        if q["content_overlap"]:
+            print(
+                f"    content_overlap (informational, not a leak -- see #226): "
+                f"{q['content_overlap']}"
+            )
+        if q["unapproved_leaks"]:
+            print(f"    unapproved_leaks: {q['unapproved_leaks']}")
 
 
 def persist_report(report: dict, history_dir: Path) -> Path:

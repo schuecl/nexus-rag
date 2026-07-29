@@ -1,0 +1,182 @@
+[
+  {
+    "filename": "facility-access-hours.txt",
+    "classification": "UNCLASSIFIED",
+    "releasability": [
+      "NONE"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "MARBLE-HORIZON-7",
+    "title": "Facility Access Hours and Visitor Procedures"
+  },
+  {
+    "filename": "training-calendar-overview.md",
+    "classification": "UNCLASSIFIED",
+    "releasability": [
+      "USA"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "COPPER-MERIDIAN-3",
+    "title": "Annual Training Calendar Overview"
+  },
+  {
+    "filename": "equipment-return-policy.html",
+    "classification": "UNCLASSIFIED",
+    "releasability": [
+      "NATO"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "SLATE-JUNIPER-9",
+    "title": "Equipment Return and Reconciliation Policy"
+  },
+  {
+    "filename": "vehicle-dispatch-handbook.pdf",
+    "classification": "UNCLASSIFIED",
+    "releasability": [
+      "FVEY"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "AMBER-THICKET-2",
+    "title": "Vehicle Dispatch Handbook"
+  },
+  {
+    "filename": "workspace-onboarding-guide.docx",
+    "classification": "UNCLASSIFIED",
+    "releasability": [
+      "NOFORN"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "CEDAR-LANTERN-5",
+    "title": "Workspace Onboarding Guide"
+  },
+  {
+    "filename": "supply-chain-continuity-plan.txt",
+    "classification": "CUI",
+    "releasability": [
+      "USA"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "IRON-PARAPET-4",
+    "title": "Supply Chain Continuity Plan"
+  },
+  {
+    "filename": "personnel-readiness-summary.md",
+    "classification": "CUI",
+    "releasability": [
+      "NOFORN"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "QUARTZ-BULWARK-8",
+    "title": "Personnel Readiness Summary"
+  },
+  {
+    "filename": "network-maintenance-windows.html",
+    "classification": "CUI",
+    "releasability": [
+      "NATO"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "BASALT-KESTREL-1",
+    "title": "Network Maintenance Windows"
+  },
+  {
+    "filename": "facility-power-contingency.pdf",
+    "classification": "CUI",
+    "releasability": [
+      "FVEY"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "ONYX-FURROW-6",
+    "title": "Facility Power Contingency Procedures"
+  },
+  {
+    "filename": "records-retention-schedule.docx",
+    "classification": "CUI",
+    "releasability": [
+      "NONE"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "PEWTER-GABLE-0",
+    "title": "Records Retention Schedule"
+  },
+  {
+    "filename": "exercise-participation-roster.txt",
+    "classification": "SECRET",
+    "releasability": [
+      "NOFORN"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "GRANITE-VESPER-2",
+    "title": "Exercise Participation Roster Procedures"
+  },
+  {
+    "filename": "site-survey-findings.md",
+    "classification": "SECRET",
+    "releasability": [
+      "FVEY"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "COBALT-TRELLIS-7",
+    "title": "Site Survey Findings and Recommendations"
+  },
+  {
+    "filename": "contingency-communications-plan.html",
+    "classification": "SECRET",
+    "releasability": [
+      "NATO"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "TUNGSTEN-ORCHARD-4",
+    "title": "Contingency Communications Plan"
+  },
+  {
+    "filename": "logistics-priority-matrix.pdf",
+    "classification": "SECRET",
+    "releasability": [
+      "USA"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "SILVER-RAMPART-9",
+    "title": "Logistics Priority Matrix"
+  },
+  {
+    "filename": "installation-security-review.docx",
+    "classification": "SECRET",
+    "releasability": [
+      "NONE"
+    ],
+    "access_scope": [
+      "ALL_AUTHENTICATED"
+    ],
+    "canary": "NICKEL-PALISADE-3",
+    "title": "Installation Security Review"
+  }
+]
