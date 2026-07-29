@@ -276,20 +276,31 @@ surfacing docstrings to its model. This is a mitigation, not a guarantee (§7).
 
 Replaces the old pasted-access-token dev workaround. Every underlying fetch call (upload,
 curate, notifications) rides a session cookie instead of a manually-attached header. The
-nav shows "Log in" when logged out, or the current user's `preferred_username` plus "Log
-out" when logged in.
+top nav shows the current user's `preferred_username` plus "Log out" when logged in; it
+doesn't render at all when logged out (see #246 below) — every link on it would just bounce
+an anonymous visitor back to the login page anyway.
 
 **Issue #246: the whole app is gated behind a login landing page.** Every page route
 (`GET /`, `/curate`, `/admin`, `/notifications`, `/search`) checks `get_current_user_optional`
 first and renders `login.html` in place of its real content for an anonymous visitor —
 same URL, `200 OK`, no redirect loop — rather than rendering the full page and letting the
-visitor discover they can't do anything on the first action they take. `login.html` shows
-an optional logo/application name and a "Login via OIDC" button (both admin-configurable,
-issue #248) linking to `/auth/login` below. This is authentication only: `/admin`'s page
-still renders for any signed-in user regardless of role, exactly as before — role-based
-authorization stays on the `/admin/*` action endpoints (`require_admin`), not on the page
-route. Per-page role gating (e.g. hiding `/curate` from a non-curator) is tracked as a
-separate, later issue.
+visitor discover they can't do anything on the first action they take. `login.html` is a
+centered logo/application name/login button, nothing else — the top nav (`base.html`'s
+`<header>`) is skipped entirely for an anonymous visitor, since none of its links lead
+anywhere they can reach yet. This is authentication only: `/admin`'s page still renders for
+any signed-in user regardless of role, exactly as before — role-based authorization stays
+on the `/admin/*` action endpoints (`require_admin`), not on the page route. Per-page role
+gating (e.g. hiding `/curate` from a non-curator) is tracked as a separate, later issue.
+
+**Issue #248: branding and a mandatory-acceptance login banner**, both admin-configurable
+via `/admin/branding` and `/admin/login-banner` (`PortalSettings`, same single-row,
+deployment-wide shape as the classification banner/theme settings above). Application name
+and logo apply everywhere, not just the login page — header, tab title, and favicon — since
+they're a deployment property like the classification banner, not a login-page-only
+concern. The login popup is mandatory by construction rather than by convention: the login
+button is server-rendered `hidden` whenever an active popup is configured, and only the
+client-side Accept handler reveals it, so there's no path to `/auth/login` that skips it.
+Decline navigates to `/login/declined` instead.
 
 ```mermaid
 sequenceDiagram

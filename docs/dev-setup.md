@@ -288,7 +288,7 @@ mirroring these models internally should mirror exactly these revisions.
 |---|---|---|
 | Keycloak admin console | http://localhost:8080 | login `admin` / `admin` (`.env`) |
 | Keycloak health/metrics | http://localhost:9000/health/ready | `KC_HEALTH_ENABLED=true` moves `/health*` onto Keycloak's separate management interface (default port 9000) rather than 8080 -- what the `keycloak` service's Compose healthcheck actually probes |
-| Ingestion UI | http://localhost:8001 | upload form, curation queue, and a search page (click "Log in", real Keycloak login) |
+| Ingestion UI | http://localhost:8001 | lands on a login page (issue #246); click the login button, real Keycloak login, then upload form, curation queue, and a search page |
 | orchestration-mcp debug API | http://localhost:8002 | `/health`, `/debug/rag_search` |
 | reranker-service | http://localhost:8003 | `/health`, `/rerank` |
 | ingestion-worker | http://localhost:8004 | `/health` only -- its real work is the NATS consumer loop, not an HTTP API (NFR-11) |
@@ -315,9 +315,9 @@ attributes — see REQUIREMENTS.md Section 6.2.
 
 ## Getting a token for API testing (dev-only password grant)
 
-The ingestion UI's browser pages now use a real Keycloak login redirect (click "Log in" —
-ARCHITECTURE.md Section 4.4); this section is for curl/API testing, which still needs a
-raw bearer token. Get one with:
+The ingestion UI's browser pages now use a real Keycloak login redirect (land on the login
+page, click its button — ARCHITECTURE.md Section 4.4); this section is for curl/API
+testing, which still needs a raw bearer token. Get one with:
 
 ```bash
 curl -s http://localhost:8080/realms/nexus-rag/protocol/openid-connect/token \
@@ -366,8 +366,9 @@ immediately, get a `bob-query` token (step 3's instructions) and search for e.g.
 walk through the same flow manually, useful for understanding what the seed script
 automated or for testing with your own file.
 
-1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (click
-   "Log in", authenticate as `alice-ingest` at Keycloak) or directly:
+1. **Submit a document** as `alice-ingest`, either through http://localhost:8001 (land on
+   the login page, click its button, authenticate as `alice-ingest` at Keycloak) or
+   directly:
 
    ```bash
    TOKEN=$(...)  # from above
@@ -707,6 +708,22 @@ the docs, not a silent "it works" — flag it if you find one.
   the nav bar's logged-in-username display (`get_current_user_optional`, used by the three
   page routes) are sandbox-`TestClient`-verified only so far, not yet run against a real
   Keycloak. See "Stubbed / TODO" below for what's still Compose-only.
+- **The whole ingestion UI gated behind a login landing page, plus admin-configurable
+  branding and a mandatory-acceptance login banner (issues #246/#248).** Every page route
+  now renders `login.html` — centered logo, application name, login button, nothing else —
+  for an anonymous visitor instead of the real page; the top nav (`base.html`'s `<header>`)
+  doesn't render at all until signed in. Confirmed against a real `docker compose up`, not
+  just sandbox `TestClient` calls: rebuilt the `ingestion-api` container, set branding
+  (`app_name`, `logo_url`) and the login popup (title/text/button text) via `dave-admin`'s
+  real bearer token against the live `/admin/branding` and `/admin/login-banner` endpoints,
+  then confirmed with `curl` that the anonymous login page reflects them — custom tab
+  title, favicon, header/footer branding on an authenticated page, the popup banner text,
+  and the login button rendered `hidden` until an Accept click reveals it — plus
+  `/login/declined`. Not yet run through a real browser: the actual Accept/Decline click and
+  the post-login authenticated header render for a real Keycloak session cookie (as opposed
+  to a hand-built `UserClaims` in a direct function call) are exercised by
+  `tests/test_login_gate.py`/`tests/test_branding_login_banner.py` at the sandbox level, not
+  against a live Keycloak session yet.
 - **CSRF protection on cookie-authenticated routes (NFR-14)** — a double-submit cookie
   (`nexus_rag_csrf`, set alongside the session cookie at login, deliberately *not*
   `HttpOnly` so the page's own JS can read and echo it) checked against an `X-CSRF-Token`
