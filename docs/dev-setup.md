@@ -704,10 +704,18 @@ the docs, not a silent "it works" — flag it if you find one.
   by curl/API/MCP callers — transparently refreshing an expired access token via the
   stored refresh token — so no enforcement logic forks between the two. "Log out" performs
   a real Keycloak RP-initiated logout (`id_token_hint` + `post_logout_redirect_uri`), not
-  just a local session clear, so logging back in re-prompts for credentials — this part and
-  the nav bar's logged-in-username display (`get_current_user_optional`, used by the three
-  page routes) are sandbox-`TestClient`-verified only so far, not yet run against a real
-  Keycloak. See "Stubbed / TODO" below for what's still Compose-only.
+  just a local session clear, so logging back in re-prompts for credentials — **confirmed
+  live against a real Keycloak** (issue #254 fix): login, log out, log back in and Keycloak
+  re-prompts for credentials rather than silently re-authenticating the same user. (The
+  original implementation had `/auth/logout` answer with a 303 and let the nav's `fetch()`
+  follow that redirect itself; that hop is not a top-level browser navigation, so
+  Keycloak's own `SameSite=Lax` SSO cookie never rode along and the SSO session outlived
+  every logout. The fix has `/auth/logout` hand back the Keycloak logout URL as JSON and
+  has the client navigate there via `window.location` instead — a real top-level
+  navigation.) The nav bar's logged-in-username display
+  (`get_current_user_optional`, used by the three page routes) remains
+  sandbox-`TestClient`-verified only. See "Stubbed / TODO" below for what's still
+  Compose-only.
 - **The whole ingestion UI gated behind a login landing page, plus admin-configurable
   branding and a mandatory-acceptance login banner (issues #246/#248).** Every page route
   now renders `login.html` — centered logo, application name, login button, nothing else —
@@ -745,7 +753,8 @@ the docs, not a silent "it works" — flag it if you find one.
   MCP) is never CSRF-exposed and skips this check entirely, same reasoning as
   `get_current_user`'s two paths never forking enforcement logic. Sandbox-`TestClient`-
   verified (mismatched/missing header rejected, matching header passes, bearer-token
-  callers unaffected, logout clears both cookies) but not yet run against a real browser.
+  callers unaffected, logout clears both cookies); the logout path specifically has
+  also been confirmed against a real browser (see above, issue #254).
 - **Qdrant access control (NFR-15)** — Qdrant now requires an API key in every
   environment, including this dev stack (`QDRANT__SERVICE__API_KEY` /
   `QDRANT__SERVICE__READ_ONLY_API_KEY` in `docker-compose.yml`, `.env.example`'s
