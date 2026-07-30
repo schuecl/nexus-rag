@@ -222,7 +222,7 @@ def _migrate_document_classification(
     current_collection: str,
     new_classification: str,
     fields: dict,
-) -> None:
+) -> bool:
     """Issue #229: a curator's classification correction moves a document's
     chunks out of its current collection and into the target one -- the
     collection *is* the classification now, so a corrected value can't stay
@@ -243,9 +243,14 @@ def _migrate_document_classification(
     upsert into the new collection, by contrast, is raised: nothing has
     changed yet, so the caller's existing failure handling (curate.py's NFR-13
     revert) applies exactly as it would to a plain set_payload failure.
+
+    Returns whether anything was actually moved, so `update_document_payload`
+    can tell "nothing to move because there's nothing to move" apart from
+    "nothing at the claimed source" -- see that function's fallback for a
+    prior attempt that already completed this exact move.
     """
     if not client.collection_exists(current_collection):
-        return
+        return False
     doc_filter = _document_filter(document_id)
     moved: list[PointStruct] = []
     dense_size: int | None = None
@@ -284,8 +289,10 @@ def _migrate_document_classification(
     if not moved:
         # Nothing to move -- either the document has no chunks yet, or a
         # prior attempt at this same correction already moved them and only
-        # failed on the (non-raising) delete step below.
-        return
+        # failed on the (non-raising) delete step below. Either way there is
+        # nothing more for *this* function to do; the caller decides what
+        # "nothing at the source" means.
+        return False
     if dense_size is None:
         raise RuntimeError(f"could not determine a dense vector size for document {document_id}")
 
@@ -307,6 +314,37 @@ def _migrate_document_classification(
             current_collection,
             exc_info=True,
         )
+    return True
+
+
+def _has_document_points(client: QdrantClient, collection_name: str, document_id: str) -> bool:
+    if not client.collection_exists(collection_name):
+        return False
+    points, _ = client.scroll(
+        collection_name=collection_name,
+        scroll_filter=_document_filter(document_id),
+        limit=1,
+        with_payload=False,
+        with_vectors=False,
+    )
+    return bool(points)
+
+
+def _set_payload_if_present(
+    client: QdrantClient, document_id: str, collection_name: str, fields: dict
+) -> bool:
+    """set_payload only if the document actually has points in this
+    collection -- Qdrant's set_payload against a filter matching nothing
+    succeeds silently, which is exactly the shape of the retry bug this
+    guards against (see update_document_payload's fallback below)."""
+    if not _has_document_points(client, collection_name, document_id):
+        return False
+    client.set_payload(
+        collection_name=collection_name,
+        payload=fields,
+        points=FilterSelector(filter=_document_filter(document_id)),
+    )
+    return True
 
 
 def update_document_payload(
@@ -328,21 +366,49 @@ def update_document_payload(
     `classification` to something else, this delegates to
     `_migrate_document_classification` instead of a same-collection
     set_payload, since the collection itself encodes classification.
+
+    Retry/idempotency note (issue #229 follow-up): `current_classification`
+    is only the caller's best belief about where the chunks are -- it comes
+    from a Postgres value that can be stale relative to Qdrant after a
+    partial failure. NFR-13's whole design is that a curator retries a
+    failed approve/reject through the *same* API call, and a prior attempt
+    at this exact call may have already completed a classification move (or
+    failed only on that move's non-raising cleanup delete) without the
+    Postgres commit that would have advanced `current_classification`. Acting
+    only on `current_classification` in that case silently no-ops: Qdrant's
+    set_payload against a filter matching zero points succeeds without
+    telling the caller nothing happened. So: if the claimed location has
+    nothing, look for the document where a completed-but-uncommitted prior
+    attempt would have put it (the correction's target, if this is itself a
+    classification correction; otherwise every other classification
+    collection) before giving up.
     """
     current_name = classification_collection_name(current_classification)
     new_classification = fields.get("classification")
+
     if new_classification and new_classification != current_classification:
-        _migrate_document_classification(
+        if _migrate_document_classification(
             client, document_id, current_name, new_classification, fields
-        )
+        ):
+            return
+        # Nothing at the claimed source. A prior attempt at this same
+        # correction may have already moved the chunks to the target and
+        # only failed on the old collection's (non-raising) cleanup delete --
+        # complete it idempotently rather than silently doing nothing.
+        target_name = classification_collection_name(new_classification)
+        _set_payload_if_present(client, document_id, target_name, fields)
         return
-    if not client.collection_exists(current_name):
+
+    if _set_payload_if_present(client, document_id, current_name, fields):
         return
-    client.set_payload(
-        collection_name=current_name,
-        payload=fields,
-        points=FilterSelector(filter=_document_filter(document_id)),
-    )
+    # Not at the claimed (non-migrating) location either -- a classification
+    # correction from an earlier attempt may have moved these chunks
+    # somewhere the caller doesn't know about (e.g. this call is a plain
+    # status retry/reject issued after that move). Search every other
+    # collection rather than silently no-op'ing.
+    for name in existing_classification_collections(client):
+        if name != current_name and _set_payload_if_present(client, document_id, name, fields):
+            return
 
 
 def set_document_status(
@@ -357,14 +423,20 @@ def delete_document_chunks(client: QdrantClient, document_id: str, classificatio
     the *replacing* document (app/routes/curate.py) or an admin purges
     (common/purge.py) -- see common.models.Document.supersedes_document_id.
 
-    `classification` selects the collection (issue #229); a document being
-    superseded or purged before it ever finished embedding may have no
-    collection at all yet, which is a no-op, not an error.
+    `classification` is accepted for API symmetry with the other per-document
+    helpers but is deliberately NOT used to scope which collection gets
+    swept (issue #229 follow-up): destruction sweeps *every* existing
+    classification collection, not just the caller-claimed one. A
+    classification-correction migration that failed partway through its own
+    cleanup delete (see `_migrate_document_classification`'s docstring) can
+    leave an inert duplicate in a *different* collection than the one
+    `classification` names -- inert for retrieval (FR-26 still excludes it),
+    but purge's entire purpose is that the bytes are actually gone, and a
+    leftover duplicate is exactly the store-level-reader exposure #229
+    exists to bound. A document that never finished embedding has no
+    collection at all yet, which is a no-op, not an error, same as before.
     """
-    name = classification_collection_name(classification)
-    if not client.collection_exists(name):
-        return
-    client.delete(
-        collection_name=name,
-        points_selector=FilterSelector(filter=_document_filter(document_id)),
-    )
+    del classification
+    doc_filter = _document_filter(document_id)
+    for name in existing_classification_collections(client):
+        client.delete(collection_name=name, points_selector=FilterSelector(filter=doc_filter))

@@ -189,6 +189,36 @@ class TestDeleteDocumentChunks:
         remaining = client.collections[classification_collection_name("CUI")]
         assert set(remaining) == {"p2"}
 
+    def test_sweeps_every_classification_collection_not_just_the_named_one(self):
+        """Review followup (PR #267): a classification-migration that failed
+        partway through its own cleanup delete can leave an orphaned
+        duplicate in a *different* collection than the one the caller names.
+        Purge's whole point is that the bytes are actually gone, so
+        destruction must not be scoped to a single, possibly-stale
+        classification."""
+        client = FakeQdrantClient()
+        # Simulate exactly that leftover: doc-1's chunks exist in both CUI
+        # (the pre-migration collection, cleanup delete never succeeded) and
+        # SECRET (the post-migration collection).
+        upsert_chunks(client, [_point("p1", "doc-1", "CUI")])
+        upsert_chunks(client, [_point("p2", "doc-1", "SECRET")])
+
+        # The caller only knows/claims one of them (e.g. Postgres's current
+        # classification value) -- destruction must not stop there.
+        delete_document_chunks(client, "doc-1", "SECRET")
+
+        assert client.collections[classification_collection_name("CUI")] == {}
+        assert client.collections[classification_collection_name("SECRET")] == {}
+
+    def test_other_documents_survive_a_sweep(self):
+        client = FakeQdrantClient()
+        upsert_chunks(client, [_point("p1", "doc-1", "CUI")])
+        upsert_chunks(client, [_point("p2", "doc-2", "SECRET")])
+
+        delete_document_chunks(client, "doc-1", "CUI")
+
+        assert "p2" in client.collections[classification_collection_name("SECRET")]
+
 
 class TestUpdateDocumentPayloadWithoutClassificationChange:
     def test_status_only_correction_writes_in_place(self):
@@ -241,12 +271,67 @@ class TestUpdateDocumentPayloadMigratesOnClassificationChange:
 
     def test_nothing_to_move_is_a_no_op_and_does_not_create_the_target(self):
         client = FakeQdrantClient()
-        # doc-1 has no points anywhere -- e.g. a retry after a prior attempt
-        # already fully completed (including the old-collection delete).
+        # doc-1 has no points anywhere at all -- not even at the correction's
+        # target -- so there's genuinely nothing to do.
 
         update_document_payload(client, "doc-1", "CUI", {"classification": "SECRET"})
 
         assert classification_collection_name("SECRET") not in client.collections
+
+
+class TestUpdateDocumentPayloadRetryAfterPartialMigration:
+    """Review followup (PR #267): NFR-13 lets a curator retry a failed
+    approve/reject through the *same* API call. If a prior attempt already
+    moved a document's chunks to the target collection (and only failed on
+    that move's non-raising old-collection cleanup, or failed the Postgres
+    commit after a fully successful move+revert), `current_classification`
+    on retry is the caller's stale belief -- the source is empty, but the
+    correction still needs to land somewhere. Silently no-op'ing there (the
+    pre-fix behavior) leaves Postgres saying `approved` while the chunks stay
+    `pending_review` forever."""
+
+    def test_retrying_the_same_correction_completes_it_at_the_target(self):
+        client = FakeQdrantClient()
+        # Simulates: first attempt's migration fully succeeded (points now
+        # live in SECRET, source CUI already cleared), but the NFR-13 revert
+        # reset status back to pending_review after a failed Postgres commit.
+        upsert_chunks(client, [_point("p1", "doc-1", "SECRET", extra={"status": "pending_review"})])
+
+        # Retry: caller still believes the source is CUI (Postgres rolled
+        # back), resubmitting the identical correction.
+        update_document_payload(
+            client, "doc-1", "CUI", {"status": "approved", "classification": "SECRET"}
+        )
+
+        point = client.collections[classification_collection_name("SECRET")]["p1"]
+        assert point.payload["status"] == "approved"
+        assert classification_collection_name("CUI") not in client.collections
+
+    def test_retrying_without_the_correction_still_finds_the_moved_chunks(self):
+        """A plain status retry (or a reject) issued after an earlier
+        classification move the caller doesn't know about -- no
+        `classification` field in `fields` this time, so there's no
+        target to check directly; every other collection must be searched."""
+        client = FakeQdrantClient()
+        upsert_chunks(client, [_point("p1", "doc-1", "SECRET", extra={"status": "pending_review"})])
+
+        update_document_payload(client, "doc-1", "CUI", {"status": "approved"})
+
+        point = client.collections[classification_collection_name("SECRET")]["p1"]
+        assert point.payload["status"] == "approved"
+
+    def test_a_genuinely_missing_document_is_still_a_no_op(self):
+        """The fallback search must not paper over a document that really
+        doesn't exist anywhere -- only complete a move that actually
+        happened."""
+        client = FakeQdrantClient()
+        upsert_chunks(client, [_point("other", "doc-2", "SECRET")])
+
+        update_document_payload(client, "doc-1", "CUI", {"status": "approved"})  # must not raise
+
+        # doc-2's point is untouched -- fields were never applied to it.
+        untouched = client.collections[classification_collection_name("SECRET")]["other"]
+        assert untouched.payload.get("status") != "approved"
 
     def test_a_failed_delete_of_the_old_copy_does_not_raise(self):
         """Safety argument (see qdrant_store._migrate_document_classification's
