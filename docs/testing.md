@@ -146,9 +146,13 @@ filter, so a required check can never be left permanently "waiting"):
 - `CodeQL` (GitHub code-scanning integration check, distinct from the
   `Analyze (python)` workflow job it's derived from)
 - `unit (3.11)`, `unit (3.12)`
-- `service-tests (ingestion-api)`,
-  `service-tests (ingestion-worker, --cov=app.chunking --cov=app.parsing)`,
-  `service-tests (orchestration-mcp, --cov=app.reranking)`
+- `service-tests (ingestion-api)`, `service-tests (ingestion-worker)`,
+  `service-tests (orchestration-mcp)`, `service-tests (reranker-service)`
+  (issue #256: the job now carries an explicit `name: service-tests
+  (${{ matrix.service }})`, so these four context strings are stable —
+  editing the per-service `cov` flags in `ci.yml`'s matrix no longer renames
+  the check. `reranker-service` joins the required list here for the first
+  time; it already ran unconditionally with real tests, just wasn't pinned.)
 - `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
 - `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
 
@@ -181,6 +185,24 @@ fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
 `Analyze (python)` passing, so no further action was needed on that half of
 the issue.
 
+**Issue #256 (check names decoupled from coverage flags).** The
+`service-tests` job previously had no explicit `name:`, so GitHub derived the
+check name from the matrix values, embedding the `cov` flags in the pinned
+context string (e.g. `service-tests (ingestion-worker, --cov=app.chunking
+--cov=app.parsing)`). Editing those flags renamed the check out from under
+the rulesets, and the pinned context then never reported — every PR stuck on
+"Expected — waiting for status to be reported" with nothing red to fix. Fixed
+by pinning `name: service-tests (${{ matrix.service }})` on the job, so the
+four stable names above can be pinned once and the `cov` matrix can change
+freely going forward. `app.ocr`, previously routed around this trap via
+ingestion-worker's own `addopts` (#241), moved back into `ci.yml`'s matrix now
+that doing so is safe, so the gated-module list lives in one place again.
+Landing this needed a deliberate merge-blocking window, since the PR making
+the change can't satisfy the required-check names it's renaming: an admin
+removed the old `service-tests (…)` contexts from both rulesets, the workflow
+PR merged, then the admin re-pinned the four stable names above (adding
+`reranker-service` to the required list for the first time in the process).
+
 **Applying ruleset changes.** The ruleset REST API's `PATCH` endpoint 404s
 for at least one token type (an OAuth-app token with `repo` scope) even with
 admin permission on the repo — `GET`, `POST` (create), and `DELETE` all work
@@ -206,14 +228,13 @@ The enforced `--cov-fail-under=85` applies to:
   ~99% today.
 - `app.chunking` + `app.parsing` + `app.ocr` (ingestion-worker) — the pure
   FR-3/FR-4 logic. `app.processing`/`app.embedding` are pipeline glue
-  exercised by the e2e job. `app.ocr` (#241) is added by the service's own
-  `[tool.pytest.ini_options] addopts` rather than by ci.yml's matrix, because
-  that matrix string *is* part of the required check's name (see the
-  required-checks list above): editing it renames the check, the context both
-  `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
-  "Expected — waiting for status to be reported" until an admin re-pins it.
-  Making the names independent of the flags needs that same coordinated
-  ruleset edit, so it is tracked as #256 rather than done here.
+  exercised by the e2e job. `app.ocr` (#241) lives in ci.yml's matrix `cov`
+  string alongside `app.chunking`/`app.parsing`; `app.captioning` (#92) stays
+  in the service's own `[tool.pytest.ini_options] addopts` since it's outside
+  this coverage floor. Both used to route around the matrix string entirely,
+  since it doubled as the required check's name and editing it renamed the
+  check out from under the rulesets — fixed by #256, which pins an explicit
+  job `name:` instead (see "Branch protection" above).
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured
