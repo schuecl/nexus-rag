@@ -53,7 +53,32 @@ ensure_role() {
 	EOSQL
 }
 
-# The application role: ingestion-api and orchestration-mcp connect as this.
+# Issue #278 (gap G2): one role per service, not one shared application role.
+#
+# APP_DB_USER used to be the single identity for ingestion-api,
+# ingestion-worker and orchestration-mcp, holding ALL PRIVILEGES on the whole
+# database. Any one of the three -- or anything that got hold of that
+# credential -- could therefore read audit_log, every document's metadata,
+# oauth_states, and user_sessions (whose OIDC access/refresh tokens are stored
+# in plaintext, #213). A compromise of the retrieval path also yielded *write*
+# access to documents and classification_levels, tables it never touches.
+#
+# The grants themselves are not here. They reference tables that do not exist
+# until SQLModel's create_all() has run, so they live in
+# apply-service-grants.sh, which the lock-down-db-grants one-shot runs after
+# ingestion-api reports healthy -- the same ordering harden-audit-log used, for
+# the same reason. This file only makes the roles exist and able to connect.
+ensure_role "${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}" \
+  "${INGESTION_API_DB_PASSWORD:-nexus_rag_ingestion_api}"
+ensure_role "${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}" \
+  "${INGESTION_WORKER_DB_PASSWORD:-nexus_rag_ingestion_worker}"
+ensure_role "${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}" \
+  "${ORCHESTRATION_MCP_DB_PASSWORD:-nexus_rag_orchestration_mcp}"
+# The former shared role. Still created, deliberately: on an existing
+# deployment it owns every table, and apply-service-grants.sh has to reassign
+# that ownership away from a role it can name. It is left with no privileges at
+# all -- see that script's REVOKE. Dropping it outright would strand those
+# objects and break the very upgrade this change is for.
 ensure_role "${APP_DB_USER:-nexus_rag_app}" "${APP_DB_PASSWORD:-nexus_rag_app}"
 # Keycloak and LiteLLM each own a separate database (NFR-3).
 ensure_role "${KEYCLOAK_DB_USER:-keycloak_app}" "${KEYCLOAK_DB_PASSWORD:-keycloak_app}"
@@ -68,18 +93,35 @@ ensure_role "${MONITORING_DB_USER:-nexus_rag_monitor}" "${MONITORING_DB_PASSWORD
 ensure_role grafana_ro "${GRAFANA_DB_PASSWORD:-grafana_ro}"
 
 # Privileges. Each of these is idempotent on its own.
+#
+# #278: CONNECT only. Database-wide ALL PRIVILEGES is exactly what this issue
+# removes -- per-table grants are applied by apply-service-grants.sh once the
+# tables exist.
 $PSQL --dbname postgres <<-EOSQL
-	GRANT ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" TO "${APP_DB_USER:-nexus_rag_app}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}";
 	GRANT pg_monitor TO "${MONITORING_DB_USER:-nexus_rag_monitor}";
 	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${MONITORING_DB_USER:-nexus_rag_monitor}";
 	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO grafana_ro;
 EOSQL
 
 # Postgres 15+ restricts CREATE on the public schema to the database owner, and
-# APP_DB_USER is not the owner of POSTGRES_DB -- without this, SQLModel's
-# create_all() fails the first time ingestion-api starts.
+# none of these roles own POSTGRES_DB.
+#
+# #278: only ingestion-api gets CREATE, and only until apply-service-grants.sh
+# takes it back after startup. It is the service that runs SQLModel's
+# create_all() (common/db.py's init_db(), called from its lifespan), so it needs
+# CREATE on a fresh volume -- and again on any boot where a later release added
+# a table. Granting it here and revoking it there gives exactly that window and
+# nothing wider: this script runs before ingestion-api starts, that one runs
+# after it reports healthy.
+#
+# The worker and the MCP server never create anything. They get USAGE only.
 $PSQL --dbname "$POSTGRES_DB" <<-EOSQL
-	GRANT ALL ON SCHEMA public TO "${APP_DB_USER:-nexus_rag_app}";
+	GRANT USAGE, CREATE ON SCHEMA public TO "${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}";
+	GRANT USAGE ON SCHEMA public TO "${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}";
+	GRANT USAGE ON SCHEMA public TO "${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}";
 	GRANT USAGE ON SCHEMA public TO grafana_ro;
 EOSQL
 

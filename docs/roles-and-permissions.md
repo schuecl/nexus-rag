@@ -52,7 +52,7 @@ Capability roles, deliberately small and non-overlapping:
 | Edit classification/releasability vocabulary (`ingestion-api` admin routes) | ✖ | ✖ | ✖ | ✖ | ✔ (`deps.require_admin`) | ✖ |
 | Purge a document everywhere (`DELETE /documents/{id}`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ audited, reason required (#123) -- **only** when `PURGE_TWO_PERSON_REQUIRED` is unset (dev default); returns 409 otherwise (#279, gap G3) |
 | File / confirm a purge request (`POST .../purge-request`, `.../confirm`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ file: any holder; confirm: **a different** holder only -- same `sub` as the requester gets 409 (#279, gap G3; `common.purge.purge_confirmation_authorized`) |
-| Read the audit log | — | — | — | — | — | — (no route exists for anyone; see gap G2) |
+| Read the audit log | — | — | — | — | — | — (no route exists for anyone, and since #278 no application DB role can either; see gap G2) |
 | Download original uploaded bytes | — | — | — | — | — | — (no route exists; originals are write-only from the app, NFR-12) |
 
 ## 3. Data-visibility matrix (the privacy view)
@@ -116,7 +116,9 @@ Least privilege between components, as deployed by compose/chart:
 | Qdrant **read-only** API key | `orchestration-mcp` | `query_points` only | Qdrant RBAC (NFR-15; coarse — the FR-26 filter remains the real boundary) |
 | Qdrant **read/write** API key | `ingestion-api`, `ingestion-worker` | create collections, upsert, payload updates, deletes | Qdrant RBAC |
 | NATS per-subject accounts (#212/#232) | `ingestion-api` (publish), `ingestion-worker` (consume) | own subjects + `_INBOX.>` only | `infra/nats/nats.conf` permissions blocks |
-| `APP_DB_USER` Postgres credential | both API services | full application schema — **gap G2** | Postgres auth |
+| `nexus_rag_ingestion_api` Postgres role | `ingestion-api` | DML on documents/vocabulary/portal/notifications/sessions; **INSERT-only** on `audit_log` | `GRANT` in `apply-service-grants.sh` (#278) |
+| `nexus_rag_ingestion_worker` Postgres role | `ingestion-worker` | `SELECT`/`UPDATE` on documents, `SELECT` on vocabulary, **INSERT-only** on `audit_log`; no session/OAuth tables | same |
+| `nexus_rag_orchestration_mcp` Postgres role | `orchestration-mcp` | `SELECT` on `classification_levels`, **INSERT-only** on `audit_log`; cannot read `documents` | same |
 | `grafana_ro` Postgres role | dashboards | `SELECT` on `document_metrics` only | `GRANT` in db-roles setup |
 | Reranker shared secret (#216) | `orchestration-mcp` → `reranker-service` | `/rerank` | HMAC-style header check |
 | Object-store credential | `ingestion-api` (put), purge path (delete) | originals bucket | store-side policy; no read-back route exists in the app |
@@ -169,14 +171,42 @@ admin API) could support that kind of proactive check, or a "documents with
 no eligible curator" report. Not done here — deferred as its own, larger
 decision if the lack of one proves painful in practice.
 
-**G2 — One Postgres identity reads everything, including the audit log.**
-Stated in `rag_search`'s own #125 docstring: no *route* exposes the audit log,
-but any holder of `APP_DB_USER` can read every table — audit rows, document
-metadata, session rows. The `grafana_ro` role proves the repo already has the
-narrow-grant pattern; it stops at dashboards. Improvement: per-service DB
-roles (`ingestion_api`, `orchestration_mcp`) with explicit grants; audit_log
-INSERT-only for the query path; SELECT on audit_log granted to no application
-role at all.
+**G2 — One Postgres identity read everything — resolved (#278).** Each service
+now connects as its own role, holding only the privileges its code actually
+exercises. The matrix is derived from the code and lives in
+`infra/postgres/apply-service-grants.sh`; Compose applies it through the
+`lock-down-db-grants` one-shot, which also reassigns every table's ownership
+to the bootstrap superuser — an owner always retains `GRANT` on its own
+objects, so `REVOKE` alone would leave a role able to hand itself back what
+was taken.
+
+Three consequences worth stating, because each was checked rather than
+assumed:
+
+- **`SELECT` on `audit_log` is granted to no application role**, not even
+  `ingestion-api`. `select(AuditLogEntry` appears nowhere outside the test
+  suite — all 17 references across the three services construct a row to
+  insert. So §2's "no route exposes the audit log" is now true at the database
+  layer too, and reading the trail is a deliberate DBA/SIEM act (NFR-2's
+  export path).
+- **`orchestration-mcp` cannot read `documents` at all.** Chunk text comes from
+  Qdrant, so the retrieval path's entire database surface is `SELECT` on
+  `classification_levels` (to build the FR-26 filter) plus `INSERT` on
+  `audit_log`. A compromise of it yields no database content.
+- **`ingestion-worker` has no access to `user_sessions` or `oauth_states`.** It
+  never sees a browser, so it never sees the plaintext OIDC tokens #213
+  describes.
+
+Verified against a live stack rather than by reading the SQL: every forbidden
+operation above was attempted as each role and denied, every operation the
+services genuinely perform was attempted and allowed, and the escalation paths
+(`GRANT` to self, `ALTER TABLE ... OWNER`, `CREATE TABLE`, `TRUNCATE
+audit_log`) were attempted and refused.
+
+What this does **not** fix: `POSTGRES_USER` remains a superuser, and anything
+holding it still reads everything. That is inherent to having a bootstrap role
+at all; the boundary it protects is operational access, not application
+compromise.
 
 **G3 — Destruction is single-person — narrowed by #279.** `rag-purge` was
 separate from `rag-admin` already (good), but one person holding it could

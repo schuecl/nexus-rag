@@ -348,7 +348,8 @@ choosing the first. The explicit resolution proposed here:
 untouched.** The application role keeps exactly its current `SELECT`/`INSERT`
 grant — expiry is not an application capability, cannot be reached from any
 route, and adds no new grant. Instead, a separate administrative one-shot (the
-`harden-audit-log` pattern: same credentials, same invocation shape, Compose
+`lock-down-db-grants` pattern (#278, formerly `harden-audit-log`): same
+credentials, same invocation shape, Compose
 one-shot / Kubernetes CronJob) performs the schedule:
 
 1. **Precondition, checked every run:** SIEM export (#73) is configured

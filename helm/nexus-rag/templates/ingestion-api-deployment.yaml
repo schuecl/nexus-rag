@@ -105,7 +105,9 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.externalPostgres.existingSecret }}
-                  key: {{ .Values.externalPostgres.secretKey }}
+                  # #278: this service's own role, falling back to the
+                  # shared pre-#278 credential when unset.
+                  key: {{ .Values.externalPostgres.perServiceKeys.ingestionApi | default .Values.externalPostgres.secretKey }}
             - name: OIDC_ISSUERS
               value: {{ .Values.externalKeycloak.issuerUrl | quote }}
             - name: OIDC_AUDIENCE

@@ -103,6 +103,30 @@ externalPostgres:
   # section.
   existingSecret: "nexus-rag-db"
   secretKey: "database-url"
+  # Issue #278 (gap G2): one DATABASE_URL per service, each with its own
+  # Postgres role, instead of all three sharing one credential that held ALL
+  # PRIVILEGES on the whole database. Any holder of that one credential could
+  # read audit_log, every document's metadata, oauth_states, and user_sessions
+  # (whose OIDC tokens sit in plaintext, #213) -- and a compromise of the
+  # retrieval path also yielded write access to tables it never touches.
+  #
+  # These override secretKey above per service. Each key must hold a full
+  # SQLAlchemy URL for that service's own role. Point all three at the same
+  # key to keep the old shared-credential behaviour, but that is the thing
+  # this issue exists to remove.
+  #
+  # The grants themselves are applied by whoever administers your external
+  # Postgres -- this chart deploys no database, so it cannot apply them.
+  # infra/postgres/apply-service-grants.sh is the reference: it carries the
+  # exact matrix, and Compose runs it as the lock-down-db-grants one-shot.
+  # Notably, nothing gets SELECT on audit_log -- reading the trail is a
+  # deliberate DBA/SIEM act (NFR-2), not something an application role can do.
+  perServiceKeys:
+    # Empty = fall back to secretKey above, i.e. the pre-#278 shared
+    # credential. Set all three once your Postgres has the roles.
+    ingestionApi: ""
+    ingestionWorker: ""
+    orchestrationMcp: ""
 
 externalKeycloak:
   # Passed through as OIDC_ISSUERS (common/claims.py accepts a comma-separated

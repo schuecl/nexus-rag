@@ -61,7 +61,9 @@ ONE_SHOT = {
     "ollama-model-init",
     "seed-sample-data",
     "eval-retrieval",
-    "harden-audit-log",
+    # #278 renamed harden-audit-log to lock-down-db-grants when it grew from
+    # hardening one table to applying the whole per-service grant matrix.
+    "lock-down-db-grants",
 }
 
 NO_NEW_PRIVILEGES = "no-new-privileges:true"

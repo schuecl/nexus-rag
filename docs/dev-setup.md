@@ -996,20 +996,18 @@ the docs, not a silent "it works" — flag it if you find one.
   `KC_DB_URL`, on its own separate `KEYCLOAK_DB_NAME` database) — the app and Keycloak no
   longer share a database or credentials, in this dev stack same as production always
   required (Helm never put them on the same Postgres instance to begin with, since
-  Keycloak is external there). A new one-shot `harden-audit-log` service, gated on
-  `ingestion-api: condition: service_healthy` (so `audit_log` definitely exists by then --
-  it's created by `common/db.py`'s `init_db()` during that service's own startup),
-  reassigns `audit_log`'s ownership away from `APP_DB_USER` entirely and grants it only
-  `SELECT, INSERT` — not just a `REVOKE` while `APP_DB_USER` remains the owner, which it
-  could trivially undo (table owners always retain `GRANT` on their own objects; losing
-  ownership outright is what actually closes that). Confirmed nothing in the codebase ever
-  issues an `UPDATE`/`DELETE` against `AuditLogEntry` rows (grepped for it) before revoking
-  those privileges, so this shouldn't break anything that was working. **Not tested
-  live** — this is the riskiest change in this hardening batch (unlike the others, a
-  mistake here could break every DB-touching code path in both services, not just degrade
-  one feature), and deserves a full `docker compose down -v && docker compose up` pass with
-  close attention to whether `ingestion-api`/`orchestration-mcp`/`keycloak` actually come up
-  healthy before relying on it.
+  Keycloak is external there). Superseded by #278: the one-shot is now
+  `lock-down-db-grants`, still gated on `ingestion-api: condition: service_healthy` (so the
+  tables definitely exist by then -- they are created by `common/db.py`'s `init_db()` during
+  that service's own startup), but it now applies a per-service grant matrix across every
+  table instead of hardening one. It reassigns ownership of every table away from the
+  application roles -- not just a `REVOKE` while a role remains the owner, which it could
+  trivially undo (table owners always retain `GRANT` on their own objects; losing ownership
+  outright is what actually closes that). `audit_log` is now INSERT-only for all three
+  services, `SELECT` included in what was removed, because nothing outside the test suite
+  ever reads it. **Validated live** (#278): every role was made to attempt both the
+  operations it needs and the ones it must not have, against a real Postgres 16.14 -- see
+  `docs/roles-and-permissions.md` gap G2.
 - **Object storage for original uploaded files (NFR-12)** — `common/object_store.py`'s
   `ObjectStore` interface, with a filesystem-backed dev implementation
   (`FilesystemObjectStore`, `OBJECT_STORE_PATH=/srv/object-store`, a new `object-store-data`
