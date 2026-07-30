@@ -1,0 +1,78 @@
+Nexus RAG observability backends installed (issue #257).
+
+This chart deployed NO Grafana. It deployed the stores your existing air-gapped
+Grafana reads, and vendored the dashboards for you to import.
+
+1. Get the LoadBalancer addresses the external Grafana will connect to.
+   These may take a minute to be assigned:
+
+     kubectl get svc -n {{ .Release.Namespace }} \
+       -l app.kubernetes.io/instance={{ .Release.Name }} \
+       -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,EXTERNAL:.status.loadBalancer.ingress[0].ip
+{{ range $c := list "prometheus" "loki" "tempo" "alertmanager" }}
+{{- $v := index $.Values $c }}
+{{- if $v.enabled }}
+   {{ printf "%-13s" $c }} port {{ $v.service.port }}{{ if $v.service.loadBalancerIP }} -> {{ $v.service.loadBalancerIP }} (pre-assigned){{ else }} -> allocated by the provider{{ end }}
+{{- end }}
+{{- end }}
+
+2. Install the datasources in the external Grafana. A provisioning file was
+   rendered for you with this install's settings:
+
+     kubectl get configmap -n {{ .Release.Namespace }} {{ include "observability.fullname" . }}-grafana-datasources \
+       -o jsonpath='{.data.datasources\.yaml}' > datasources.yaml
+{{ if or (not .Values.prometheus.service.loadBalancerIP) (not .Values.loki.service.loadBalancerIP) }}
+   NOTE: at least one address was not pre-assigned, so that file contains
+   REPLACE_WITH_*_LB_ADDRESS placeholders. Substitute the addresses from step 1
+   before copying it to Grafana.
+{{ end }}
+   Copy it to Grafana's provisioning/datasources/ directory and restart Grafana.
+
+   Do not renumber the uid fields. All 13 dashboards reference the literal uids
+   prometheus / loki / tempo / alertmanager / documents-pg, and a mismatch
+   imports every panel broken with no error.
+
+3. Import the dashboards. They are files in the chart, not objects in the
+   cluster -- import them from your checkout:
+
+     helm/observability/dashboards/*.json      (13 dashboards)
+     helm/observability/dashboards/system-flow.svg
+
+   Grafana -> Dashboards -> New -> Import, one file at a time, or point a file
+   provider at the directory. See helm/observability/README.md for the
+   pre-staged plugin prerequisite -- three dashboards render blank without it.
+
+4. Turn on tracing in the nexus-rag release. It is off until you do: the app
+   services no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+{{- if .Values.otelCollector.enabled }}
+
+     helm upgrade {{ .Values.nexusRag.releaseName }} ./helm/nexus-rag \
+       --set observability.tracing.otlpEndpoint=http://{{ include "observability.fullname" . }}-otel-collector.{{ .Release.Namespace }}.svc:{{ .Values.otelCollector.service.httpPort }} \
+       --set observability.logFormat=json
+
+   logFormat=json matters as much as the endpoint: Loki's trace_id derived field
+   matches a JSON log field, so with the default text format the log-to-trace
+   links never appear.
+{{- else }}
+
+   otelCollector.enabled is false, so there is no OTLP endpoint to point at.
+{{- end }}
+{{- if not .Values.externalAccess.loadBalancerSourceRanges }}
+
+WARNING: externalAccess.loadBalancerSourceRanges is empty and
+allowUnrestricted was set. Prometheus, Loki, Tempo, and Alertmanager have no
+authentication of their own -- anything that can route to those addresses can
+read this deployment's operational telemetry, including query volume and
+denial counts. Restrict it at the firewall or set the source ranges.
+{{- end }}
+{{- if and .Values.exporters.blackbox.enabled (not .Values.prometheus.blackboxTargets) }}
+
+The blackbox exporter is running but prometheus.blackboxTargets is empty, so it
+probes nothing. Set the URLs of the services with no /metrics of their own
+(LibreChat, LiteLLM, Ollama) to populate the availability panels.
+{{- end }}
+{{- if not .Values.exporters.postgres.enabled }}
+
+exporters.postgres.enabled is false, so the Datastores dashboard will read
+"No data". It needs a Secret holding a read-only DSN -- see values.yaml.
+{{- end }}

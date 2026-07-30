@@ -90,6 +90,18 @@ jobs:
           # ungated on purpose -- its FastAPI route layer needs the
           # containerized integration layer to be meaningfully covered (see
           # docs/testing.md's known-gaps list).
+          #
+          # These strings are load-bearing beyond the command line: with no
+          # explicit `name:` on this job, GitHub derives the check name from
+          # the matrix values, so `service-tests (ingestion-worker,
+          # --cov=app.chunking --cov=app.parsing)` is the literal context
+          # pinned in both `Protect-Main*` rulesets. Editing one renames the
+          # check, the pinned context then never reports, and every PR sits
+          # on "Expected -- waiting for status to be reported" until an admin
+          # re-pins it. Add newly gated modules via the service's own
+          # `[tool.pytest.ini_options] addopts` instead (see ingestion-worker's
+          # pyproject.toml). Making the check names independent of the flags
+          # needs a coordinated ruleset edit, tracked as #256.
           - service: ingestion-api
             cov: ""
           - service: ingestion-worker
@@ -119,7 +131,7 @@ jobs:
             "opentelemetry-instrumentation-fastapi>=0.51b0" "opentelemetry-instrumentation-httpx>=0.51b0"
           # ingestion-worker's parsers; harmless (and cached) for the others.
           pip install "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
-            "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
+            "python-pptx>=1.0" "openpyxl>=3.1" "pytesseract>=0.3.10" "beautifulsoup4>=4.12"
           # reranker-service's own runtime dep -- imported at module level by
           # app/main.py, so even the shared-secret unit tests need it importable
           # (the tests never construct a CrossEncoder, so no model download).
@@ -174,7 +186,7 @@ jobs:
           pip install "fastapi>=0.115" "httpx>=0.27" \
             "opentelemetry-instrumentation-httpx>=0.51b0" \
             "pypdf>=6.14.2" "pdfplumber>=0.11" "python-docx>=1.1" \
-            "python-pptx>=1.0" "openpyxl>=3.1" "beautifulsoup4>=4.12"
+            "python-pptx>=1.0" "openpyxl>=3.1" "pytesseract>=0.3.10" "beautifulsoup4>=4.12"
       - name: mypy on ingestion-worker (enforced, issue #79)
         run: cd services/ingestion-worker && MYPYPATH=../common mypy app
       - name: Install orchestration-mcp dependencies
@@ -219,6 +231,12 @@ jobs:
       # Helm can't reference files outside its own chart directory.
       - name: Issue #212 -- NATS ACL config matches across compose and chart
         run: python scripts/check_nats_conf_sync.py
+      # Issue #257: same reason as #212, applied to the Grafana dashboards and
+      # Prometheus alert rules that helm/observability vendors. A dashboard
+      # fixed on one side only means the air-gapped Grafana imports the stale
+      # copy and nothing reports it.
+      - name: Issue #257 -- observability assets match across compose and chart
+        run: python scripts/check_observability_assets_sync.py
 
   build:
     runs-on: ubuntu-latest

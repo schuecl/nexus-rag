@@ -1,0 +1,168 @@
+{{- /*
+#257: the log shipper. This is a rewrite of infra/observability/alloy.alloy,
+not a port, and the difference is worth stating plainly.
+
+Compose discovers containers over the Docker API (through docker-socket-proxy,
+because raw socket access is root-equivalent -- #133 review finding 3). In
+Kubernetes there is no Docker API to talk to and no compose labels to filter
+on, so this uses discovery.kubernetes + local pod log files instead. The
+authority traded is different in kind: reading /var/log/pods is host-path
+access, and pod discovery needs the API server. Both are scoped as tightly as
+the job allows -- a read-only hostPath, and a namespaced Role by default.
+
+Capability note (#111): alloy is the one component in CAPABILITY_EXEMPT in
+scripts/check_compose_hardening.py, because it chowns its data directory on
+first boot. Here the data directory is an emptyDir with fsGroup set, so the
+chown is unnecessary and the full cap_drop applies -- the exemption does NOT
+carry over. Stated because the absence of an exemption looks like an oversight
+otherwise.
+*/}}
+{{- if .Values.alloy.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "observability.fullname" . }}-alloy
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+{{- if .Values.alloy.rbac.clusterWide }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "observability.fullname" . }}-alloy
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "observability.fullname" . }}-alloy
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "observability.fullname" . }}-alloy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "observability.fullname" . }}-alloy
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{- $namespaces := list .Release.Namespace (include "observability.nexusRagNamespace" .) | uniq }}
+{{- range $ns := $namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "observability.fullname" $ }}-alloy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "observability.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: alloy
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "observability.fullname" $ }}-alloy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "observability.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "observability.fullname" $ }}-alloy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "observability.fullname" $ }}-alloy
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "observability.fullname" . }}-alloy
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+spec:
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "alloy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: alloy
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/alloy-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "observability.fullname" . }}-alloy
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 10001 | nindent 8 }}
+      containers:
+        - name: alloy
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.alloy.image) }}
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/var/lib/alloy/data
+            - --server.http.listen-addr=0.0.0.0:{{ .Values.alloy.port }}
+          env:
+            # Used by the config's node filter, so each DaemonSet pod tails only
+            # its own node's logs.
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: {{ .Values.alloy.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.alloy.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy/data
+            # Read-only, and both paths are needed: /var/log/pods holds the
+            # symlinks, /var/lib/docker/containers or the containerd equivalent
+            # holds what they point at. Without the second mount the tail
+            # follows a dangling link and reports no lines, with no error.
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: container-logs
+              mountPath: /var/log/containers
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-alloy
+        - name: data
+          emptyDir: {}
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: DirectoryOrCreate
+        - name: container-logs
+          hostPath:
+            path: /var/log/containers
+            type: DirectoryOrCreate
+{{- end }}

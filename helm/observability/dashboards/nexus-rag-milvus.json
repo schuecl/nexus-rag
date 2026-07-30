@@ -1,0 +1,194 @@
+{
+  "annotations": { "list": [] },
+  "description": "Milvus Standalone health and throughput (#160). Milvus is the either/or alternative to Qdrant: this dashboard only has data when the stack runs with VECTOR_BACKEND=milvus and the milvus profile. On a Qdrant deployment every panel reads DOWN / 0, which is the expected state -- one backend per deployment, never both.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "About this dashboard",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Milvus is the optional either/or vector backend (#160).** These panels populate only when the stack is started with `VECTOR_BACKEND=milvus docker compose --profile milvus up -d`. On the default Qdrant deployment the Milvus scrape target stays **DOWN** and every panel reads 0 -- that is correct, not a fault. Qdrant's own health is on the **Nexus RAG / Vector store (Qdrant)** dashboard."
+      }
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Milvus overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Milvus up",
+      "description": "Prometheus scrape of milvus:9091. DOWN on a Qdrant deployment is expected.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "max(up{job=~\"milvus.*\"}) or vector(0)", "instant": true, "range": false, "format": "time_series", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 1 }, "1": { "text": "UP", "color": "green", "index": 0 } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Collections",
+      "description": "milvus_rootcoord_collection_num -- number of collections known to the root coordinator.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 4 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "max(milvus_rootcoord_collection_num) or vector(0)", "instant": true, "range": false, "format": "time_series", "legendFormat": "" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "fixed", "fixedColor": "blue" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Stored entities (rows)",
+      "description": "sum(milvus_datacoord_stored_rows_num) -- total rows persisted across segments. One row per chunk.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(milvus_datacoord_stored_rows_num) or vector(0)", "instant": true, "range": false, "format": "time_series", "legendFormat": "" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "fixed", "fixedColor": "blue" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Segments",
+      "description": "sum(milvus_datacoord_segment_num) -- total segments (growing + sealed + flushed) the data coordinator tracks.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(milvus_datacoord_segment_num) or vector(0)", "instant": true, "range": false, "format": "time_series", "legendFormat": "" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "fixed", "fixedColor": "blue" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Proxy (request plane)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Request rate by function",
+      "description": "sum by (function_name)(rate(milvus_proxy_req_count[5m])) -- search, query, insert, delete etc. as seen at the proxy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum by (function_name) (rate(milvus_proxy_req_count[5m]))", "range": true, "instant": false, "format": "time_series", "legendFormat": "{{function_name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "none", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Request latency p95 by function",
+      "description": "histogram_quantile(0.95, milvus_proxy_req_latency_bucket) -- per-operation p95 at the proxy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, function_name) (rate(milvus_proxy_req_latency_bucket[5m])))", "range": true, "instant": false, "format": "time_series", "legendFormat": "{{function_name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "none", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Vectors searched vs inserted (per second)",
+      "description": "rate(milvus_proxy_search_vectors_count[5m]) and rate(milvus_proxy_insert_vectors_count[5m]).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(rate(milvus_proxy_search_vectors_count[5m]))", "range": true, "instant": false, "format": "time_series", "legendFormat": "searched" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(rate(milvus_proxy_insert_vectors_count[5m]))", "range": true, "instant": false, "format": "time_series", "legendFormat": "inserted" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "none", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "QueryNode search/query latency p95",
+      "description": "histogram_quantile(0.95, milvus_querynode_sq_req_latency_bucket) by query_type -- execution latency on the query nodes (the search path, distinct from proxy round-trip).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, query_type) (rate(milvus_querynode_sq_req_latency_bucket[5m])))", "range": true, "instant": false, "format": "time_series", "legendFormat": "{{query_type}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "none", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Storage",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Segments by state",
+      "description": "milvus_datacoord_segment_num by segment_state (Growing / Sealed / Flushed / Dropped).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum by (segment_state) (milvus_datacoord_segment_num)", "range": true, "instant": false, "format": "time_series", "legendFormat": "{{segment_state}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "normal", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Stored binlog size",
+      "description": "sum(milvus_datacoord_stored_binlog_size) -- total persisted binlog bytes (the on-disk footprint of inserted data).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "editorMode": "code", "expr": "sum(milvus_datacoord_stored_binlog_size)", "range": true, "instant": false, "format": "time_series", "legendFormat": "binlog bytes" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": true, "axisSoftMin": 0, "stacking": { "mode": "none", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["nexus-rag", "vector-store", "milvus"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Nexus RAG / Milvus",
+  "uid": "nexus-rag-milvus",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,95 @@
+{{- /*
+#257: Alloy's river config -- see alloy.yaml for why this is a rewrite of
+infra/observability/alloy.alloy rather than a port of it. Split into its own
+template so the DaemonSet can checksum it and roll when the config changes.
+*/}}
+{{- if .Values.alloy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "observability.fullname" . }}-alloy
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+data:
+  config.alloy: |
+    // #257: Kubernetes equivalent of the Compose Docker-API discovery.
+    // Only this node's pods are tailed -- HOSTNAME is the DaemonSet pod's node
+    // via spec.nodeName, so each replica handles its own node and nothing is
+    // shipped twice.
+    discovery.kubernetes "pods" {
+      role = "pod"
+      // One block with every name -- `namespaces` may only be specified once,
+      // and Alloy rejects the config outright rather than merging repeats.
+      namespaces {
+        names = [{{ range $i, $ns := list .Release.Namespace (include "observability.nexusRagNamespace" .) | uniq }}{{ if $i }}, {{ end }}{{ $ns | quote }}{{ end }}]
+      }
+    }
+
+    discovery.relabel "pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        regex         = sys.env("NODE_NAME")
+        action        = "keep"
+      }
+
+      // The dashboards' `service` label is what the Component logs dashboard
+      // filters on. app.kubernetes.io/component is the closest equivalent to
+      // the compose service name both charts already stamp on every pod.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container_name"
+      }
+
+      // The Component logs dashboard filters on `environment`. Set here rather
+      // than on loki.source.file, which has no labels attribute (see below).
+      // No source_labels: the empty concatenation matches the default regex, so
+      // the replacement applies unconditionally -- the standard Prometheus
+      // relabel idiom for a constant label.
+      rule {
+        action       = "replace"
+        target_label = "environment"
+        replacement  = {{ .Values.alloy.environmentLabel | quote }}
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        separator     = "/"
+        action        = "replace"
+        target_label  = "__path__"
+        replacement   = "/var/log/pods/*$1/*.log"
+      }
+    }
+
+    // loki.source.file, unlike the Compose config's loki.source.docker, has no
+    // `labels` attribute -- it takes every non-__ label from the target itself.
+    // The `environment` label the Component logs dashboard filters on is
+    // therefore set as a relabel rule above, not here.
+    loki.source.file "pods" {
+      targets    = discovery.relabel.pods.output
+      forward_to = [loki.write.local.receiver]
+    }
+
+    loki.write "local" {
+      endpoint {
+        url = "http://{{ include "observability.fullname" . }}-loki:{{ .Values.loki.service.port }}/loki/api/v1/push"
+      }
+    }
+{{- end }}

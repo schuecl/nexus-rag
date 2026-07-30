@@ -1,0 +1,78 @@
+# Values used by `helm lint` / `helm template` in CI (issue #257).
+#
+# Not an example to copy -- see examples/airgapped-values.yaml for that. This
+# file exists to make the render path CI exercises the *widest* one: every
+# component enabled, every optional block populated, so a template that only
+# breaks under some combination of flags breaks the build rather than a
+# deployment.
+#
+# It also has to satisfy the chart's two fail-closed guards, which is the point
+# of them: a bare `helm template ./helm/observability` deliberately fails,
+# because the defaults publish four unauthenticated services on LoadBalancer
+# addresses and there is no safe value for "who may reach them".
+
+externalAccess:
+  loadBalancerSourceRanges:
+    - "10.10.0.0/24"
+  externalTrafficPolicy: Local
+  annotations:
+    example.mil/lb-pool: internal
+
+nexusRag:
+  releaseName: nexus-rag
+  namespace: nexus-rag
+  qdrant:
+    enabled: true
+    existingSecret: qdrant-read-only
+  # Both vector backends on at once is not a valid deployment (#160), but it is
+  # the render that covers the most template branches.
+  milvus:
+    enabled: true
+  keycloak:
+    enabled: true
+    target: "keycloak.identity.svc:9000"
+
+prometheus:
+  service:
+    loadBalancerIP: "10.20.0.11"
+  blackboxTargets:
+    - https://librechat.example.mil/login
+    - http://litellm.chat.svc:4000/health/liveliness
+  rbac:
+    clusterWide: true
+
+loki:
+  service:
+    loadBalancerIP: "10.20.0.12"
+
+tempo:
+  service:
+    loadBalancerIP: "10.20.0.13"
+
+alertmanager:
+  service:
+    loadBalancerIP: "10.20.0.14"
+  persistence:
+    enabled: true
+
+exporters:
+  postgres:
+    enabled: true
+    existingSecret: postgres-exporter-dsn
+
+externalGrafana:
+  url: https://grafana.example.mil
+  documentsDatasource:
+    enabled: true
+    host: postgres.data.svc
+
+alloy:
+  rbac:
+    clusterWide: true
+
+networkPolicy:
+  enabled: true
+  grafanaCIDRs:
+    - "10.10.0.0/24"
+  allowedNamespaces:
+    - nexus-rag

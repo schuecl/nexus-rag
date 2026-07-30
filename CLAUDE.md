@@ -165,7 +165,9 @@ independently of both.
   stubbed JWKS client. Classification ranking runs against in-memory SQLite.
 - **Coverage gate (`--cov-fail-under=85`) is scoped, not repo-wide**: `services/common`
   (excluding `db.py`/`qdrant_store.py`/`sparse_embedding.py` — need live Postgres/Qdrant or
-  a model download, see `.coveragerc`), `app.chunking`+`app.parsing` in ingestion-worker,
+  a model download, see `.coveragerc`), `app.chunking`+`app.parsing`+`app.ocr` in
+  ingestion-worker (the last via that service's `pyproject.toml` `addopts`, since
+  ci.yml's matrix string is the required check's name — see `docs/testing.md`),
   `app.reranking` in orchestration-mcp. `ingestion-api`'s route layer and
   `orchestration-mcp/app/rag_search.py` are measured but not gated — they need a
   containerized integration layer to test meaningfully (open gap, not hidden).

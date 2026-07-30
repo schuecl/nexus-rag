@@ -1,0 +1,237 @@
+{{- /*
+#257: the three exporters Prometheus scrapes. All ClusterIP -- only in-cluster
+Prometheus consumes them, and an exporter on a LoadBalancer is attack surface
+with no consumer.
+
+Kept in one file because they are the same shape (small stateless Deployment +
+ClusterIP Service) and each is short enough that splitting them would spread
+one idea across six files.
+*/}}
+{{- if .Values.exporters.postgres.enabled }}
+{{- if not .Values.exporters.postgres.existingSecret }}
+{{- fail "exporters.postgres.enabled is true but exporters.postgres.existingSecret is empty. The exporter needs a libpq URI, and this chart will not accept one as a plaintext value -- create a Secret holding DATA_SOURCE_NAME for a read-only monitoring role (NFR-3: not the application's own credentials) and name it here." }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-postgres-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "postgres-exporter") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.exporters.postgres.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "observability.fullname" . }}-postgres-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "postgres-exporter") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-exporter
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 65534 | nindent 8 }}
+      containers:
+        - name: postgres-exporter
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.exporters.postgres.image) }}
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.exporters.postgres.existingSecret }}
+                  key: {{ .Values.exporters.postgres.secretKey }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.exporters.postgres.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.exporters.postgres.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.exporters.nats.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-nats-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats-exporter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "nats-exporter") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.exporters.nats.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "observability.fullname" . }}-nats-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "nats-exporter") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: nats-exporter
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 65534 | nindent 8 }}
+      containers:
+        - name: nats-exporter
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.exporters.nats.image) }}
+          args:
+            # -jsz=all is what makes the JetStream stream/consumer panels on the
+            # Messaging dashboard resolve; without it the exporter only reports
+            # connection and route stats and those panels read "No data".
+            - -varz
+            - -connz
+            - -healthz
+            - -jsz=all
+            - -port={{ .Values.exporters.nats.port }}
+            - http://{{ include "observability.nexusRagService" (dict "root" . "component" "nats") }}:{{ .Values.exporters.nats.monitorPort }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.exporters.nats.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.exporters.nats.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.exporters.blackbox.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "observability.fullname" . }}-blackbox-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+data:
+  blackbox.yml: |
+    # #133: HTTP health probes for services that expose no Prometheus /metrics
+    # (Ollama, LibreChat) or don't ship one in this stack (LiteLLM). Prometheus
+    # scrapes the exporter, which makes the request and reports probe_success.
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          valid_status_codes: [200, 201, 202, 204, 301, 302, 401, 403]
+          method: GET
+          fail_if_not_ssl: false
+          # 401/403 count as up on purpose: an authenticated endpoint answering
+          # "no" proves it is serving. And the in-cluster certificate may well
+          # be one this exporter has no CA for.
+          tls_config:
+            insecure_skip_verify: true
+          preferred_ip_protocol: ip4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-blackbox-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "blackbox-exporter") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.exporters.blackbox.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "observability.fullname" . }}-blackbox-exporter
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "blackbox-exporter") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: blackbox-exporter
+      {{- /* No checksum annotation: the blackbox config interpolates no values,
+             so it cannot change between upgrades of this chart. */}}
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 65534 | nindent 8 }}
+      containers:
+        - name: blackbox-exporter
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.exporters.blackbox.image) }}
+          args:
+            - --config.file=/etc/blackbox/blackbox.yml
+          ports:
+            - name: http
+              containerPort: {{ .Values.exporters.blackbox.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.exporters.blackbox.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-blackbox-exporter
+{{- end }}
