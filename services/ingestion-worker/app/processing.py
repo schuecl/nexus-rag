@@ -382,7 +382,12 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                 span.set_attribute("vector.backend", backend_name())
                 span.set_attribute("vector.points", len(points))
                 store = get_store()
-                store.ensure_ready(dense_size=len(dense_vectors[0]))
+                # Issue #229: one collection per classification -- this
+                # document's chunks all carry doc.classification, so that's
+                # the one collection this ingestion needs ready.
+                store.ensure_ready(
+                    dense_size=len(dense_vectors[0]), classification=doc.classification
+                )
                 store.upsert(points)
 
             doc.status = "embedded"

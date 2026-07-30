@@ -113,7 +113,9 @@ def _execute_supersede(
     """The actual swap -- only called after _validate_supersede has already
     passed, so this is expected not to fail."""
     # #160: through the backend seam (Qdrant by default, Milvus opt-in).
-    get_store().delete_document_chunks(str(old_doc.id))
+    # #229: old_doc's classification is never corrected here, so it still
+    # names the collection its chunks live in.
+    get_store().delete_document_chunks(str(old_doc.id), old_doc.classification)
     old_doc.status = "superseded"
     old_doc.updated_at = datetime.now(UTC)
     session.add(old_doc)
@@ -145,6 +147,12 @@ def approve(
     doc = _load_pending(session, doc_id, lock=True)
     _check_curator_authority(user, doc, session)
 
+    # #229: which collection this document's chunks are stamped with *before*
+    # any correction below -- a classification correction moves them to a
+    # different collection rather than writing in place, and this is what
+    # locates the current one.
+    original_classification = doc.classification
+
     if corrections:
         if corrections.classification:
             doc.classification = corrections.classification
@@ -172,8 +180,13 @@ def approve(
             qdrant_fields["releasability"] = doc.releasability
         if corrections.access_scope is not None:
             qdrant_fields["access_scope"] = doc.access_scope
+    # #229: the collection the chunks end up in after this call -- the target
+    # of a classification correction, or unchanged if there wasn't one. This
+    # is what a revert below must target, since by the time a revert could run
+    # the chunks already live here, not at original_classification.
+    resulting_classification = doc.classification
     store = get_store()
-    store.update_document_payload(str(doc.id), qdrant_fields)
+    store.update_document_payload(str(doc.id), original_classification, qdrant_fields)
 
     # NFR-13: Qdrant now already shows the new document as `approved`, but
     # nothing is durable yet -- Postgres (the system of record for the
@@ -211,7 +224,9 @@ def approve(
         session.commit()
     except Exception:
         try:
-            store.update_document_payload(str(doc.id), {"status": "pending_review"})
+            store.update_document_payload(
+                str(doc.id), resulting_classification, {"status": "pending_review"}
+            )
         except Exception:
             logger.exception(
                 "approval of document %s failed and the Qdrant status revert also "
@@ -244,7 +259,7 @@ def reject(
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(UTC)
     store = get_store()
-    store.update_document_payload(str(doc.id), {"status": doc.status})
+    store.update_document_payload(str(doc.id), doc.classification, {"status": doc.status})
     # NFR-13: same reasoning as approve() above -- revert the Qdrant write if
     # the Postgres commit doesn't durably land, so the two stores don't end up
     # disagreeing about whether this document is still pending.
@@ -271,7 +286,9 @@ def reject(
         session.commit()
     except Exception:
         try:
-            store.update_document_payload(str(doc.id), {"status": "pending_review"})
+            store.update_document_payload(
+                str(doc.id), doc.classification, {"status": "pending_review"}
+            )
         except Exception:
             logger.exception(
                 "rejection of document %s failed and the Qdrant status revert also "

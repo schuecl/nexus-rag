@@ -66,7 +66,8 @@ class _FakeStore:
     def __init__(self, on_delete):
         self._on_delete = on_delete
 
-    def delete_document_chunks(self, document_id):
+    def delete_document_chunks(self, document_id, classification):
+        del classification
         self._on_delete(document_id)
 
 
