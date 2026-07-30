@@ -87,10 +87,11 @@ see those bullets below for the full before/after evidence.
 See "What's stubbed vs working" below for the complete, current list.
 
 **Schema note:** this version writes chunks with two named Qdrant vectors (`dense` +
-`bm25`) instead of one unnamed vector. If you have a Qdrant volume from before hybrid
-search was added, run `docker compose down -v` first -- `ensure_collection` only
-configures a collection when it doesn't already exist, so a stale volume won't pick up
-the new schema on its own.
+`bm25`) instead of one unnamed vector, and (issue #229) into one collection per
+Classification level instead of a single shared `nexus_rag_chunks`. If you have a Qdrant
+volume from before either change, run `docker compose down -v` first -- `ensure_collection`
+only configures a collection when it doesn't already exist, so a stale volume won't pick up
+the new schema, or get split into the new per-classification collections, on its own.
 
 ## Running on a GPU host (optional)
 
@@ -653,6 +654,22 @@ the docs, not a silent "it works" — flag it if you find one.
   to the chunks' Qdrant payload, not just the Postgres row (`common/qdrant_store.py`,
   called from `ingestion-api/app/routes/curate.py`) — that's what actually changes
   query-time visibility.
+- **One Qdrant collection per Classification level, not one shared collection (issue
+  #229) — tested against mocks, not yet validated against a live environment.**
+  `common/qdrant_store.py` derives a collection per admin-configured Classification value
+  and every ingestion/curation/supersession/purge path is scoped to it; `qdrant_backend.py`
+  fans `hybrid_query` out over every collection the caller is cleared for and fuses results
+  by rank rather than by score (`common/vector_store.fuse_ranked`), since BM25 IDF is now
+  computed per collection, each now classification-skewed rather than corpus-wide. Pure-logic
+  coverage exists
+  (`tests/unit/common/test_classification_collections.py`,
+  `test_qdrant_backend_fanout.py`, `test_rrf_fusion.py`) against a fake Qdrant client, but
+  this has not yet been run against a real `docker compose up` stack — that would confirm
+  actual collection lifecycle behavior and whether recall holds under the new IDF scope.
+  `scripts/golden_queries.json` has not been re-baselined against it either; see
+  `docs/testing.md`'s #229 section for what specifically remains. The Milvus backend
+  (#160) explicitly does not implement this split (`common/milvus_store.py`'s module
+  docstring) and keeps its pre-#229 single-collection behavior.
 - **Async ingestion pipeline with real progress states (FR-8), on a durable queue
   (NFR-11)** — `POST /documents` (`ingestion-api`) validates the request synchronously
   (auth, mandatory tagging, FR-7 supersede-target checks), durably stores the original

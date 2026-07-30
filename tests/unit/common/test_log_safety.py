@@ -63,7 +63,7 @@ class TestPurgeLogging:
                 return None
 
         class _FakeStore:  # #160: purge goes through the vector-store seam now
-            def delete_document_chunks(self, _i):
+            def delete_document_chunks(self, _i, _classification):
                 return None
 
         monkeypatch.setattr(purge_mod, "get_store", _FakeStore)
