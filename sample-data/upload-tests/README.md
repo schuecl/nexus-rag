@@ -12,7 +12,9 @@ INGESTION_API_URL=http://localhost:8001 \
 python scripts/ingest_upload_test_files.py
 ```
 
-The PNG and JPG files are negative-test fixtures. Image-only uploads are not
-supported document formats, so the responsive browser form should reject them
-before submission. A direct API submission is accepted into the asynchronous
-queue and then reaches `failed` when the worker validates the file extension.
+The PNG and JPG files were negative-test fixtures until issue #241: image
+uploads are now supported document formats, OCR'd by the worker
+(`services/ingestion-worker/app/ocr.py`). These two are photographs without
+legible text, so a submission is accepted, OCR finds nothing to read, and the
+document reaches `failed` with an actionable "no readable text" message --
+they now exercise the no-text failure path rather than the extension gate.

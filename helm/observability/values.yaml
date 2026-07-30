@@ -1,0 +1,386 @@
+# Nexus RAG observability backends (issue #257).
+#
+# Every block below carries the issue/requirement that motivated it, matching
+# helm/nexus-rag/values.yaml's convention -- the comments are the design record,
+# not decoration.
+#
+# READ FIRST if you are deploying this: `externalGrafana` and
+# `externalAccess.loadBalancerSourceRanges` are the two settings that decide
+# whether this install is safe. Prometheus, Loki, Tempo, and Alertmanager have
+# no authentication of their own (see loki.yml's `auth_enabled: false`), so a
+# LoadBalancer with no source ranges publishes read access to the corpus's
+# operational telemetry to anything that can route to the address.
+
+global:
+  # Air-gapped registry the images have been pre-staged into (NFR-1: nothing is
+  # fetched from an external registry at runtime). Left empty, images resolve
+  # against whatever the node's container runtime is configured for, which is
+  # only appropriate for a connected dev cluster.
+  imageRegistry: "registry.internal.example.mil/nexus-rag"
+  imagePullSecrets: []
+  # Extra labels stamped onto every object this chart creates.
+  labels: {}
+
+# ---------------------------------------------------------------------------
+# The nexus-rag release this stack observes.
+#
+# Compose could hardcode `ingestion-api:8001` because Compose service names are
+# stable. In-cluster the Service and pod names are derived from the *other*
+# chart's release name, so the scrape config has to be told what it is. Getting
+# this wrong is silent: Prometheus simply reports every nexus-rag target as
+# DOWN and every dashboard renders "No data".
+# ---------------------------------------------------------------------------
+nexusRag:
+  # Release name of the nexus-rag chart (`helm install <this> ./helm/nexus-rag`).
+  releaseName: nexus-rag
+  # Namespace it is installed in. Empty = this chart's own release namespace.
+  namespace: ""
+  # Ports the four app services expose /metrics on. These are container ports,
+  # not Service ports: the app services are scraped by pod discovery, not
+  # through their Services -- see prometheus-configmap.yaml for why.
+  ports:
+    ingestionApi: 8001
+    orchestrationMcp: 8002
+    rerankerService: 8003
+    ingestionWorker: 8004
+  # Infrastructure components the nexus-rag chart deploys, scraped through
+  # their Services (they are single-instance StatefulSets, so the
+  # one-arbitrary-pod problem that applies to the app services does not).
+  qdrant:
+    enabled: true
+    port: 6333
+    # Qdrant serves /metrics behind API-key auth when the key is set. Prometheus
+    # cannot expand env vars inside prometheus.yml, so the key is projected as a
+    # file and referenced with `authorization.credentials_file` -- the Compose
+    # stack fakes the same thing with a shell prologue in its entrypoint.
+    # Leave existingSecret empty to scrape without credentials.
+    existingSecret: ""
+    secretKey: "qdrant-read-only-api-key"
+  # #160: the either/or alternative to Qdrant. On a Qdrant deployment this
+  # target stays DOWN, which is the expected state -- one backend, never both.
+  milvus:
+    enabled: false
+    port: 9091
+  nats:
+    enabled: true
+  # Keycloak is external to both charts (helm/nexus-rag integrates with it by
+  # configuration, it does not deploy it), so unlike Compose's `keycloak:9000`
+  # there is no name this chart can guess. Feeds the Identity dashboard.
+  keycloak:
+    enabled: false
+    # host:port serving Keycloak's management /metrics -- port 9000 by default
+    # in Keycloak 23+, which is NOT the port that serves the realm endpoints.
+    target: ""
+
+# ---------------------------------------------------------------------------
+# External, pre-existing Grafana.
+#
+# This chart never deploys Grafana. These values only affect what the
+# post-install NOTES print and what grafana-external/datasources.yaml is
+# generated from -- nothing here creates a Kubernetes object.
+# ---------------------------------------------------------------------------
+externalGrafana:
+  # Where the air-gapped Grafana lives, for the NOTES output only.
+  url: ""
+  # Rendered into a ConfigMap the operator can `kubectl get -o jsonpath` and
+  # paste into the external Grafana's provisioning directory, with the
+  # LoadBalancer addresses already substituted in.
+  emitDatasourcesConfigMap: true
+  # The Documents dashboard queries Postgres directly rather than through
+  # Prometheus, so external Grafana needs its own path to the database and the
+  # `document_metrics` view must already exist (infra/postgres/
+  # document-metrics-view.sql). This chart cannot create either; these values
+  # only feed the generated datasource file.
+  documentsDatasource:
+    enabled: true
+    host: ""
+    port: 5432
+    database: nexus_rag
+    # Read-only role granted SELECT on document_metrics only.
+    user: grafana_ro
+
+# ---------------------------------------------------------------------------
+# Shared LoadBalancer settings for the four stores Grafana reads.
+#
+# loadBalancerSourceRanges is not optional in practice. These backends are
+# unauthenticated; the only thing standing between the address and the corpus's
+# operational telemetry is this list.
+# ---------------------------------------------------------------------------
+externalAccess:
+  # Applied to every LoadBalancer Service this chart creates, before each
+  # component's own annotations (which win on conflict).
+  annotations: {}
+  # CIDRs allowed to reach the LoadBalancer addresses -- normally just the
+  # subnet the external Grafana sits on. Empty means "no restriction", which
+  # the chart refuses unless allowUnrestricted is set.
+  loadBalancerSourceRanges: []
+  # Guard rail: rendering a LoadBalancer with an empty source-range list fails
+  # the template rather than silently publishing an open endpoint. Set true
+  # only when the platform restricts access some other way (an external
+  # firewall, a private LB class).
+  allowUnrestricted: false
+  # `Local` preserves the client source IP, which is what makes
+  # loadBalancerSourceRanges meaningful on some providers; it also means
+  # traffic only reaches nodes running the pod.
+  externalTrafficPolicy: Cluster
+  # Some providers select a pool by class rather than by annotation.
+  loadBalancerClass: ""
+
+# ---------------------------------------------------------------------------
+# Prometheus (#133 Compose parity: prom/prometheus:v3.11.3)
+# ---------------------------------------------------------------------------
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    # NFR-16: pinned, never :latest. Matches docker-compose.yml exactly so the
+    # Compose stack and the cluster run the same build.
+    tag: "v3.11.3"
+  service:
+    # LoadBalancer so the external Grafana can reach it by IP.
+    type: LoadBalancer
+    port: 9090
+    # Pre-assigned address from the environment's pool. Empty lets the provider
+    # allocate one, which the NOTES then print.
+    loadBalancerIP: ""
+    annotations: {}
+  scrapeInterval: 10s
+  evaluationInterval: 10s
+  # 15d matches the Compose stack's --storage.tsdb.retention.time.
+  retention: 15d
+  # Tempo's metrics-generator remote-writes service-graph and span metrics here;
+  # without the receiver enabled the service map in Grafana renders empty, which
+  # reads as "nothing is instrumented".
+  enableRemoteWriteReceiver: true
+  # #133's blackbox probes cover services with no /metrics of their own. These
+  # are URLs as seen from inside the cluster; the LibreChat/LiteLLM/Ollama ones
+  # are left to the operator because this chart does not deploy them.
+  blackboxTargets: []
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  # NFR-3: pod/service discovery is namespaced to the nexus-rag namespace, not
+  # cluster-wide. Set true only if the nexus-rag release spans namespaces.
+  rbac:
+    clusterWide: false
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+# ---------------------------------------------------------------------------
+# Alertmanager (prom/alertmanager:v0.32.1)
+# ---------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+  image:
+    repository: prom/alertmanager
+    tag: "v0.32.1"           # NFR-16
+  service:
+    type: LoadBalancer
+    port: 9093
+    loadBalancerIP: ""
+    annotations: {}
+  # Dev-safe default carried over from infra/observability/alertmanager.yml: a
+  # single no-op receiver, so alerts are visible in Alertmanager and Grafana
+  # without paging anyone. Production replaces this with the environment's
+  # approved notification integration.
+  config: {}
+  persistence:
+    enabled: false
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# Loki (grafana/loki:3.7.2)
+# ---------------------------------------------------------------------------
+loki:
+  enabled: true
+  image:
+    repository: grafana/loki
+    tag: "3.7.2"             # NFR-16
+  service:
+    type: LoadBalancer
+    port: 3100
+    loadBalancerIP: ""
+    annotations: {}
+  # 168h, matching infra/observability/loki.yml. Note this is a *log* retention
+  # window and is not the corpus retention policy (docs/governance.md).
+  retentionPeriod: 168h
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+# ---------------------------------------------------------------------------
+# Tempo (grafana/tempo:2.10.5)
+# ---------------------------------------------------------------------------
+tempo:
+  enabled: true
+  image:
+    repository: grafana/tempo
+    tag: "2.10.5"            # NFR-16
+  service:
+    type: LoadBalancer
+    port: 3200
+    loadBalancerIP: ""
+    annotations: {}
+  otlpPorts:
+    grpc: 4317
+    http: 4318
+  blockRetention: 168h
+  # Derived series (service graphs, span metrics) are produced as spans arrive
+  # and remote-written to Prometheus -- Tempo does not compute them on demand.
+  metricsGenerator:
+    enabled: true
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+# ---------------------------------------------------------------------------
+# OTLP collector (otel/opentelemetry-collector-contrib:0.153.0)
+#
+# ClusterIP, not LoadBalancer: its only clients are the four app services
+# inside the cluster (#134). Set observability.tracing.otlpEndpoint in the
+# nexus-rag chart to this Service to turn tracing on -- the NOTES print it.
+# ---------------------------------------------------------------------------
+otelCollector:
+  enabled: true
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.153.0"           # NFR-16
+  service:
+    type: ClusterIP
+    grpcPort: 4317
+    httpPort: 4318
+  # service.telemetry.metrics.address is ignored by Collector >= 0.123, so the
+  # pull reader is configured explicitly -- otherwise Prometheus's :8888 target
+  # does not exist on the pinned release.
+  telemetryPort: 8888
+  healthCheckPort: 13133
+  memoryLimitMib: 256
+  replicas: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# Alloy log shipper (grafana/alloy:v1.16.1)
+#
+# The Compose config discovers containers over the Docker socket proxy. That
+# has no Kubernetes equivalent, so this is a DaemonSet doing
+# discovery.kubernetes + tailing /var/log/pods instead -- a rewrite, not a port.
+# ---------------------------------------------------------------------------
+alloy:
+  enabled: true
+  image:
+    repository: grafana/alloy
+    tag: "v1.16.1"           # NFR-16
+  port: 12345
+  # Label this stack's log lines so the Component logs dashboard's
+  # `environment` filter has something to match.
+  environmentLabel: production
+  # Reading other pods' logs is host-level authority. Scoped to the nexus-rag
+  # namespace by default; cluster-wide only if the release spans namespaces.
+  rbac:
+    clusterWide: false
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# Exporters. All ClusterIP -- only in-cluster Prometheus consumes them, and an
+# exporter on a LoadBalancer is attack surface with no consumer.
+# ---------------------------------------------------------------------------
+exporters:
+  postgres:
+    # Feeds the Datastores dashboard. Needs a monitoring role on the external
+    # Postgres (NFR-3: not the application's own credentials).
+    enabled: false
+    image:
+      repository: quay.io/prometheuscommunity/postgres-exporter
+      tag: "v0.19.1"         # NFR-16
+    port: 9187
+    # Secret holding a libpq URI as DATA_SOURCE_NAME. Required when enabled --
+    # the chart will not construct a DSN from a plaintext value.
+    existingSecret: ""
+    secretKey: "DATA_SOURCE_NAME"
+    resources:
+      requests: {cpu: "50m", memory: "64Mi"}
+      limits: {cpu: "250m", memory: "128Mi"}
+  nats:
+    # Feeds the Messaging (JetStream) dashboard.
+    enabled: true
+    image:
+      repository: natsio/prometheus-nats-exporter
+      tag: "0.20.1"          # NFR-16
+    port: 7777
+    # NATS monitoring port on the nexus-rag release's headless Service.
+    monitorPort: 8222
+    resources:
+      requests: {cpu: "50m", memory: "64Mi"}
+      limits: {cpu: "250m", memory: "128Mi"}
+  blackbox:
+    # Probes services that expose no /metrics at all (Ollama, LibreChat) or
+    # ship none in this stack (LiteLLM). Only useful once
+    # prometheus.blackboxTargets is populated.
+    enabled: true
+    image:
+      repository: prom/blackbox-exporter
+      tag: "v0.28.0"         # NFR-16
+    port: 9115
+    resources:
+      requests: {cpu: "50m", memory: "64Mi"}
+      limits: {cpu: "250m", memory: "128Mi"}
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy (issue #110's posture, applied to this chart's own pods).
+#
+# Off by default, unlike the nexus-rag chart: this chart's whole purpose is to
+# be reachable from outside the cluster, and a default-deny policy written
+# against assumptions about where the external Grafana sits is more likely to
+# break the install than to protect it. Turn it on and set grafanaCIDRs.
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  # CIDRs allowed to reach Prometheus/Loki/Tempo/Alertmanager -- the external
+  # Grafana. Distinct from externalAccess.loadBalancerSourceRanges: that is
+  # enforced by the cloud LB, this by the CNI. Both, ideally.
+  grafanaCIDRs: []
+  # Namespaces whose pods may push OTLP to the collector and logs to Loki.
+  # Empty defaults to the nexus-rag namespace.
+  allowedNamespaces: []

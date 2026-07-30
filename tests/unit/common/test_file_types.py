@@ -54,7 +54,7 @@ class TestAcceptsWhatThePipelineCanParse:
 
 
 class TestRejectsUnsupportedExtensions:
-    @pytest.mark.parametrize("filename", ["archive.zip", "image.png", "run.exe", "noextension"])
+    @pytest.mark.parametrize("filename", ["archive.zip", "image.bmp", "run.exe", "noextension"])
     def test_unsupported_extension_is_rejected(self, filename):
         with pytest.raises(UnsupportedUpload) as exc:
             validate_upload(filename, TEXT)
@@ -109,13 +109,17 @@ class TestRejectsMismatchedContent:
         with pytest.raises(UnsupportedUpload) as exc:
             validate_upload("image.txt", b"\x89PNG\r\n\x1a\n")
 
-        assert "PNG" in str(exc.value)
+        # Since #241 PNG is a *supported* type, so the mismatch is named as
+        # ".png" (rename it and it parses) rather than as a foreign format.
+        assert ".png" in str(exc.value)
 
     @pytest.mark.parametrize(
         ("head", "expected"),
         [
-            (b"\x89PNG\r\n\x1a\n", "PNG"),
-            (b"\xff\xd8\xff\xe0\x00\x10JF", "JPEG"),
+            # #241: PNG/JPEG are supported types now, so a mismatch names the
+            # extension that WOULD parse rather than calling them foreign.
+            (b"\x89PNG\r\n\x1a\n", ".png"),
+            (b"\xff\xd8\xff\xe0\x00\x10JF", ".jp"),
             (b"Rar!\x1a\x07\x00\x00", "RAR"),
             (b"\x1f\x8b\x08\x00\x00\x00\x00\x00", "gzip"),
         ],
@@ -125,6 +129,29 @@ class TestRejectsMismatchedContent:
             validate_upload("notes.md", head)
 
         assert expected in str(exc.value)
+
+    # --- issue #241: image formats are content now ---------------------------
+
+    @pytest.mark.parametrize(
+        ("filename", "head"),
+        [
+            ("scan.png", b"\x89PNG\r\n\x1a\n"),
+            ("scan.jpg", b"\xff\xd8\xff\xe0\x00\x10JF"),
+            ("scan.jpeg", b"\xff\xd8\xff\xe1\x00\x18Ex"),
+            ("scan.tif", b"II*\x00\x08\x00\x00\x00"),
+            ("scan.tiff", b"MM\x00*\x00\x00\x00\x08"),
+        ],
+    )
+    def test_image_uploads_accepted(self, filename, head):
+        validate_upload(filename, head)
+
+    def test_image_name_with_foreign_bytes_still_rejected(self):
+        # The mismatch direction #211 exists for: a .png that is really a PDF
+        # must not reach the OCR path.
+        with pytest.raises(UnsupportedUpload) as exc:
+            validate_upload("scan.png", b"%PDF-1.7\n")
+
+        assert ".pdf" in str(exc.value)
 
     def test_text_that_merely_looks_unusual_is_still_accepted(self):
         # No NUL byte -- UTF-8 prose in any language is fine, and a check that

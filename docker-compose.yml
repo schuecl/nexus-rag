@@ -231,10 +231,14 @@ services:
       OLLAMA_HOST: ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       GENERATION_MODEL: ${GENERATION_MODEL:-qwen2.5:7b-instruct}
+      # #92: only pulled when set -- image captioning is opt-in, and a
+      # multi-GB vision model must not become a side effect of `up`.
+      VISION_MODEL: ${VISION_MODEL:-}
     entrypoint: ["sh", "-c"]
     command:
       - |
-        ollama pull "$$EMBEDDING_MODEL" && ollama pull "$$GENERATION_MODEL"
+        ollama pull "$$EMBEDDING_MODEL" && ollama pull "$$GENERATION_MODEL" \
+          && { [ -z "$$VISION_MODEL" ] || ollama pull "$$VISION_MODEL"; }
     restart: "no"
 
   reranker-service:
@@ -448,6 +452,9 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      # #92: image/figure captioning, opt-in -- empty (the default) disables
+      # it entirely. ollama-model-init pulls this model when set.
+      VISION_MODEL: ${VISION_MODEL:-}
       CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       OBJECT_STORE_BACKEND: filesystem

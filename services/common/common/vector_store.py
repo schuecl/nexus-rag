@@ -25,6 +25,18 @@ attributable to the engine, not to divergent plumbing.
 FR-26 note: the mandatory access filter is applied *inside* hybrid_query by
 each backend, built server-side from verified claims -- call sites cannot
 forget it and clients cannot supply it, same as before this seam existed.
+
+Issue #229: QdrantStore additionally splits the corpus into one collection
+per Classification level (see common/qdrant_store.py's module docstring for
+why) and fans hybrid_query out across every collection an allowed set of
+classifications resolves to, fusing the per-collection results by rank with
+`fuse_ranked` below -- per-collection scores aren't comparable once BM25's
+IDF is relative to a smaller, classification-skewed corpus. `ensure_ready`,
+`update_document_payload`, and `delete_document_chunks` take a `classification`
+argument for the same reason: it selects which collection the operation
+applies to. MilvusStore does not implement the split (see its module
+docstring) -- it accepts the same parameter and ignores it, an explicit,
+recorded "not yet" rather than a silent gap.
 """
 
 from __future__ import annotations
@@ -70,12 +82,18 @@ class VectorStoreUnavailable(Exception):
 
 
 class VectorStore(Protocol):
-    def ensure_ready(self, dense_size: int) -> None:
-        """Create the collection/schema if it doesn't exist (idempotent)."""
+    def ensure_ready(self, dense_size: int, classification: str) -> None:
+        """Create the collection/schema for `classification` if it doesn't
+        exist (idempotent). Issue #229: one collection per classification
+        level for QdrantStore; MilvusStore ignores the argument (see its
+        module docstring)."""
 
     def stored_embedding_model(self) -> str | None:
         """#122 provenance: the embedding model stamped on stored chunks, or
-        None when the collection is absent/empty/pre-stamp."""
+        None when nothing exists yet/is empty/predates the stamp. Issue #229:
+        for QdrantStore this is checked across every classification
+        collection, not just one -- see
+        qdrant_store.any_collection_embedding_model."""
 
     def upsert(self, points: list[ChunkPoint]) -> None: ...
 
@@ -90,6 +108,10 @@ class VectorStore(Protocol):
     ) -> list[Hit]:
         """Dense + sparse legs fused with RRF, with the mandatory FR-26
         filter (built here, server-side, from `claims`) applied to BOTH legs.
+        Issue #229: for QdrantStore, `allowed_classifications` also selects
+        *which collections* are queried -- one per classification the caller
+        is cleared for -- and per-collection results are fused again by rank
+        (`fuse_ranked`) since scores aren't comparable across collections.
         Raises VectorStoreUnavailable when the engine/collection can't be
         queried."""
 
@@ -97,12 +119,54 @@ class VectorStore(Protocol):
         """The applied-filter description rag_search returns to callers and
         writes to the FR-31 audit detail."""
 
-    def update_document_payload(self, document_id: str, fields: dict) -> None:
+    def update_document_payload(self, document_id: str, classification: str, fields: dict) -> None:
         """FR-13: propagate curation decisions (status, corrected tags) to
-        every chunk of a document."""
+        every chunk of a document. `classification` is the value the chunks
+        are *currently* stamped with (issue #229: which collection they're
+        currently in) -- if `fields` corrects `classification` to something
+        else, QdrantStore moves the chunks to the target collection rather
+        than writing in place."""
 
-    def delete_document_chunks(self, document_id: str) -> None:
-        """FR-7 supersede / #123 purge: remove every chunk of a document."""
+    def delete_document_chunks(self, document_id: str, classification: str) -> None:
+        """FR-7 supersede / #123 purge: remove every chunk of a document.
+        `classification` selects which collection to delete from (issue
+        #229)."""
+
+
+# Reciprocal Rank Fusion constant, matching the informal literature default
+# (and Qdrant's own FusionQuery(Fusion.RRF), which uses the same value) --
+# not tuned for this corpus, kept consistent with the per-collection fusion
+# each backend already does so the cross-collection pass behaves the same way.
+DEFAULT_RRF_K = 60
+
+
+def fuse_ranked(result_lists: list[list[Hit]], *, limit: int, k: int = DEFAULT_RRF_K) -> list[Hit]:
+    """Reciprocal Rank Fusion over already-ranked hit lists from separate
+    collections or queries.
+
+    Issue #229: once retrieval fans out over one collection per
+    classification level, per-collection similarity scores are no longer
+    comparable -- BM25's IDF is computed server-side from each collection's
+    own (now classification-skewed) document statistics, so the same query
+    against the same text yields a different score depending on which
+    collection it landed in. Combining results across collections therefore
+    has to be rank-based, not score-based. RRF is what the pipeline already
+    uses to fuse the dense and sparse legs *within* one collection
+    (Qdrant/Milvus-native FusionQuery/RRFRanker); this is the same primitive
+    applied a second time, client-side, across collections.
+
+    A chunk belongs to exactly one classification, so the same id can appear
+    in at most one input list -- this never needs to merge scores for one id
+    across lists, only combine and re-sort what's already there.
+    """
+    scores: dict[str, float] = {}
+    hits_by_id: dict[str, Hit] = {}
+    for hits in result_lists:
+        for rank, hit in enumerate(hits, start=1):
+            scores[hit.id] = scores.get(hit.id, 0.0) + 1.0 / (k + rank)
+            hits_by_id.setdefault(hit.id, hit)
+    ordered = sorted(hits_by_id.values(), key=lambda h: scores[h.id], reverse=True)
+    return [Hit(id=h.id, score=scores[h.id], payload=h.payload) for h in ordered[:limit]]
 
 
 def backend_name() -> str:

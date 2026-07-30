@@ -1,0 +1,89 @@
+{{- /*
+#257 / #134: OTLP collector, from infra/observability/otel-collector.yml.
+
+ClusterIP and a Deployment (not a StatefulSet): it holds no state beyond an
+in-flight batch, and its only clients are the four nexus-rag app services. The
+NOTES print the endpoint to set as the nexus-rag chart's
+observability.tracing.otlpEndpoint -- tracing is a no-op until that value is
+set (services/common/common/tracing.py returns early when
+OTEL_EXPORTER_OTLP_ENDPOINT is unset), so deploying this chart alone does not
+turn tracing on.
+*/}}
+{{- if .Values.otelCollector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-otel-collector
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: {{ .Values.otelCollector.service.type }}
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "otel-collector") | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.otelCollector.service.grpcPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: {{ .Values.otelCollector.service.httpPort }}
+      targetPort: otlp-http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "observability.fullname" . }}-otel-collector
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: {{ .Values.otelCollector.replicas }}
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "otel-collector") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/otel-collector-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 10001 | nindent 8 }}
+      containers:
+        - name: otel-collector
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.otelCollector.image) }}
+          args:
+            - --config=/etc/otelcol/config.yml
+          ports:
+            - name: otlp-grpc
+              containerPort: {{ .Values.otelCollector.service.grpcPort }}
+            - name: otlp-http
+              containerPort: {{ .Values.otelCollector.service.httpPort }}
+            - name: telemetry
+              containerPort: {{ .Values.otelCollector.telemetryPort }}
+            - name: health
+              containerPort: {{ .Values.otelCollector.healthCheckPort }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-otel-collector
+{{- end }}

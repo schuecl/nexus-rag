@@ -1,0 +1,57 @@
+# mcp-grafana service for the Grafana Assistant agent -- merge into
+# docker-compose.yml (or adapt into a Deployment for the chart). Not wired in
+# by default; this is a research artifact, see README.md.
+
+services:
+  grafana-mcp:
+    # NFR-16: pin a real tag (better: a digest) before use -- no :latest.
+    # Check the flag set against this exact version's --help output; tool
+    # categories have grown across releases.
+    image: grafana/mcp-grafana:1.0.0
+    restart: unless-stopped
+    command:
+      - -t
+      - streamable-http
+      # Layer 3 (see README.md): write/admin tool categories are removed from
+      # the server itself, so they are never advertised to any model. Layer 1
+      # (Viewer-only service account) must hold even if this list is wrong.
+      - --disable-write
+      - --disable-admin
+      - --disable-incident
+      - --disable-oncall
+      - --disable-sift
+      - --disable-provisioning
+      - --disable-snapshot
+      - --disable-annotations
+      - --disable-rendering
+    environment:
+      GRAFANA_URL: "http://grafana:3000"
+      # Viewer-role service-account token, scoped per README.md step 1.
+      # Comes from .env; never commit a value.
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "${GRAFANA_MCP_VIEWER_TOKEN:?set in .env}"
+    # Internal-only on purpose: LibreChat reaches it over the compose network;
+    # no host port is published (same hardening rationale as issue #111).
+    expose:
+      - "8000"
+
+  # Typst MCP (grafana-reports skill): validate/preview typeset reports the
+  # agent authors from Grafana evidence. Upstream server is stdio-only
+  # (github.com/johannesbrandenburger/typst-mcp), so it needs a thin
+  # stdio->streamable-http bridge (e.g. `mcp-proxy` or `supergateway`) baked
+  # into the image -- see README.md "Typst reports" for the Dockerfile sketch;
+  # verify the base image's entrypoint before building. Pin a digest (NFR-16).
+  typst-mcp:
+    build: ./typst-mcp-bridge          # FROM ghcr.io/johannesbrandenburger/typst-mcp@sha256:<pin>
+    restart: unless-stopped
+    # Deliberately credential-free and egress-free: this container renders
+    # documents and nothing else. No GRAFANA_* env, internal-only network so
+    # package fetches can't phone home. The ONLY mount is the read-only
+    # vendored template set -- that's what lets `@preview` imports of the
+    # five allowlisted packages resolve offline instead of via network.
+    environment:
+      TYPST_PACKAGE_PATH: /vendored
+      TYPST_PACKAGE_CACHE_PATH: /vendored
+    volumes:
+      - ./context/report-templates/vendored:/vendored:ro
+    expose:
+      - "8001"

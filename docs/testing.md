@@ -186,9 +186,16 @@ The enforced `--cov-fail-under=85` applies to:
   Postgres/Qdrant or a model download and are therefore covered by the
   compose-level e2e, not the unit gate. Everything else in `common` measures
   ~99% today.
-- `app.chunking` + `app.parsing` (ingestion-worker) — the pure FR-3/FR-4
-  logic. `app.processing`/`app.embedding` are pipeline glue exercised by the
-  e2e job.
+- `app.chunking` + `app.parsing` + `app.ocr` (ingestion-worker) — the pure
+  FR-3/FR-4 logic. `app.processing`/`app.embedding` are pipeline glue
+  exercised by the e2e job. `app.ocr` (#241) is added by the service's own
+  `[tool.pytest.ini_options] addopts` rather than by ci.yml's matrix, because
+  that matrix string *is* part of the required check's name (see the
+  required-checks list above): editing it renames the check, the context both
+  `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
+  "Expected — waiting for status to be reported" until an admin re-pins it.
+  Making the names independent of the flags needs that same coordinated
+  ruleset edit, so it is tracked as #256 rather than done here.
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured
@@ -301,10 +308,32 @@ Validated against the live stack: `bob-query` and `carol-curator` (SECRET,
 FVEY/NATO) each saw 9 of 9 permitted documents and none of the six NOFORN/USA
 ones; `dave-admin` (SECRET, all four holdings) saw 15 of 15.
 
-The same run also establishes, empirically, that all three classification levels
-share one Qdrant collection today — 72 points in `nexus_rag_chunks`, 24
-UNCLASSIFIED / 27 CUI / 21 SECRET. That is the current design, and the evidence
-behind issue #229's proposal to split it.
+That run predates issue #229: at the time, all three classification levels shared
+one Qdrant collection -- 72 points in `nexus_rag_chunks`, 24 UNCLASSIFIED / 27 CUI
+/ 21 SECRET -- which was the evidence behind #229's proposal to split it.
+
+**#229 status: implemented, unit-tested against a fake Qdrant client, not yet
+validated against the live stack.** `common/qdrant_store.py` now derives one
+collection per Classification value (`classification_collection_name`), routes
+ingestion/curation/supersession/purge through it, and `qdrant_backend.py` fans
+`hybrid_query` out over every collection the caller is cleared for, fusing
+results by rank (`common/vector_store.fuse_ranked`) rather than by score --
+see `tests/unit/common/test_classification_collections.py`,
+`test_qdrant_backend_fanout.py`, and `test_rrf_fusion.py` for the pure-logic
+coverage (collection naming/routing, the classification-correction migration
+path including its partial-failure case, and the fusion arithmetic). What that
+coverage cannot exercise -- and what a `docker compose up` + golden-query run
+still needs to confirm before this is called *validated against a live
+environment* rather than merely *implemented* (see this file's confidence-label
+convention) -- is real Qdrant behavior: collections actually created on demand,
+`scroll`/`upsert`/`delete` pagination against a live server, and whether recall
+holds once BM25's IDF is computed per classification-skewed collection instead
+of over the whole corpus. **`scripts/golden_queries.json` has not been
+re-baselined against the split** -- the issue calls this out explicitly as part
+of the work, not something to discover when CI goes red, and it remains open:
+whoever next runs the live e2e job against this change should expect the
+`--baseline`/`--regression-tolerance` comparison (see above) to need a fresh
+baseline capture, not a regression fix.
 
 ## Known gaps / follow-ups
 

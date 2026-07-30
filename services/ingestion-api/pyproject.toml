@@ -5,7 +5,7 @@ description = "Upload, mandatory tagging, and curation queue API/UI (FR-1..FR-16
 requires-python = ">=3.11"
 dependencies = [
     # #134: request spans (FastAPIInstrumentor in app/main.py).
-    "opentelemetry-instrumentation-fastapi>=0.51b0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
     "fastapi>=0.140.7",
     "uvicorn[standard]>=0.51.0",
     "python-multipart>=0.0.32",

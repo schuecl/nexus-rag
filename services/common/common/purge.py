@@ -93,6 +93,9 @@ def purge_document(
     original_status = doc.status
     chunk_count = doc.chunk_count
     object_key = doc.original_object_key
+    # Captured before any mutation: step 4 below scrubs doc.classification,
+    # and issue #229 needs the pre-scrub value to find the right collection.
+    classification = doc.classification
 
     # 1. Make it unretrievable before destroying anything. Committed on its own
     #    so a failure below cannot leave the document still matchable.
@@ -104,7 +107,7 @@ def purge_document(
     # 2. Vector store. Idempotent by filter -- deleting no-longer-present
     #    chunks succeeds.
     try:
-        get_store().delete_document_chunks(str(doc.id))
+        get_store().delete_document_chunks(str(doc.id), classification)
     except Exception as exc:
         raise PurgeError(
             f"could not delete chunks for {document_id}: {exc}. The document is "

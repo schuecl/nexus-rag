@@ -1,0 +1,87 @@
+{{- /*
+#257: Alertmanager, from infra/observability/alertmanager.yml.
+
+The default config keeps Compose's single no-op `local-ui` receiver: alerts are
+visible in Alertmanager and in Grafana's Alertmanager datasource without paging
+anyone. That is a dev-safe default, not a production one -- override
+alertmanager.config with the environment's approved notification integration.
+Shipping a plausible-looking email/webhook receiver instead would be worse: it
+would look configured while silently delivering nowhere.
+*/}}
+{{- if .Values.alertmanager.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "observability.fullname" . }}-alertmanager
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+spec:
+  replicas: 1
+  serviceName: {{ include "observability.fullname" . }}-alertmanager
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "alertmanager") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: alertmanager
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/alertmanager-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- /* prom/alertmanager runs as nobody (65534), same as prom/prometheus. */}}
+        {{- include "observability.podSecurityContext" 65534 | nindent 8 }}
+      containers:
+        - name: alertmanager
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.alertmanager.image) }}
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - name: http
+              containerPort: {{ .Values.alertmanager.service.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.alertmanager.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+            - name: data
+              mountPath: /alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-alertmanager
+        {{- if not .Values.alertmanager.persistence.enabled }}
+        {{- /* Losing silences and notification state on restart is acceptable
+               for the no-op default receiver; enable persistence once a real
+               receiver is configured, so a restart does not re-fire everything
+               that was silenced. */}}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.alertmanager.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.alertmanager.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.alertmanager.persistence.size }}
+  {{- end }}
+{{- end }}

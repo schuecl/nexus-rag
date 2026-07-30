@@ -1,0 +1,91 @@
+{{- /*
+#257: Tempo, from infra/observability/tempo.yml.
+
+The metrics_generator block is the part that is easy to drop and expensive to
+lose. Grafana's Tempo datasource enables the service map and span metrics, but
+those are *derived* series: Tempo does not compute them from stored traces on
+demand, the generator produces them as spans arrive and remote-writes them to
+Prometheus. Without this the service map renders empty, which reads as "nothing
+is instrumented" rather than "nothing is generating the metrics" -- and it needs
+Prometheus's --web.enable-remote-write-receiver on the other end
+(prometheus.enableRemoteWriteReceiver).
+*/}}
+{{- if .Values.tempo.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "observability.fullname" . }}-tempo
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tempo
+spec:
+  replicas: 1
+  serviceName: {{ include "observability.fullname" . }}-tempo
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "tempo") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: tempo
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/tempo-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "observability.podSecurityContext" 10001 | nindent 8 }}
+      containers:
+        - name: tempo
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.tempo.image) }}
+          args:
+            - -config.file=/etc/tempo/tempo.yml
+          ports:
+            - name: http
+              containerPort: {{ .Values.tempo.service.port }}
+            - name: otlp-grpc
+              containerPort: {{ .Values.tempo.otlpPorts.grpc }}
+            - name: otlp-http
+              containerPort: {{ .Values.tempo.otlpPorts.http }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.tempo.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+              readOnly: true
+            - name: data
+              mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-tempo
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.tempo.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.tempo.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.tempo.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.tempo.persistence.size }}
+  {{- end }}
+{{- end }}

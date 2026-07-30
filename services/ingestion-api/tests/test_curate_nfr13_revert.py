@@ -81,13 +81,13 @@ class _PayloadCalls:
     """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict | None]] = []
+        self.calls: list[tuple[str, str, str, dict | None]] = []
 
-    def update_document_payload(self, document_id: str, fields: dict) -> None:
-        self.calls.append(("update", document_id, fields))
+    def update_document_payload(self, document_id: str, classification: str, fields: dict) -> None:
+        self.calls.append(("update", document_id, classification, fields))
 
-    def delete_document_chunks(self, document_id: str) -> None:
-        self.calls.append(("delete", document_id, None))
+    def delete_document_chunks(self, document_id: str, classification: str) -> None:
+        self.calls.append(("delete", document_id, classification, None))
 
 
 def _break_commit(session: Session, error: Exception) -> None:
@@ -122,8 +122,8 @@ class TestApproveRevertsOnCommitFailure:
             curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
 
         assert _stub_qdrant.calls == [
-            ("update", str(doc.id), {"status": "approved"}),
-            ("update", str(doc.id), {"status": "pending_review"}),
+            ("update", str(doc.id), "CUI", {"status": "approved"}),
+            ("update", str(doc.id), "CUI", {"status": "pending_review"}),
         ]
 
     def test_revert_failure_does_not_mask_the_original_exception(
@@ -139,8 +139,8 @@ class TestApproveRevertsOnCommitFailure:
         session.refresh(doc)
         _break_commit(session, RuntimeError("db unavailable"))
 
-        def _broken_update(document_id: str, fields: dict) -> None:
-            _stub_qdrant.calls.append(("update", document_id, fields))
+        def _broken_update(document_id: str, classification: str, fields: dict) -> None:
+            _stub_qdrant.calls.append(("update", document_id, classification, fields))
             if fields == {"status": "pending_review"}:
                 raise ConnectionError("qdrant unreachable")
 
@@ -170,8 +170,8 @@ class TestRejectRevertsOnCommitFailure:
             )
 
         assert _stub_qdrant.calls == [
-            ("update", str(doc.id), {"status": "rejected"}),
-            ("update", str(doc.id), {"status": "pending_review"}),
+            ("update", str(doc.id), "CUI", {"status": "rejected"}),
+            ("update", str(doc.id), "CUI", {"status": "pending_review"}),
         ]
 
 
@@ -195,8 +195,8 @@ class TestSupersedeRevertsWhenOldDocumentDeleteFails:
         session.commit()
         session.refresh(new_doc)
 
-        def _broken_delete(document_id: str) -> None:
-            _stub_qdrant.calls.append(("delete", document_id, None))
+        def _broken_delete(document_id: str, classification: str) -> None:
+            _stub_qdrant.calls.append(("delete", document_id, classification, None))
             raise ConnectionError("qdrant delete failed")
 
         monkeypatch.setattr(_stub_qdrant, "delete_document_chunks", _broken_delete)
@@ -205,9 +205,9 @@ class TestSupersedeRevertsWhenOldDocumentDeleteFails:
             curate.approve(new_doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
 
         assert _stub_qdrant.calls == [
-            ("update", str(new_doc.id), {"status": "approved"}),
-            ("delete", str(old_doc.id), None),
-            ("update", str(new_doc.id), {"status": "pending_review"}),
+            ("update", str(new_doc.id), "CUI", {"status": "approved"}),
+            ("delete", str(old_doc.id), "CUI", None),
+            ("update", str(new_doc.id), "CUI", {"status": "pending_review"}),
         ]
 
 
@@ -246,6 +246,6 @@ class TestApproveAndRejectHappyPathsDoNotRevert:
 
         assert result.status in {"approved", "rejected"}
         assert len(_stub_qdrant.calls) == 1
-        fields = _stub_qdrant.calls[0][2]
+        fields = _stub_qdrant.calls[0][3]
         assert fields is not None
         assert fields["status"] == result.status

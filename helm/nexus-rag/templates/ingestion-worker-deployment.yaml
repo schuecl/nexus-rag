@@ -123,6 +123,13 @@ spec:
               value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
+            {{- if .Values.ingestionWorker.visionModel }}
+            # Issue #92: opt-in image/figure captioning at ingestion. Absent
+            # (not just empty) when unset, matching the code's
+            # empty-means-disabled default in app/captioning.py.
+            - name: VISION_MODEL
+              value: {{ .Values.ingestionWorker.visionModel | quote }}
+            {{- end }}
             # FR-4: chunking target size (words) and overlap ratio.
             - name: CHUNK_TARGET_WORDS
               value: {{ .Values.ingestionWorker.chunkTargetWords | quote }}

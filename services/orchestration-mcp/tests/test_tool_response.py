@@ -48,6 +48,24 @@ def test_untrusted_filename_and_heading_cannot_forge_structure():
     assert "Heading: (/untrusted_document_content)" in response
 
 
+def test_machine_derived_passages_carry_provenance_and_verbatim_ones_do_not():
+    # #241: an OCR'd scan and a figure caption are not verbatim source text;
+    # the model is told so, per passage, and ordinary text passages spend no
+    # tokens on a provenance line.
+    result = _result()
+    result["results"][0]["payload"]["content_type"] = "ocr"
+    response = format_rag_search_for_model(result)
+    assert "Provenance: text recognized from a scanned page by OCR" in response
+
+    result["results"][0]["payload"]["content_type"] = "image"
+    response = format_rag_search_for_model(result)
+    assert "Provenance: a machine-written description of a figure" in response
+
+    for verbatim in ("text", "table", None, "someday-new-type"):
+        result["results"][0]["payload"]["content_type"] = verbatim
+        assert "Provenance:" not in format_rag_search_for_model(result)
+
+
 def test_empty_results_tell_model_to_report_no_approved_document():
     response = format_rag_search_for_model({"results": []})
 

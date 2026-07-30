@@ -1,0 +1,122 @@
+{{- /*
+#257: the four Services the external, air-gapped Grafana connects to.
+
+Kept in one file rather than split per component because they are the chart's
+defining feature and the thing a reviewer most needs to read together: these
+are the only four objects here that are reachable from outside the cluster, and
+the LoadBalancer/source-range decision has to be identical across all of them.
+Everything else this chart deploys is ClusterIP or has no Service at all.
+
+Ordering matches the Grafana datasource list in grafana-external/datasources.yaml.
+
+The refusal to render an unrestricted LoadBalancer lives in
+observability.externalServiceSpec -- see _helpers.tpl.
+*/}}
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-prometheus
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  {{- include "observability.externalServiceAnnotations" (dict "root" . "svc" .Values.prometheus.service) | nindent 2 }}
+spec:
+  {{- include "observability.externalServiceSpec" (dict "root" . "component" "prometheus" "svc" .Values.prometheus.service) | nindent 2 }}
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "prometheus") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.prometheus.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- if .Values.loki.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-loki
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+  {{- include "observability.externalServiceAnnotations" (dict "root" . "svc" .Values.loki.service) | nindent 2 }}
+spec:
+  {{- include "observability.externalServiceSpec" (dict "root" . "component" "loki" "svc" .Values.loki.service) | nindent 2 }}
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "loki") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.loki.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- if .Values.tempo.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-tempo
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tempo
+  {{- include "observability.externalServiceAnnotations" (dict "root" . "svc" .Values.tempo.service) | nindent 2 }}
+spec:
+  {{- include "observability.externalServiceSpec" (dict "root" . "component" "tempo" "svc" .Values.tempo.service) | nindent 2 }}
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "tempo") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.tempo.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- if .Values.alertmanager.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-alertmanager
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+  {{- include "observability.externalServiceAnnotations" (dict "root" . "svc" .Values.alertmanager.service) | nindent 2 }}
+spec:
+  {{- include "observability.externalServiceSpec" (dict "root" . "component" "alertmanager" "svc" .Values.alertmanager.service) | nindent 2 }}
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "alertmanager") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.alertmanager.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- /*
+Tempo's OTLP receiver, and the collector's, are separate ClusterIP Services:
+trace *ingest* has different exposure requirements from the query API Grafana
+reads, and putting both on one LoadBalancer would publish a write path to
+anything allowed to read.
+*/}}
+{{- if .Values.tempo.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-tempo-otlp
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tempo
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "observability.componentSelectorLabels" (dict "root" . "component" "tempo") | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.tempo.otlpPorts.grpc }}
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: {{ .Values.tempo.otlpPorts.http }}
+      targetPort: otlp-http
+      protocol: TCP
+{{- end }}
