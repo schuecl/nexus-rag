@@ -104,6 +104,39 @@ class TestParseClaims:
         assert parsed.org is None
         assert parsed.rag_roles == []
 
+    def test_conflicting_clearance_roles_rejected(self, verified_env, mint_token):
+        # Issue #280 (gap G4): two distinct rag-clearance values used to
+        # resolve silently to whichever came first in rag_roles order.
+        token = mint_token(rag_roles=["rag-query", "rag-clearance:SECRET", "rag-clearance:CUI"])
+        with pytest.raises(claims_module.ConflictingClearanceError) as excinfo:
+            parse_claims(token)
+        # Both conflicting values named, so the Keycloak admin can fix the
+        # assignment from the error alone.
+        assert "CUI" in str(excinfo.value)
+        assert "SECRET" in str(excinfo.value)
+
+    def test_conflicting_clearance_is_a_pyjwt_error(self, verified_env, mint_token):
+        # Every entry point (ingestion-api get_current_user, session refresh,
+        # rag_search) rejects on jwt.PyJWTError -- the conflict must land in
+        # that hierarchy so it maps to 401, not an unhandled 500.
+        token = mint_token(rag_roles=["rag-clearance:SECRET", "rag-clearance:CUI"])
+        with pytest.raises(pyjwt.PyJWTError):
+            parse_claims(token)
+
+    def test_duplicate_identical_clearance_roles_accepted(self, verified_env, mint_token):
+        # Same value twice is redundant, not conflicting -- there is still
+        # exactly one interpretation of the user's ceiling.
+        token = mint_token(rag_roles=["rag-query", "rag-clearance:CUI", "rag-clearance:CUI"])
+        assert parse_claims(token).clearance == "CUI"
+
+    def test_conflicting_clearance_rejected_even_with_skip_verify(self, monkeypatch, mint_token):
+        # OIDC_SKIP_VERIFY bypasses the signature check only -- the claims
+        # schema still has to hold.
+        monkeypatch.setattr(claims_module, "OIDC_SKIP_VERIFY", True)
+        token = mint_token(rag_roles=["rag-clearance:SECRET", "rag-clearance:CUI"])
+        with pytest.raises(claims_module.ConflictingClearanceError):
+            parse_claims(token)
+
     def test_skip_verify_decodes_without_signature_check(self, monkeypatch, mint_token):
         monkeypatch.setattr(claims_module, "OIDC_SKIP_VERIFY", True)
         token = mint_token(persona="bob-query")
