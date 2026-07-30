@@ -144,3 +144,11 @@ class TestUserClaimsProperties:
         assert not claims.can_ingest
         assert not claims.can_query
         assert claims.curatable_orgs == []
+        assert not claims.can_purge
+
+    def test_can_purge_is_a_distinct_role_from_curation_and_admin(self):
+        assert UserClaims(sub="p", preferred_username="p", rag_roles=["rag-purge"]).can_purge
+        curator = UserClaims(
+            sub="c", preferred_username="c", rag_roles=["rag-curate:USAREUR-AF", "rag-admin"]
+        )
+        assert not curator.can_purge

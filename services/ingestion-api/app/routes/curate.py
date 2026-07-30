@@ -10,8 +10,9 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.deps import allowed_classifications, require_curator, verify_csrf
@@ -37,6 +38,183 @@ def list_queue(
         .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
     ).all()
     return docs
+
+
+# Issue #266: statuses a document can be edited from through the curation
+# "List" dashboard below. Deliberately excludes the in-flight pipeline states
+# (queued/processing/embedded -- the worker owns the row until it reaches
+# pending_review) and the terminal/destroyed ones (superseded/purging/purged),
+# where editing metadata would either race the worker or mutate a record that
+# is supposed to be frozen or already gone.
+EDITABLE_STATUSES = {"pending_review", "approved", "rejected"}
+
+
+@router.get("/documents")
+def list_documents(
+    status_filter: str | None = Query(None, alias="status"),
+    classification: str | None = None,
+    q: str | None = Query(
+        None,
+        description="Case-insensitive search across filename, "
+        "source/originator, document type, and uploader username",
+    ),
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+) -> Sequence[Document]:
+    """Issue #266: the "master list" -- every document (any status) the
+    curator holds authority over, not just the pending_review queue
+    /curate/queue above returns. Scoped identically (owner_org in
+    curatable_orgs); the filters below only ever narrow that set further,
+    never widen it.
+    """
+    stmt = select(Document).where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+    if status_filter:
+        stmt = stmt.where(Document.status == status_filter)
+    if classification:
+        stmt = stmt.where(Document.classification == classification)
+    if q:
+        needle = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Document.filename.ilike(needle),  # type: ignore[attr-defined]
+                Document.source_originator.ilike(needle),  # type: ignore[attr-defined]
+                Document.doc_type.ilike(needle),  # type: ignore[attr-defined]
+                Document.uploader_username.ilike(needle),  # type: ignore[attr-defined]
+            )
+        )
+    return session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
+
+
+class DocumentEdit(BaseModel):
+    classification: str | None = None
+    # FR-20/Section 6.3: "one or more" cardinality, same as DocumentMetadataIn
+    # at upload time -- an edit is not the place to relax that constraint, so
+    # an explicit empty list is rejected (422) rather than silently orphaning
+    # the document (no releasability caveat/no access scope at all).
+    releasability: list[str] | None = Field(default=None, min_length=1)
+    access_scope: list[str] | None = Field(default=None, min_length=1)
+    source_originator: str | None = None
+    doc_type: str | None = None
+    program_community: str | None = None
+    effective_date: str | None = None
+
+
+@router.patch("/documents/{doc_id}")
+def edit_metadata(
+    doc_id: uuid.UUID,
+    body: DocumentEdit,
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
+    """Issue #266: lets a curator correct a document's metadata after it has
+    already cleared curation, without going through supersession -- the gap
+    the issue calls out ("no mechanism to affect the metadata of an ingested
+    file after ingestion"). Same authority model as approve()/reject(): a 404
+    for a document outside the caller's curatable orgs (no existence oracle,
+    same reasoning as _check_curator_authority), and a re-check against the
+    *edited* classification/releasability so a curator can't use this to
+    approve-adjacent their way past their own clearance/releasability ceiling.
+
+    Deletion is deliberately NOT handled here -- that is the separate,
+    rag-purge-gated DELETE /documents/{id} in app/routes/upload.py
+    (common/purge.py). Purge is intentionally not curator authority (see
+    app/deps.require_purge), so the curation list page calls that existing
+    endpoint directly rather than this module growing a second, weaker path
+    to the same destructive action.
+    """
+    doc = session.get(Document, doc_id, with_for_update=True)
+    if doc is None or not user.can_curate_org(doc.owner_org):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    if doc.status not in EDITABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"document is '{doc.status}' and cannot be edited from the curation list -- "
+            f"only {', '.join(sorted(EDITABLE_STATUSES))} documents can be",
+        )
+    _check_curator_authority(user, doc, session)
+
+    before = {
+        "classification": doc.classification,
+        "releasability": list(doc.releasability),
+        "access_scope": list(doc.access_scope),
+    }
+    changed_qdrant: dict[str, str | list[str]] = {}
+
+    if body.classification is not None and body.classification != doc.classification:
+        doc.classification = body.classification
+        changed_qdrant["classification"] = doc.classification
+    if body.releasability is not None and body.releasability != doc.releasability:
+        doc.releasability = body.releasability
+        changed_qdrant["releasability"] = doc.releasability
+    if body.access_scope is not None and body.access_scope != doc.access_scope:
+        doc.access_scope = body.access_scope
+        changed_qdrant["access_scope"] = doc.access_scope
+    if body.source_originator is not None:
+        doc.source_originator = body.source_originator
+    if body.doc_type is not None:
+        doc.doc_type = body.doc_type
+    if body.program_community is not None:
+        doc.program_community = body.program_community or None
+    if body.effective_date is not None:
+        doc.effective_date = body.effective_date or None
+
+    # Re-check authority against the *edited* tags, not just what the document
+    # already carried -- same reasoning as approve()'s post-correction re-check.
+    if "classification" in changed_qdrant or "releasability" in changed_qdrant:
+        _check_curator_authority(user, doc, session)
+
+    doc.updated_at = datetime.now(UTC)
+
+    if not changed_qdrant:
+        # Nothing that Qdrant also holds a copy of changed -- e.g. only
+        # source_originator/doc_type/program_community/effective_date edited.
+        # No access-control-relevant write, so no NFR-13 revert dance needed.
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.metadata_edit",
+                target_id=str(doc.id),
+                detail={"fields": list(body.model_dump(exclude_none=True))},
+            )
+        )
+        session.commit()
+        session.refresh(doc)
+        return doc
+
+    store = get_store()
+    store.update_document_payload(str(doc.id), changed_qdrant)
+    # NFR-13: same reasoning as approve()/reject() -- best-effort revert the
+    # Qdrant write if the Postgres commit doesn't durably land, so the two
+    # stores don't end up disagreeing about this document's access-control
+    # fields.
+    try:
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.metadata_edit",
+                target_id=str(doc.id),
+                detail={"fields": list(body.model_dump(exclude_none=True))},
+            )
+        )
+        session.commit()
+    except Exception:
+        try:
+            store.update_document_payload(str(doc.id), {k: before[k] for k in changed_qdrant})
+        except Exception:
+            logger.exception(
+                "metadata edit of document %s failed and the Qdrant revert also "
+                "failed -- its payload may not match Postgres; needs manual "
+                "reconciliation",
+                doc.id,
+            )
+        raise
+    session.refresh(doc)
+    return doc
 
 
 def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) -> Document:

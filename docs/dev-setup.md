@@ -580,6 +580,24 @@ the docs, not a silent "it works" — flag it if you find one.
   call writes an entry keyed on the caller's identity, whether it succeeded (with the
   applied claims-based filter and result count), was denied (missing `rag-query` role,
   logged as `query.denied`), or hit an unreachable Qdrant.
+- **Curation "List" dashboard (issue #266)** — a second curator-facing page,
+  `/curate/list`, alongside the pending-review queue at `/curate` (a "Queue"/"List"
+  sub-nav switches between them). Lists every document across the curator's
+  `rag-curate:<org>` orgs regardless of status (`GET /curate/documents`, filterable by
+  status/classification and a case-insensitive filename/originator/type/uploader search),
+  and lets a curator correct a document's metadata *after* it has already cleared
+  curation (`PATCH /curate/documents/{id}`) without going through supersession —
+  Classification/Releasability/Access-scope edits are re-checked against the curator's
+  own authority exactly like an approval correction, and are propagated to Qdrant's
+  payload copy with the same NFR-13 revert-on-commit-failure behavior as approve/reject.
+  Deletion on this page calls the existing, separately-gated `rag-purge` endpoint
+  (`DELETE /documents/{id}`, see NFR-12/purge below) rather than a new one — the delete
+  action is hidden client-side for a curator who doesn't hold that role, since they'd
+  just get a 403. The queue page's feedback is human-readable now too (an outcome
+  sentence, not a raw JSON dump), and its issue #138 advisory box uses the portal's theme
+  tokens instead of a hardcoded light-mode color. **Tested against mocks only** (unit
+  tests covering scoping/filters/authority/NFR-13-revert against an in-memory SQLite
+  session) — not yet exercised against a live Postgres/Qdrant pair or a browser.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
@@ -769,8 +787,10 @@ the docs, not a silent "it works" — flag it if you find one.
   to a hand-built `UserClaims` in a direct function call) are exercised by
   `tests/test_login_gate.py`/`tests/test_branding_login_banner.py` at the sandbox level, not
   against a live Keycloak session yet.
-- **Nav gated per role, not just per authentication (issue #249).** The "Curation queue"
-  link (`base.html`) now only renders for a user holding a `rag-curate:<org>` role,
+- **Nav gated per role, not just per authentication (issue #249).** The "Curation" nav
+  link (`base.html`; renamed from "Curation queue" by issue #266, since it now covers
+  both the `/curate` queue and `/curate/list` master-list pages) only renders for a user
+  holding a `rag-curate:<org>` role,
   matching the existing `is_admin` gating on the Admin link — closing the gap between what
   the tab showed and what `/curate/*` already enforced (`require_curator`, `app/deps.py`),
   since a non-curator following the link only ever reached a 403. Notifications stays

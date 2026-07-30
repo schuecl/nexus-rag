@@ -136,6 +136,14 @@ class UserClaims(BaseModel):
     def can_curate_org(self, org: str) -> bool:
         return org in self.curatable_orgs
 
+    @property
+    def can_purge(self) -> bool:
+        """Issue #123: destruction authority, deliberately separate from
+        curation -- see app/deps.py's require_purge for why. Exposed here so
+        templates can gate the delete action the same way deps.require_purge
+        gates the endpoint, without duplicating the role-name check."""
+        return "rag-purge" in self.rag_roles
+
 
 @lru_cache(maxsize=1)
 def _jwk_client() -> PyJWKClient:
