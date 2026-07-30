@@ -151,10 +151,13 @@ role at all.
 Usual production expectation for destruction is a two-person rule: a purge
 *request* row plus an independent confirmation before execution.
 
-**G4 — Conflicting `rag-clearance:*` roles resolve silently by token order**
-(`claims.py` comment calls it Keycloak-admin hygiene). A user accidentally
-holding both `rag-clearance:SECRET` and `rag-clearance:CUI` gets whichever
-comes first. Should fail loud (parse error → 403) instead of picking one.
+**G4 — Conflicting `rag-clearance:*` roles — resolved (#280).** A token
+carrying two or more distinct `rag-clearance:<value>` roles is now rejected
+at the verification boundary: `parse_claims` raises
+`ConflictingClearanceError` (a `jwt.InvalidTokenError`), so every entry
+point maps it to 401 like any other malformed token. Duplicate *identical*
+values and zero clearance roles remain valid. Previously the first role in
+`rag_roles` order won silently.
 
 **G5 — Static service credentials with no rotation story.** Qdrant keys, NATS
 account passwords, the reranker secret, and `APP_DB_USER` are long-lived
