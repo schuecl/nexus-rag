@@ -69,7 +69,7 @@ throwaway copies of the `existing` box too, so the whole diagram runs on a lapto
 | NATS JetStream | Config only | NATS | Durable, token-authenticated ingestion job queue between `ingestion-api` and `ingestion-worker` (NFR-11) |
 | object store | Config only | Filesystem (dev) / any S3-compatible endpoint (prod) | Durable storage for original uploaded files, independent of Qdrant/Postgres (NFR-12) |
 | embedding Ollama | Config only | Ollama | Dedicated embedding-serving instance (NFR-8: separate GPU allocation from generation) |
-| Qdrant | Config only | Qdrant | Vector store — dense + BM25 named vectors per chunk, access-control payload fields |
+| Qdrant | Config only | Qdrant | Vector store — dense + BM25 named vectors per chunk, access-control payload fields, one collection per Classification level (#229) |
 | Postgres | Config only | Postgres | System of record: document status, audit log, notifications, admin-configurable classification/releasability lists |
 | Keycloak | External | Keycloak | OIDC IdP — realm/users/roles seeded for dev, external in prod |
 | LibreChat / LiteLLM / generation vLLM/Ollama | External | — | Existing MPNexus chat + generation stack this project layers onto |
@@ -127,6 +127,24 @@ a copy of the access-control fields (`status`, `classification`, `releasability`
 object store (NFR-12) holds the original uploaded bytes, keyed by `original_object_key` on
 the `documents` row — independent of both, so the source file survives regardless of what
 happens to either the vector or metadata copy.
+
+**Issue #229: one Qdrant collection per Classification level, not one collection for the
+whole corpus.** `common/qdrant_store.py` derives a collection name from each admin-configured
+Classification value (created on demand, so the code makes no assumption about a fixed set of
+levels — C9) and every read/write path is scoped to it. This is defence in depth on top of
+FR-26's mandatory claims-derived filter, which stays exactly as it was and still applies
+inside every per-collection query — per-collection separation bounds a store-level reader (or
+a retrieval path that forgot the filter) to one compartment; it does not replace the filter.
+Retrieval fans out over one collection per classification the caller is cleared for and fuses
+the per-collection results by rank (Reciprocal Rank Fusion, `common/vector_store.fuse_ranked`)
+rather than by score, because each collection's BM25 IDF is computed server-side from that
+collection's own — now classification-skewed — document statistics, so scores from different
+collections are not comparable. A curator's classification correction moves a document's
+chunks from one collection to another (`qdrant_store._migrate_document_classification`)
+instead of writing the correction in place. The Milvus backend (#160) does not implement this
+split — see `common/milvus_store.py`'s module docstring for the explicit, recorded reason —
+so a `VECTOR_BACKEND=milvus` deployment keeps the single-collection FR-26 filter as its only
+separation, same as Qdrant before #229.
 
 ## 4. Major flows
 
@@ -443,12 +461,18 @@ much the access filter matched and how many candidates were reranked, so
 per-stage figures would sharpen the membership-inference surface #127
 describes. Operators get them via the audit log and the scrape endpoint.
 
-Still open: `ingestion-api`, `ingestion-worker`, and `reranker-service` have no
-metrics surface, so ingestion throughput, queue depth, and worker processing
-duration remain unmeasured (NATS exposes its own monitoring endpoint on :8222
-to align with). NFR-4's end-to-end latency budget also remains an open question
-in REQUIREMENTS.md — the instrumentation to eventually answer it with data now
-exists for the query path only.
+Closed since this section was written (#133): `ingestion-api` (:8001),
+`ingestion-worker` (:8004), and `reranker-service` (:8003) all expose `/metrics`
+too, so ingestion throughput, queue depth, and worker processing duration are
+measured. The full stack that consumes them — Prometheus, Loki, Tempo,
+Alertmanager, 13 Grafana dashboards, 10 alert rules — ships as a Compose profile
+(`docs/dev-setup.md`) and, for clusters with no monitoring stack of their own, as
+the separately-installed `helm/observability` chart (#257, `docs/observability.md`).
+
+Still open: NFR-4's end-to-end latency budget remains an open question in
+REQUIREMENTS.md, so the retrieval alert rule's 5 s p95 threshold is a provisional
+stand-in rather than an agreed target — the instrumentation to answer it with data
+now exists, the number to compare against does not.
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based

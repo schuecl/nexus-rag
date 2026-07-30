@@ -47,6 +47,14 @@ SUPPORTED_TYPES: dict[str, tuple[bytes, ...] | None] = {
     ".docx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
     ".pptx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
     ".xlsx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+    # Issue #241: image uploads, OCR'd by the worker (app/ocr.py). Until #241
+    # these were _KNOWN_FOREIGN rejections; now they are content.
+    ".png": (b"\x89PNG",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    # Both TIFF byte orders (little-endian II*, big-endian MM*).
+    ".tif": (b"II*\x00", b"MM\x00*"),
+    ".tiff": (b"II*\x00", b"MM\x00*"),
 }
 
 # Enough to cover every signature above with room to spare.
@@ -61,8 +69,6 @@ _KNOWN_FOREIGN: tuple[tuple[bytes, str], ...] = (
     (b"\x7fELF", "an ELF executable"),
     (b"MZ", "a Windows executable"),
     (b"\x1f\x8b", "a gzip archive"),
-    (b"\x89PNG", "a PNG image"),
-    (b"\xff\xd8\xff", "a JPEG image"),
     (b"Rar!", "a RAR archive"),
     (b"7z\xbc\xaf", "a 7-Zip archive"),
 )

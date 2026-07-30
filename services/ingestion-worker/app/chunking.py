@@ -9,9 +9,10 @@ to compute without pulling in a tokenizer dependency. Revisit if chunk sizes
 need to track the embedding model's actual token count precisely.
 
 issue #90: a section's content_type marks whether its text is an atomic
-block that must never be cut by the sliding window -- currently just
-"table" (a markdown table from `_table_to_markdown`, or a spreadsheet sheet;
-see parsing.py), since those are the only non-prose content_type today. A
+block that must never be cut by the sliding window -- "table" (a markdown
+table from `_table_to_markdown`, or a spreadsheet sheet; see parsing.py) and
+"image" (a figure caption, app/captioning.py; captions are short, so
+atomicity costs nothing and keeps one caption one chunk). A
 table section is emitted as a single chunk even when it's longer than
 target_words -- splitting it mid-row would scatter a row's fields across two
 separate embedded chunks, which is worse than one oversized chunk.
@@ -61,6 +62,11 @@ DEFAULT_TABLE_MAX_WORDS = int(os.environ.get("CHUNK_TABLE_MAX_WORDS", "700"))
 # almost always a PDF dot-leader or similar visual filler, never real prose
 # (English words essentially never repeat a character 4+ times running).
 _REPEATED_CHAR_RUN = re.compile(r"(\S)\1{3,}")
+
+# Content types whose sections are never cut by the sliding window: "table"
+# (issue #90) and "image" (a #92 figure caption, short by construction).
+# Deliberately NOT "ocr" -- see the membership check below.
+_ATOMIC_CONTENT_TYPES = frozenset({"table", "image"})
 
 
 def _collapse_repeated_chars(text: str) -> str:
@@ -125,13 +131,19 @@ def chunk_sections(
         if not text:
             continue
 
-        # issue #90: atomic sections (currently just tables) are kept whole,
-        # regardless of target_words -- the sliding window below only ever
-        # runs on prose, so it can no longer land a cut inside a table row.
-        # Past table_max_words -- a much higher bar than target_words, since
-        # this is a last resort -- an oversized table is split by whole rows
+        # issue #90: atomic sections are kept whole, regardless of
+        # target_words -- the sliding window below only ever runs on prose,
+        # so it can no longer land a cut inside a table row. Past
+        # table_max_words -- a much higher bar than target_words, since this
+        # is a last resort -- an oversized table is split by whole rows
         # instead, so it can still be embedded at all.
-        if section.content_type != "text":
+        #
+        # issue #241: membership is an explicit set, not `!= "text"`, because
+        # not every non-prose content_type is atomic: "ocr" (a scanned page's
+        # recognized text, parsing.py) *is* prose and must flow through the
+        # sliding window below -- a 500-word scanned page as one atomic chunk
+        # would recreate exactly the oversized-chunk failure #114 fixed.
+        if section.content_type in _ATOMIC_CONTENT_TYPES:
             table_texts = (
                 _split_table_rows(text, table_max_words)
                 if section.content_type == "table" and len(text.split()) > table_max_words

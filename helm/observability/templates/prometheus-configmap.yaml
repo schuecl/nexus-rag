@@ -1,0 +1,212 @@
+{{- /*
+#257: the Kubernetes rewrite of infra/observability/prometheus/prometheus.yml.
+
+Two things differ from the Compose config, both deliberately:
+
+1. The four nexus-rag app services are scraped by *pod* discovery, not through
+   their Services. A Service-DNS scrape of `<svc>:8001` resolves to one
+   arbitrary backing pod per scrape, and the nexus-rag chart defaults
+   ingestionApi/ingestionWorker to replicas: 2 -- so every counter would appear
+   to jump around as Prometheus sampled first one pod then the other. Compose
+   gets away with static targets because each service is a single container.
+   Pod discovery also solves a second problem for free: ingestion-worker has
+   no Service in helm/nexus-rag at all (it is queue-driven, nothing calls it),
+   so there is nothing to resolve even though it serves /metrics on 8004.
+
+2. Targets that do come from Services use the *nexus-rag release's* names,
+   built by the observability.nexusRagService helper, because Compose service
+   names carry no information in-cluster.
+*/}}
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "observability.fullname" . }}-prometheus
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.prometheus.evaluationInterval }}
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    {{- if .Values.alertmanager.enabled }}
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["{{ include "observability.fullname" . }}-alertmanager:{{ .Values.alertmanager.service.port }}"]
+    {{- end }}
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:{{ .Values.prometheus.service.port }}"]
+
+      {{- /*
+      One job per app service rather than one job with four port filters: the
+      alert rules match on `up{job=~"nexus-rag-.*"}` and the dashboards key on
+      the job label, so the job names have to stay exactly what the Compose
+      config used or nine alerts and most panels go quiet.
+      */}}
+      {{- $ns := include "observability.nexusRagNamespace" . }}
+      {{- $ports := .Values.nexusRag.ports }}
+      {{- range $job, $spec := dict
+            "nexus-rag-ingestion-api"      (dict "component" "ingestion-api"      "port" $ports.ingestionApi)
+            "nexus-rag-ingestion-worker"   (dict "component" "ingestion-worker"   "port" $ports.ingestionWorker)
+            "nexus-rag-orchestration-mcp"  (dict "component" "orchestration-mcp"  "port" $ports.orchestrationMcp)
+            "nexus-rag-reranker"           (dict "component" "reranker-service"   "port" $ports.rerankerService) }}
+      - job_name: {{ $job }}
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [{{ $ns }}]
+        relabel_configs:
+          # The nexus-rag chart stamps app.kubernetes.io/component on every
+          # pod; that is the only label that distinguishes the four services.
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: {{ $spec.component }}
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+            regex: {{ $.Values.nexusRag.releaseName }}
+            action: keep
+          # Only scrape pods that are actually ready; a rolling update would
+          # otherwise fire NexusRagServiceDown on the terminating replica.
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
+          - source_labels: [__address__]
+            target_label: __address__
+            regex: '([^:]+)(?::\d+)?'
+            replacement: '${1}:{{ $spec.port }}'
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+      {{- end }}
+
+      {{- if .Values.exporters.nats.enabled }}
+      - job_name: nats
+        static_configs:
+          - targets: ["{{ include "observability.fullname" . }}-nats-exporter:{{ .Values.exporters.nats.port }}"]
+      {{- end }}
+
+      {{- if .Values.exporters.postgres.enabled }}
+      - job_name: postgres
+        static_configs:
+          - targets: ["{{ include "observability.fullname" . }}-postgres-exporter:{{ .Values.exporters.postgres.port }}"]
+      {{- end }}
+
+      {{- if .Values.nexusRag.qdrant.enabled }}
+      - job_name: qdrant
+        {{- if .Values.nexusRag.qdrant.existingSecret }}
+        # Qdrant protects /metrics when API-key auth is enabled, and Prometheus
+        # does not expand environment variables inside this file. The key is
+        # projected from a Secret as a file instead -- the Compose stack does
+        # the same thing via a shell prologue in its entrypoint, which is not
+        # something to reproduce in a container spec.
+        authorization:
+          credentials_file: /etc/prometheus/secrets/qdrant-credentials
+        {{- end }}
+        static_configs:
+          - targets: ["{{ include "observability.nexusRagService" (dict "root" . "component" "qdrant") }}:{{ .Values.nexusRag.qdrant.port }}"]
+      {{- end }}
+
+      {{- if .Values.nexusRag.milvus.enabled }}
+      # #160: the either/or alternative to Qdrant. On a Qdrant deployment this
+      # target stays DOWN, which is the expected state -- one backend per
+      # deployment, never both.
+      - job_name: milvus
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["{{ include "observability.nexusRagService" (dict "root" . "component" "milvus") }}:{{ .Values.nexusRag.milvus.port }}"]
+      {{- end }}
+
+      {{- if .Values.nexusRag.keycloak.enabled }}
+      {{- if not .Values.nexusRag.keycloak.target }}
+      {{- fail "nexusRag.keycloak.enabled is true but nexusRag.keycloak.target is empty. Keycloak is external to both charts, so there is no in-cluster name to default to -- set the host:port that serves its management /metrics (port 9000 in Keycloak 23+, not the realm port)." }}
+      {{- end }}
+      - job_name: keycloak
+        metrics_path: /metrics
+        static_configs:
+          - targets: [{{ .Values.nexusRag.keycloak.target | quote }}]
+      {{- end }}
+
+      {{- if .Values.loki.enabled }}
+      - job_name: loki
+        static_configs:
+          - targets: ["{{ include "observability.fullname" . }}-loki:{{ .Values.loki.service.port }}"]
+      {{- end }}
+
+      {{- if .Values.tempo.enabled }}
+      - job_name: tempo
+        static_configs:
+          - targets: ["{{ include "observability.fullname" . }}-tempo:{{ .Values.tempo.service.port }}"]
+      {{- end }}
+
+      {{- if .Values.otelCollector.enabled }}
+      - job_name: otel-collector
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [{{ .Release.Namespace }}]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: otel-collector
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+            regex: {{ .Release.Name }}
+            action: keep
+          - source_labels: [__address__]
+            target_label: __address__
+            regex: '([^:]+)(?::\d+)?'
+            replacement: '${1}:{{ .Values.otelCollector.telemetryPort }}'
+      {{- end }}
+
+      {{- if .Values.alloy.enabled }}
+      # DaemonSet: one target per node, so pod discovery rather than a Service.
+      - job_name: alloy
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [{{ .Release.Namespace }}]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: alloy
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+            regex: {{ .Release.Name }}
+            action: keep
+          - source_labels: [__address__]
+            target_label: __address__
+            regex: '([^:]+)(?::\d+)?'
+            replacement: '${1}:{{ .Values.alloy.port }}'
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+      {{- end }}
+
+      {{- if and .Values.exporters.blackbox.enabled .Values.prometheus.blackboxTargets }}
+      # #133: HTTP probes for services with no /metrics of their own. The probe
+      # result is probe_success{instance="<target>"}; the flow/status panels key
+      # on the instance label, not on up{}.
+      - job_name: blackbox-http
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        static_configs:
+          - targets:
+              {{- range .Values.prometheus.blackboxTargets }}
+              - {{ . | quote }}
+              {{- end }}
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "observability.fullname" . }}-blackbox-exporter:{{ .Values.exporters.blackbox.port }}
+      {{- end }}
+{{- end }}

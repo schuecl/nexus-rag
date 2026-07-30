@@ -1,0 +1,868 @@
+{
+  "title": "Nexus RAG / System flow",
+  "uid": "nexus-rag-system-flow",
+  "tags": [
+    "nexus-rag",
+    "flow"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 6,
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Component flow",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### How a request moves through nexus-rag\n\n```\n  Browser / LibreChat\n        \u2502  (OIDC login via Keycloak)\n        \u25bc\n  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510   publish job    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510   consume    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n  \u2502 ingestion-api \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6 \u2502   NATS   \u2502 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6 \u2502 ingestion-worker \u2502\n  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518   (NFR-11)       \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518              \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n          \u2502 original file                                        parse\u2192chunk\u2192embed\n          \u25bc                                                             \u2502 writes vectors\n     object store                                                       \u25bc\n                                                                    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n  Query path:                                                       \u2502 Qdrant \u2502\n  LibreChat \u2500\u25b6 orchestration-mcp \u2500(dense+BM25)\u25b6 Qdrant \u2500\u25b6 reranker  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n                    \u2502  embed query                         (cross-encoder)\n                    \u25bc\n                 Ollama\n\n  Generation path:  LibreChat \u2500\u25b6 LiteLLM \u2500\u25b6 Ollama\n```\n\n**Boxes** are green when the component is up, red when down. **Links** animate (marching ants) and turn green while data is actively flowing on that hop, red when the hop is idle (no flow in 5m) or an endpoint is down."
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Ingestion throughput (docs embedded, 5m rate)",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"vector_upsert\"}[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Query rate (rag_search, 5m)",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_queries_total[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "continuous-BlPu"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Rerank calls (5m)",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nexus_rag_reranker_requests_total[5m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "A \u00b7 draw.io / SVG \u2014 animated links, coordinates by hand",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "andrewbmchugh-flow-panel",
+      "title": "A \u2014 draw.io / SVG (andrewbmchugh-flow-panel): hand-placed, animated links",
+      "gridPos": {
+        "h": 15,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(probe_success{instance=~\".*librechat.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "librechat"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"keycloak\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "keycloak"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"postgres\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "postgres"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"nexus-rag-ingestion-api\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "ingestion-api"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"nats\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "nats"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"nexus-rag-ingestion-worker\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "ingestion-worker"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"qdrant\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "qdrant"
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"nexus-rag-orchestration-mcp\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "orchestration-mcp"
+        },
+        {
+          "refId": "I",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{job=\"nexus-rag-reranker\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "reranker"
+        },
+        {
+          "refId": "J",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(probe_success{instance=~\".*litellm.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "litellm"
+        },
+        {
+          "refId": "K",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(probe_success{instance=~\".*ollama.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "ollama"
+        },
+        {
+          "refId": "L",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "min(up{job=\"keycloak\"} or probe_success{instance=~\".*librechat.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-auth"
+        },
+        {
+          "refId": "M",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_submissions_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-upload"
+        },
+        {
+          "refId": "N",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_submissions_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-objstore"
+        },
+        {
+          "refId": "O",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_queue_publish_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-publish"
+        },
+        {
+          "refId": "P",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_worker_jobs_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-consume"
+        },
+        {
+          "refId": "Q",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"vector_upsert\"}[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-upsert"
+        },
+        {
+          "refId": "R",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"embed\"}[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-embedI"
+        },
+        {
+          "refId": "S",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "min(up{job=~\"nexus-rag-ingestion-api|postgres\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-status"
+        },
+        {
+          "refId": "T",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_queries_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-query"
+        },
+        {
+          "refId": "U",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_query_stage_seconds_count{stage=\"embed\"}[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-embedQ"
+        },
+        {
+          "refId": "V",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_query_stage_seconds_count{stage=\"retrieve\"}[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-vquery"
+        },
+        {
+          "refId": "W",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(nexus_rag_reranker_requests_total[5m])) > bool 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-rerank"
+        },
+        {
+          "refId": "X",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "min(probe_success{instance=~\".*litellm.*\"} or probe_success{instance=~\".*ollama.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-gen"
+        },
+        {
+          "refId": "Y",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "min(probe_success{instance=~\".*librechat.*\"} or probe_success{instance=~\".*litellm.*\"}) or vector(0)",
+          "instant": true,
+          "range": false,
+          "format": "time_series",
+          "legendFormat": "edge-genin"
+        }
+      ],
+      "options": {
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1000\" height=\"620\" viewBox=\"0 0 1000 620\" font-family=\"system-ui, sans-serif\">\n<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6.5\" markerHeight=\"6.5\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#8a93a3\"/></marker></defs>\n<style>.lbl{fill:#f5f8ff;font-size:14px;font-weight:600;text-anchor:middle;pointer-events:none;}.sub{fill:#dbe2ee;font-size:10.5px;text-anchor:middle;pointer-events:none;}.elbl{fill:#c7cfdb;font-size:10px;text-anchor:middle;paint-order:stroke;stroke:#0d1117;stroke-width:3;stroke-linejoin:round;pointer-events:none;}.lane{fill:#7d8794;font-size:11px;font-weight:700;letter-spacing:1px;pointer-events:none;}.edge{stroke-width:3;fill:none;marker-end:url(#arrow);stroke-linejoin:round;stroke-linecap:round;}.node{stroke:#0d1117;stroke-width:1.5;}.store{stroke:#0d1117;stroke-width:1.5;}.rim{fill:rgba(255,255,255,0.13);stroke:#0d1117;stroke-width:1.2;pointer-events:none;}</style>\n<text class=\"lane\" x=\"20\" y=\"55\">AUTH</text>\n<text class=\"lane\" x=\"20\" y=\"168\">INGESTION</text>\n<text class=\"lane\" x=\"20\" y=\"408\">RETRIEVAL</text>\n<text class=\"lane\" x=\"20\" y=\"523\">GENERATION</text>\n<path id=\"edge-auth\" class=\"edge\" d=\"M305,85 L221,85\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-upload\" class=\"edge\" d=\"M130,113 L130,180\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-publish\" class=\"edge\" d=\"M218,210 L294,210\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-consume\" class=\"edge\" d=\"M464,210 L540,210\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-upsert\" class=\"edge\" d=\"M718,210 L803,210\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-objstore\" class=\"edge\" d=\"M130,238 L130,298\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-status\" class=\"edge\" d=\"M630,182 L630,140 L880,140 L880,120\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-query\" class=\"edge\" d=\"M42,80 L22,92 L22,450 L40,450\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-genin\" class=\"edge\" d=\"M42,92 L10,104 L10,565 L40,565\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-rerank\" class=\"edge\" d=\"M218,448 L540,448\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-vquery\" class=\"edge\" d=\"M130,478 L130,505 L880,505 L880,243\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-embedI\" class=\"edge\" d=\"M630,238 L630,288 L410,288 L410,537\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-embedQ\" class=\"edge\" d=\"M218,454 L250,454 L250,538 L350,538\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"edge-gen\" class=\"edge\" d=\"M218,565 L294,565\" stroke=\"#556072\" stroke-dasharray=\"9 7\"><animate attributeName=\"stroke-dashoffset\" values=\"16;0\" dur=\"0.9s\" repeatCount=\"indefinite\"/></path>\n<path id=\"object-store\" class=\"store\" d=\"M55,309 A75,9 0 0 0 205,309 L205,351 A75,9 0 0 1 55,351 Z\" fill=\"#33405a\"/><ellipse class=\"rim\" cx=\"130\" cy=\"309\" rx=\"75\" ry=\"9\"/><text class=\"lbl\" x=\"130\" y=\"332\">object store</text><text class=\"sub\" x=\"130\" y=\"347\">original bytes (NFR-12)</text>\n<rect id=\"librechat\" class=\"node\" x=\"42\" y=\"57\" width=\"176\" height=\"56\" rx=\"6\" fill=\"#20252e\"/><rect class=\"rim\" x=\"121\" y=\"113\" width=\"18\" height=\"6\"/><rect class=\"rim\" x=\"108\" y=\"119\" width=\"44\" height=\"4\" rx=\"2\"/><text class=\"lbl\" x=\"130\" y=\"84\">LibreChat</text><text class=\"sub\" x=\"130\" y=\"99\">chat UI (HTTPS)</text>\n<path id=\"keycloak\" class=\"node\" d=\"M380,53 L455,61 L455,85 Q455,117 380,117 Q305,117 305,85 L305,61 Z\" fill=\"#20252e\"/><text class=\"lbl\" x=\"380\" y=\"86\">Keycloak</text><text class=\"sub\" x=\"380\" y=\"101\">OIDC / SSO</text>\n<path id=\"postgres\" class=\"node\" d=\"M805,61 A75,9 0 0 0 955,61 L955,109 A75,9 0 0 1 805,109 Z\" fill=\"#20252e\"/><ellipse class=\"rim\" cx=\"880\" cy=\"61\" rx=\"75\" ry=\"9\"/><text class=\"lbl\" x=\"880\" y=\"87\">Postgres</text><text class=\"sub\" x=\"880\" y=\"102\">documents \u00b7 audit</text>\n<rect id=\"ingestion-api\" class=\"node\" x=\"42\" y=\"182\" width=\"176\" height=\"56\" rx=\"9\" fill=\"#20252e\"/><text class=\"lbl\" x=\"130\" y=\"209\">ingestion-api</text><text class=\"sub\" x=\"130\" y=\"224\">upload \u00b7 tag \u00b7 curate</text>\n<polygon id=\"nats\" class=\"node\" points=\"296,210 338,180 422,180 464,210 422,240 338,240\" fill=\"#20252e\"/><text class=\"lbl\" x=\"380\" y=\"209\">NATS</text><text class=\"sub\" x=\"380\" y=\"224\">JetStream queue</text>\n<rect id=\"ingestion-worker\" class=\"node\" x=\"542\" y=\"182\" width=\"176\" height=\"56\" rx=\"9\" fill=\"#20252e\"/><text class=\"lbl\" x=\"630\" y=\"209\">ingestion-worker</text><text class=\"sub\" x=\"630\" y=\"224\">parse\u00b7chunk\u00b7embed</text>\n<path id=\"qdrant\" class=\"node\" d=\"M805,186 A75,9 0 0 0 955,186 L955,234 A75,9 0 0 1 805,234 Z\" fill=\"#20252e\"/><ellipse class=\"rim\" cx=\"880\" cy=\"186\" rx=\"75\" ry=\"9\"/><text class=\"lbl\" x=\"880\" y=\"212\">Qdrant</text><text class=\"sub\" x=\"880\" y=\"227\">vector store</text>\n<rect id=\"orchestration-mcp\" class=\"node\" x=\"42\" y=\"422\" width=\"176\" height=\"56\" rx=\"9\" fill=\"#20252e\"/><text class=\"lbl\" x=\"130\" y=\"449\">orchestration-mcp</text><text class=\"sub\" x=\"130\" y=\"464\">rag_search (MCP)</text>\n<rect id=\"reranker\" class=\"node\" x=\"542\" y=\"422\" width=\"176\" height=\"56\" rx=\"9\" fill=\"#20252e\"/><text class=\"lbl\" x=\"630\" y=\"449\">reranker</text><text class=\"sub\" x=\"630\" y=\"464\">cross-encoder</text>\n<rect id=\"litellm\" class=\"node\" x=\"42\" y=\"537\" width=\"176\" height=\"56\" rx=\"9\" fill=\"#20252e\"/><text class=\"lbl\" x=\"130\" y=\"564\">LiteLLM</text><text class=\"sub\" x=\"130\" y=\"579\">model gateway</text>\n<polygon id=\"ollama\" class=\"node\" points=\"296,565 338,535 422,535 464,565 422,595 338,595\" fill=\"#20252e\"/><text class=\"lbl\" x=\"380\" y=\"564\">Ollama</text><text class=\"sub\" x=\"380\" y=\"579\">embed + generate</text>\n<text class=\"elbl\" x=\"263\" y=\"78\">OIDC</text>\n<text class=\"elbl\" x=\"163\" y=\"150\">upload</text>\n<text class=\"elbl\" x=\"256\" y=\"202\">publish</text>\n<text class=\"elbl\" x=\"502\" y=\"202\">consume</text>\n<text class=\"elbl\" x=\"760\" y=\"202\">writes vectors</text>\n<text class=\"elbl\" x=\"175\" y=\"270\">original file</text>\n<text class=\"elbl\" x=\"752\" y=\"132\">status/audit</text>\n<text class=\"elbl\" x=\"46\" y=\"300\">query</text>\n<text class=\"elbl\" x=\"379\" y=\"440\">rerank</text>\n<text class=\"elbl\" x=\"486\" y=\"497\">dense+BM25</text>\n<text class=\"elbl\" x=\"508\" y=\"280\">embed</text>\n<text class=\"elbl\" x=\"272\" y=\"500\">embed query</text>\n<text class=\"elbl\" x=\"256\" y=\"557\">generate</text>\n</svg>",
+        "panelConfig": "---\ncellIdPreamble: ''\ncells:\n  librechat:\n    dataRef: librechat\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  keycloak:\n    dataRef: keycloak\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  postgres:\n    dataRef: postgres\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  ingestion-api:\n    dataRef: ingestion-api\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  nats:\n    dataRef: nats\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  ingestion-worker:\n    dataRef: ingestion-worker\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  qdrant:\n    dataRef: qdrant\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  orchestration-mcp:\n    dataRef: orchestration-mcp\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  reranker:\n    dataRef: reranker\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  litellm:\n    dataRef: litellm\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  ollama:\n    dataRef: ollama\n    fillColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-auth:\n    dataRef: edge-auth\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-upload:\n    dataRef: edge-upload\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-objstore:\n    dataRef: edge-objstore\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-publish:\n    dataRef: edge-publish\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-consume:\n    dataRef: edge-consume\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-upsert:\n    dataRef: edge-upsert\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-embedI:\n    dataRef: edge-embedI\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-status:\n    dataRef: edge-status\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-query:\n    dataRef: edge-query\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-embedQ:\n    dataRef: edge-embedQ\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-vquery:\n    dataRef: edge-vquery\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-rerank:\n    dataRef: edge-rerank\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-gen:\n    dataRef: edge-gen\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n  edge-genin:\n    dataRef: edge-genin\n    strokeColor:\n      thresholds:\n        - { color: '#e5484d', level: 0 }\n        - { color: '#2ea043', level: 1 }\n",
+        "timeSliderScope": "global",
+        "test": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "B \u00b7 Graphviz DOT \u2014 layout engine does the routing",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "grafana-graphviz-panel",
+      "title": "B \u2014 Graphviz DOT (grafana-graphviz-panel): auto-layout, no animation",
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "nodes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace(up{job=~\"nexus-rag-.*\"}, \"component\", \"$1\", \"job\", \"nexus-rag-(.*)\") or label_replace(up{job=~\"qdrant|nats|postgres|keycloak\"}, \"component\", \"$1\", \"job\", \"(.*)\") or label_replace(vector(1), \"component\", \"librechat\", \"\", \"\") or label_replace(vector(1), \"component\", \"litellm\", \"\", \"\") or label_replace(vector(1), \"component\", \"ollama\", \"\", \"\") or label_replace(vector(1), \"component\", \"object-store\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "legendFormat": "{{component}}"
+        },
+        {
+          "refId": "edges",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace((sum(rate(keycloak_credentials_password_hashing_validations_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-auth\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_submissions_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-upload\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_queue_publish_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-publish\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_worker_jobs_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-consume\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"vector_upsert\"}[5m])) or vector(0)) > bool 0, \"edge\", \"edge-upsert\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_worker_document_bytes_count[5m])) or vector(0)) > bool 0, \"edge\", \"edge-objstore\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_worker_jobs_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-status\", \"\", \"\") or label_replace((sum(rate(nexus_rag_ingestion_worker_stage_seconds_count{stage=\"embed\"}[5m])) or vector(0)) > bool 0, \"edge\", \"edge-embedI\", \"\", \"\") or label_replace((sum(rate(nexus_rag_queries_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-query\", \"\", \"\") or label_replace((sum(rate(nexus_rag_query_stage_seconds_count{stage=\"embed\"}[5m])) or vector(0)) > bool 0, \"edge\", \"edge-embedQ\", \"\", \"\") or label_replace((sum(rate(nexus_rag_query_stage_seconds_count{stage=\"retrieve\"}[5m])) or vector(0)) > bool 0, \"edge\", \"edge-vquery\", \"\", \"\") or label_replace((sum(rate(nexus_rag_reranker_requests_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-rerank\", \"\", \"\") or label_replace((sum(rate(nexus_rag_queries_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-genin\", \"\", \"\") or label_replace((sum(rate(nexus_rag_reranker_requests_total[5m])) or vector(0)) > bool 0, \"edge\", \"edge-gen\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "legendFormat": "{{edge}}"
+        }
+      ],
+      "options": {
+        "inputMode": "code",
+        "dotDiagram": "digraph nexus_rag {\n  // Issue #133: the system flow as DOT rather than hand-placed SVG. Graphviz\n  // does the routing, so a new component is a line of code instead of a\n  // coordinate hunt -- and edges cannot be left crossing by accident.\n  rankdir=LR;\n  bgcolor=\"transparent\";\n  compound=true;\n  nodesep=0.30;\n  ranksep=0.55;\n  fontname=\"Inter, system-ui, sans-serif\";\n\n  node [shape=box style=\"filled,rounded\" fontname=\"Inter, system-ui, sans-serif\"\n        fontsize=13 fontcolor=\"#ffffff\" color=\"#0d1117\" penwidth=1.4\n        fillcolor=\"#20252e\" width=1.9 height=0.55 margin=\"0.16,0.09\"];\n  edge [fontname=\"Inter, system-ui, sans-serif\" fontsize=11 fontcolor=\"#e8eef7\"\n        color=\"#556072\" penwidth=2.0 arrowsize=0.8];\n\n  // Node ids are the component names the node-status query returns in its\n  // `component` label, so one override rule colours every node.\n  subgraph cluster_auth {\n    label=\"AUTHENTICATION\"; fontsize=11; fontcolor=\"#a9b4c4\"; color=\"#3a4454\";\n    style=\"rounded\"; penwidth=1;\n    librechat [label=\"LibreChat\\nchat UI \u00b7 HTTPS\"];\n    keycloak  [label=\"Keycloak\\nOIDC / SSO\"];\n  }\n\n  subgraph cluster_ingest {\n    label=\"INGESTION\"; fontsize=11; fontcolor=\"#a9b4c4\"; color=\"#3a4454\";\n    style=\"rounded\"; penwidth=1;\n    \"ingestion-api\"    [label=\"ingestion-api\\nupload \u00b7 tag \u00b7 create\"];\n    nats               [label=\"NATS\\nJetStream queue\" shape=hexagon width=2.1];\n    \"ingestion-worker\" [label=\"ingestion-worker\\nparse \u00b7 chunk \u00b7 embed\"];\n    qdrant             [label=\"Qdrant\\nvector store \u00b7 shared\" shape=cylinder];\n    \"object-store\"     [label=\"object store\\noriginal bytes (NFR-12)\" shape=cylinder fillcolor=\"#33405a\"];\n    postgres           [label=\"Postgres\\ndocuments \u00b7 status \u00b7 audit\" shape=cylinder];\n  }\n\n  subgraph cluster_retrieval {\n    label=\"RETRIEVAL\"; fontsize=11; fontcolor=\"#a9b4c4\"; color=\"#3a4454\";\n    style=\"rounded\"; penwidth=1;\n    \"orchestration-mcp\" [label=\"orchestration-mcp\\nrag_search via MCP\"];\n    reranker            [label=\"reranker\\ncross-encoder\"];\n  }\n\n  subgraph cluster_generation {\n    label=\"GENERATION\"; fontsize=11; fontcolor=\"#a9b4c4\"; color=\"#3a4454\";\n    style=\"rounded\"; penwidth=1;\n    litellm [label=\"LiteLLM\\nmodel gateway\"];\n    ollama  [label=\"Ollama\\nembed + generate \u00b7 shared\"];\n  }\n\n  // Edge ids match the `edge` label the hop-activity query returns.\n  keycloak            -> librechat            [id=\"edge-auth\"     label=\"OIDC\"];\n  librechat           -> \"ingestion-api\"      [id=\"edge-upload\"   label=\"upload\"];\n  \"ingestion-api\"     -> nats                 [id=\"edge-publish\"  label=\"publish\"];\n  nats                -> \"ingestion-worker\"   [id=\"edge-consume\"  label=\"consume\"];\n  \"ingestion-worker\"  -> qdrant               [id=\"edge-upsert\"   label=\"write vectors\"];\n  \"ingestion-api\"     -> \"object-store\"       [id=\"edge-objstore\" label=\"original file\" penwidth=1.2 style=dashed];\n  \"ingestion-worker\"  -> postgres             [id=\"edge-status\"   label=\"status / audit\" penwidth=1.2 style=dashed];\n  \"ingestion-worker\"  -> ollama               [id=\"edge-embedI\"   label=\"embed\" penwidth=1.2 style=dashed];\n  librechat           -> \"orchestration-mcp\"  [id=\"edge-query\"    label=\"query\"];\n  \"orchestration-mcp\" -> qdrant               [id=\"edge-vquery\"   label=\"retrieve \u00b7 dense + BM25\"];\n  \"orchestration-mcp\" -> reranker             [id=\"edge-rerank\"   label=\"rerank\"];\n  \"orchestration-mcp\" -> ollama               [id=\"edge-embedQ\"   label=\"embed query\" penwidth=1.2 style=dashed];\n  librechat           -> litellm              [id=\"edge-genin\"    label=\"prompt\"];\n  litellm             -> ollama               [id=\"edge-gen\"      label=\"generate\"];\n}\n",
+        "layoutEngine": "dot",
+        "rankDirection": "LR",
+        "splineType": "ortho",
+        "namedThresholds": [
+          {
+            "id": "health",
+            "name": "Component health",
+            "steps": [
+              {
+                "value": 0,
+                "color": "#e5484d"
+              },
+              {
+                "value": 1,
+                "color": "#2ea043"
+              }
+            ]
+          },
+          {
+            "id": "flow",
+            "name": "Hop activity",
+            "steps": [
+              {
+                "value": 0,
+                "color": "#556072"
+              },
+              {
+                "value": 1,
+                "color": "#2ea043"
+              }
+            ]
+          }
+        ],
+        "nodeOverrides": [
+          {
+            "id": "node-health",
+            "targetNodeIds": [
+              "librechat",
+              "keycloak",
+              "ingestion-api",
+              "nats",
+              "ingestion-worker",
+              "qdrant",
+              "object-store",
+              "postgres",
+              "orchestration-mcp",
+              "reranker",
+              "litellm",
+              "ollama"
+            ],
+            "matchMode": "manual",
+            "matchFieldName": "component",
+            "matchPattern": "${id}",
+            "rules": [
+              {
+                "id": "node-health-fill",
+                "kind": "fillColor",
+                "colorFieldName": "up",
+                "thresholdId": "health"
+              }
+            ]
+          }
+        ],
+        "edgeOverrides": [
+          {
+            "id": "edge-flow",
+            "targetEdgeIds": [
+              "edge-auth",
+              "edge-upload",
+              "edge-publish",
+              "edge-consume",
+              "edge-upsert",
+              "edge-objstore",
+              "edge-status",
+              "edge-embedI",
+              "edge-query",
+              "edge-embedQ",
+              "edge-vquery",
+              "edge-rerank",
+              "edge-genin",
+              "edge-gen"
+            ],
+            "matchMode": "manual",
+            "matchFieldName": "edge",
+            "matchPattern": "${id}",
+            "rules": [
+              {
+                "id": "edge-flow-stroke",
+                "kind": "strokeColor",
+                "colorFieldName": "Value",
+                "thresholdId": "flow"
+              },
+              {
+                "id": "edge-flow-width",
+                "kind": "strokeWidth",
+                "widthFieldName": "Value"
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "type": "row",
+      "title": "C \u00b7 Mermaid \u2014 status binds by matching series alias to node id",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "jdbranham-diagram-panel",
+      "title": "C \u2014 Mermaid (jdbranham-diagram-panel): auto-layout, live status by alias",
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "label_replace(label_replace(up{job=~\"nexus-rag-.*\"}, \"node\", \"$1\", \"job\", \"nexus-rag-(.*)\"), \"node\", \"${1}_${2}\", \"node\", \"(.+)-(.+)\") or label_replace(up{job=~\"qdrant|nats|postgres|keycloak\"}, \"node\", \"$1\", \"job\", \"(.*)\") or label_replace(vector(1), \"node\", \"librechat\", \"\", \"\") or label_replace(vector(1), \"node\", \"litellm\", \"\", \"\") or label_replace(vector(1), \"node\", \"ollama\", \"\", \"\") or label_replace(vector(1), \"node\", \"object_store\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "options": {
+        "content": "graph LR\n  subgraph AUTH[AUTHENTICATION]\n    keycloak[Keycloak]\n    librechat[LibreChat]\n  end\n\n  subgraph INGEST[INGESTION]\n    ingestion_api[ingestion-api]\n    nats{{NATS}}\n    ingestion_worker[ingestion-worker]\n    qdrant[(Qdrant)]\n    object_store[(object store)]\n    postgres[(Postgres)]\n  end\n\n  subgraph RETRIEVE[RETRIEVAL]\n    orchestration_mcp[orchestration-mcp]\n    reranker[reranker]\n  end\n\n  subgraph GENERATE[GENERATION]\n    litellm[LiteLLM]\n    ollama[Ollama]\n  end\n\n  keycloak -- OIDC --> librechat\n  librechat -- upload --> ingestion_api\n  ingestion_api -- publish --> nats\n  nats -- consume --> ingestion_worker\n  ingestion_worker -- vectors --> qdrant\n  ingestion_api -. original .-> object_store\n  ingestion_worker -. audit .-> postgres\n  ingestion_worker -. embed .-> ollama\n  librechat -- query --> orchestration_mcp\n  orchestration_mcp -- retrieve --> qdrant\n  orchestration_mcp -- rerank --> reranker\n  orchestration_mcp -. embed .-> ollama\n  librechat -- prompt --> litellm\n  litellm -- generate --> ollama\n",
+        "mode": "content",
+        "valueName": "last",
+        "useBackground": true,
+        "maxWidth": true,
+        "composites": [],
+        "metricCharacterReplacements": [],
+        "moddedSeriesVal": 0,
+        "mermaidServiceUrl": "",
+        "useBasicAuth": false,
+        "style": "/* #133: lanes were solid slabs competing with the nodes; a hairline and a\n   near-transparent wash is enough to group them. Label ink is handled by\n   the threshold colours instead -- see the fieldConfig comment. */\n.cluster rect {\n  fill: rgba(255, 255, 255, 0.03) !important;\n  stroke: #4a5666 !important;\n}\n.edgeLabel, .edgeLabel * { background-color: transparent !important; }\n",
+        "nodeSize": {
+          "minWidth": 30,
+          "minHeight": 30
+        },
+        "legend": {
+          "show": false,
+          "asTable": false,
+          "placement": "bottom",
+          "stats": [
+            "last"
+          ],
+          "hideEmpty": true,
+          "hideZero": false,
+          "displayMode": "list",
+          "sortBy": "last",
+          "sortDesc": true,
+          "gradient": {
+            "enabled": false,
+            "show": false
+          }
+        },
+        "mermaidThemeVariablesDark": {
+          "common": {
+            "fontFamily": "Inter, Roboto, Helvetica Neue, Arial, sans-serif",
+            "fontSize": "15px",
+            "nodeTextColor": "#0e1a10",
+            "primaryTextColor": "#0e1a10",
+            "textColor": "#dfe6f0",
+            "titleColor": "#c9d4e2",
+            "lineColor": "#8d9aab",
+            "mainBkg": "#2b3542",
+            "nodeBorder": "#5a6675",
+            "clusterBkg": "transparent",
+            "clusterBorder": "#4a5666",
+            "edgeLabelBackground": "transparent"
+          },
+          "flowChart": {
+            "curve": "basis",
+            "htmlLabels": true,
+            "nodeSpacing": 55,
+            "rankSpacing": 70,
+            "padding": 12,
+            "useMaxWidth": true
+          },
+          "classDiagram": {},
+          "sequenceDiagram": {},
+          "stateDiagram": {},
+          "userJourneyDiagram": {}
+        },
+        "mermaidThemeVariablesLight": {
+          "common": {
+            "fontFamily": "Inter, Roboto, Helvetica Neue, Arial, sans-serif",
+            "fontSize": "15px",
+            "nodeTextColor": "#0e1a10",
+            "primaryTextColor": "#0e1a10",
+            "textColor": "#dfe6f0",
+            "titleColor": "#c9d4e2",
+            "lineColor": "#8d9aab",
+            "mainBkg": "#2b3542",
+            "nodeBorder": "#5a6675",
+            "clusterBkg": "transparent",
+            "clusterBorder": "#4a5666",
+            "edgeLabelBackground": "transparent"
+          },
+          "flowChart": {
+            "curve": "basis",
+            "htmlLabels": true,
+            "nodeSpacing": 55,
+            "rankSpacing": 70,
+            "padding": 12,
+            "useMaxWidth": true
+          },
+          "classDiagram": {},
+          "sequenceDiagram": {},
+          "stateDiagram": {},
+          "userJourneyDiagram": {}
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "index": 1
+                },
+                "1": {
+                  "text": "UP",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#B02A37",
+                "value": null
+              },
+              {
+                "color": "#1A7F37",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

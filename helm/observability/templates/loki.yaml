@@ -1,0 +1,91 @@
+{{- /*
+#257: single-binary Loki, the Kubernetes counterpart of
+infra/observability/loki.yml. Config is carried over unchanged except for the
+retention window becoming a value -- the filesystem/tsdb/inmemory-ring layout is
+deliberately the same, because a different storage schema here would mean the
+Compose stack and the cluster disagree about what a log line looks like.
+
+auth_enabled stays false, matching Compose. That is safe in Compose (loopback
+only) and is NOT safe here, which is exactly why the Service that fronts this
+refuses to render as an unrestricted LoadBalancer.
+*/}}
+{{- if .Values.loki.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "observability.fullname" . }}-loki
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  replicas: 1
+  serviceName: {{ include "observability.fullname" . }}-loki
+  selector:
+    matchLabels:
+      {{- include "observability.componentSelectorLabels" (dict "root" . "component" "loki") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "observability.labels" . | nindent 8 }}
+        app.kubernetes.io/component: loki
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/loki-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "observability.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- /* grafana/loki's own uid; must match or /loki is unwritable. */}}
+        {{- include "observability.podSecurityContext" 10001 | nindent 8 }}
+      containers:
+        - name: loki
+          image: {{ include "observability.image" (dict "global" .Values.global "image" .Values.loki.image) }}
+          args:
+            - -config.file=/etc/loki/loki.yml
+          ports:
+            - name: http
+              containerPort: {{ .Values.loki.service.port }}
+          securityContext:
+            {{- include "observability.containerSecurityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            # Loki reports /ready as 503 for its first ~15s while the ingester
+            # joins the ring; a shorter delay just makes the rollout look failed.
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+              readOnly: true
+            - name: data
+              mountPath: /loki
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "observability.fullname" . }}-loki
+        # readOnlyRootFilesystem: Loki writes its WAL under /loki (the PVC) but
+        # still wants a scratch /tmp.
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.loki.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.loki.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.loki.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.loki.persistence.size }}
+  {{- end }}
+{{- end }}

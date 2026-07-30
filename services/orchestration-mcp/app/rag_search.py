@@ -212,6 +212,15 @@ def _single_line_metadata(value: object, fallback: str) -> str:
     return normalized[:300]
 
 
+# #241 (and #92): content_types whose text is machine-derived rather than a
+# verbatim quote of the source document. Keyed by the exact payload values
+# parsing/captioning write.
+_MACHINE_DERIVED_PROVENANCE = {
+    "ocr": "text recognized from a scanned page by OCR; may contain recognition errors",
+    "image": "a machine-written description of a figure, not text from the document",
+}
+
+
 def format_rag_search_for_model(result: dict) -> str:
     """Turn the diagnostic retrieval object into model-facing reference text.
 
@@ -275,6 +284,18 @@ def format_rag_search_for_model(result: dict) -> str:
         )
         if heading:
             lines.append(f"Heading: {heading}")
+        # #241: machine-derived passages carry their provenance so the model
+        # can hedge appropriately ("the scanned copy reads...") and the user
+        # is not told a Tesseract misread or a VLM's description is verbatim
+        # source text. Ordinary text/table passages add no line (and no
+        # token cost); unknown future content_types likewise stay silent
+        # rather than guessing at a description.
+        content_type = payload.get("content_type")
+        provenance = (
+            _MACHINE_DERIVED_PROVENANCE.get(content_type) if isinstance(content_type, str) else None
+        )
+        if provenance:
+            lines.append(f"Provenance: {provenance}")
         lines.append(text or f"<{_UNTRUSTED_CONTENT_MARKER}></{_UNTRUSTED_CONTENT_MARKER}>")
 
     return "\n".join(lines)
