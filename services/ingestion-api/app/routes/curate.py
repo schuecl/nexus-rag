@@ -34,7 +34,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from app.deps import allowed_classifications, require_curator, verify_csrf
+from app.deps import (
+    allowed_classifications,
+    require_curator,
+    require_curator_or_purge,
+    verify_csrf,
+)
 from common.claims import UserClaims
 from common.db import get_session
 from common.metadata import access_scope_authorized, releasability_authorized
@@ -105,23 +110,34 @@ def list_documents(
         description="Case-insensitive search across filename, "
         "source/originator, document type, and uploader username",
     ),
-    user: UserClaims = Depends(require_curator),
+    user: UserClaims = Depends(require_curator_or_purge),
     session: Session = Depends(get_session),
 ) -> Sequence[Document]:
     """Issue #266: the "master list" -- every document (any status) the
-    curator holds authority over, not just the pending_review queue
-    /curate/queue above returns. Scoped identically to list_queue (owner_org
-    in curatable_orgs, classification at or below clearance, every
-    releasability value held -- issue #273 -- and, for rows still
-    pending_review, access_scope membership -- issue #277); the filters
-    below only ever narrow that set further, never widen it.
+    caller holds authority over, not just the pending_review queue
+    /curate/queue above returns.
+
+    Two distinct authorities can reach this, scoped differently (issue #279,
+    gap G3): a curator (any rag-curate:<org> role) gets exactly the existing
+    scoping -- owner_org in curatable_orgs, classification at or below
+    clearance, every releasability value held (issue #273), and, for rows
+    still pending_review, access_scope membership (issue #277). A rag-purge
+    holder with *no* curatable_orgs gets an unscoped list instead, matching
+    require_purge's own unscoped destruction authority (app/routes/upload.py)
+    -- they can already purge any document by id; this just lets them find
+    it. status_filter/classification/q only ever narrow whichever set that
+    caller already gets, never widen it. A caller holding both roles gets the
+    curator-scoped view -- narrower, and the one they're already used to.
     """
-    allowed = allowed_classifications(session, user.clearance)
-    stmt = (
-        select(Document)
-        .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
-        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
-    )
+    if user.curatable_orgs:
+        allowed = allowed_classifications(session, user.clearance)
+        stmt = (
+            select(Document)
+            .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+            .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
+        )
+    else:
+        stmt = select(Document)
     if status_filter:
         stmt = stmt.where(Document.status == status_filter)
     if classification:
@@ -137,6 +153,8 @@ def list_documents(
             )
         )
     docs = session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
+    if not user.curatable_orgs:
+        return docs
     return [
         d
         for d in docs

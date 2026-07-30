@@ -3,14 +3,27 @@
 {% block content %}
 <h1>Curation</h1>
 <nav class="subnav" aria-label="Curation views">
+  {# Issue #279 (gap G3): the Queue is curation workflow -- a purge-only
+     holder (no rag-curate:<org>) has no authority there (list_queue is
+     still require_curator only) and would just get a 403, so this tab is
+     hidden for them rather than dangled. #}
+  {% if current_user.curatable_orgs %}
   <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">Queue</a>
+  {% endif %}
   <a class="{% if request.url.path == '/curate/list' %}active{% endif %}" href="/curate/list">List</a>
 </nav>
+{% if current_user.curatable_orgs %}
 <p>Every document across the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover
 (FR-12), any status -- not just what's waiting in the queue. Edit a document's metadata
 after it has already cleared curation, without going through supersession. Changes to
 Classification/Releasability/Access scope are re-checked against your own curator authority
 the same as an approval correction.</p>
+{% else %}
+<p>Every document in the system, any status -- <code>rag-purge</code> authority is not scoped
+by org, clearance, or releasability the way curation is (see
+<code>app/deps.require_purge</code>), so neither is this list. Delete is the only action
+available here; metadata editing requires a <code>rag-curate:&lt;org&gt;</code> role.</p>
+{% endif %}
 
 <div class="doc-toolbar">
   <label>
@@ -53,6 +66,12 @@ const RELEASABILITY = {{ releasability | tojson }};
 // app/deps.require_purge) -- a curator without the rag-purge role should
 // never see a delete action they'd just get a 403 from.
 const CAN_PURGE = {{ current_user.can_purge | tojson }};
+// Issue #279 (gap G3): symmetric to CAN_PURGE above -- a purge-only holder
+// (no rag-curate:<org> role) gets an unscoped list (list_documents,
+// app/routes/curate.py) so they can find what to delete, but PATCH
+// /curate/documents/{id} stays require_curator-only, so Edit would just be
+// another 403 they'd never see coming.
+const CAN_EDIT_METADATA = {{ (current_user.curatable_orgs | length > 0) | tojson }};
 // Issue #268: mirrors the server-side authority check (app/routes/curate.py's
 // _authorized_for_tags) client-side, purely to decide whether to warn before
 // a save -- the server re-derives this from the caller's own verified claims
@@ -173,7 +192,7 @@ async function loadDocuments() {
     }
 
     const actions = el('div', { className: 'doc-row-actions' });
-    if (EDITABLE_STATUSES.includes(doc.status)) {
+    if (CAN_EDIT_METADATA && EDITABLE_STATUSES.includes(doc.status)) {
       const editBtn = el('button', { className: 'text-button', text: 'Edit' });
       editBtn.addEventListener('click', () => toggleEdit(doc.id, document.getElementById(`edit-form-${doc.id}`).hidden));
       actions.append(editBtn);
@@ -186,7 +205,7 @@ async function loadDocuments() {
 
     const summary = el('div', { className: 'doc-row-summary', children: [info, actions] });
     row.append(summary);
-    if (EDITABLE_STATUSES.includes(doc.status)) {
+    if (CAN_EDIT_METADATA && EDITABLE_STATUSES.includes(doc.status)) {
       row.append(editFormNode(doc));
     }
     listEl.appendChild(row);
