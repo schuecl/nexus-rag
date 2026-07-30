@@ -9,7 +9,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.51b0",
     # #205: mcp 2.0.0 removed/renamed mcp.server.fastmcp, which app/server.py
     # imports directly. Held below 2.0 until that import is migrated.
-    "mcp>=1.6,<2.0",
+    "mcp>=1.6,<3.0",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
     "prometheus-client>=0.20",
