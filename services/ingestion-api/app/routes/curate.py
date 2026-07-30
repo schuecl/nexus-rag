@@ -1,6 +1,12 @@
 """FR-10..FR-16: curation queue, scoped to the orgs a curator holds authority
 for (FR-12), with approval capped by org (FR-14.2) and by clearance/releasability
 (FR-14.1, mirroring FR-18's uploader-side check).
+
+Issue #273: that same clearance/releasability authority is also enforced at
+*list* time (list_queue/list_documents below), not just at approve/reject/edit
+-- a curator who lacks clearance for a document, or lacks one of its
+releasability values, must not see that it exists at all, purely by virtue of
+sharing an org with it.
 """
 
 from __future__ import annotations
@@ -10,8 +16,9 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.deps import allowed_classifications, require_curator, verify_csrf
@@ -31,12 +38,249 @@ def list_queue(
     user: UserClaims = Depends(require_curator),
     session: Session = Depends(get_session),
 ) -> Sequence[Document]:
+    # Issue #273: org membership alone used to be the whole scope -- a
+    # curator saw every pending document their org owned, including ones
+    # tagged above their own clearance or carrying a releasability caveat
+    # they don't hold. Classification is filtered in SQL (allowed_classifications
+    # is cheap -- one query, reused for every row); releasability is a
+    # per-value check (releasability_authorized) with no clean SQL
+    # equivalent against the JSON column, so it's applied in Python after the
+    # DB has already done the org/classification narrowing.
+    allowed = allowed_classifications(session, user.clearance)
     docs = session.exec(
         select(Document)
         .where(Document.status == "pending_review")
         .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
     ).all()
-    return docs
+    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+
+
+# Issue #266: statuses a document can be edited from through the curation
+# "List" dashboard below. Deliberately excludes the in-flight pipeline states
+# (queued/processing/embedded -- the worker owns the row until it reaches
+# pending_review) and the terminal/destroyed ones (superseded/purging/purged),
+# where editing metadata would either race the worker or mutate a record that
+# is supposed to be frozen or already gone.
+EDITABLE_STATUSES = {"pending_review", "approved", "rejected"}
+
+
+@router.get("/documents")
+def list_documents(
+    status_filter: str | None = Query(None, alias="status"),
+    classification: str | None = None,
+    q: str | None = Query(
+        None,
+        description="Case-insensitive search across filename, "
+        "source/originator, document type, and uploader username",
+    ),
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+) -> Sequence[Document]:
+    """Issue #266: the "master list" -- every document (any status) the
+    curator holds authority over, not just the pending_review queue
+    /curate/queue above returns. Scoped identically to list_queue (owner_org
+    in curatable_orgs, classification at or below clearance, every
+    releasability value held -- issue #273); the filters below only ever
+    narrow that set further, never widen it.
+    """
+    allowed = allowed_classifications(session, user.clearance)
+    stmt = (
+        select(Document)
+        .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
+    )
+    if status_filter:
+        stmt = stmt.where(Document.status == status_filter)
+    if classification:
+        stmt = stmt.where(Document.classification == classification)
+    if q:
+        needle = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Document.filename.ilike(needle),  # type: ignore[attr-defined]
+                Document.source_originator.ilike(needle),  # type: ignore[attr-defined]
+                Document.doc_type.ilike(needle),  # type: ignore[attr-defined]
+                Document.uploader_username.ilike(needle),  # type: ignore[attr-defined]
+            )
+        )
+    docs = session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
+    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+
+
+class DocumentEdit(BaseModel):
+    classification: str | None = None
+    # FR-20/Section 6.3: "one or more" cardinality, same as DocumentMetadataIn
+    # at upload time -- an edit is not the place to relax that constraint, so
+    # an explicit empty list is rejected (422) rather than silently orphaning
+    # the document (no releasability caveat/no access scope at all).
+    releasability: list[str] | None = Field(default=None, min_length=1)
+    access_scope: list[str] | None = Field(default=None, min_length=1)
+    source_originator: str | None = None
+    doc_type: str | None = None
+    program_community: str | None = None
+    effective_date: str | None = None
+
+
+@router.patch("/documents/{doc_id}")
+def edit_metadata(
+    doc_id: uuid.UUID,
+    body: DocumentEdit,
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
+    """Issue #266/#268: lets a curator correct a document's metadata after it
+    has already cleared curation, without going through supersession -- the
+    gap the issue calls out ("no mechanism to affect the metadata of an
+    ingested file after ingestion"). Authority to *edit* a document at all is
+    org authority only (`user.can_curate_org`) -- unlike approve()/reject(),
+    this deliberately does not also require the curator to hold the
+    document's *current* classification/releasability, since a curator
+    editing e.g. only `doc_type` on a document tagged above their own
+    clearance isn't granting or exercising any access.
+
+    What the edit sets classification/releasability *to* is a different
+    question (FR-14.1): if the resulting values are within the caller's own
+    clearance/releasability, the edit is applied as approved/rejected/
+    whatever the document's status already was. If they're not, the edit is
+    still applied -- a curator without the right authority isn't the one who
+    gets to decide those values are fine -- but the document is demoted back
+    to `pending_review` so a curator who does hold that authority has to sign
+    off on it before it's retrievable again (see _authorized_for_tags below).
+    This replaced a hard 403 that made *any* edit of a document tagged above
+    the caller's clearance fail outright, including edits that never touched
+    classification/releasability at all.
+
+    Deletion is deliberately NOT handled here -- that is the separate,
+    rag-purge-gated DELETE /documents/{id} in app/routes/upload.py
+    (common/purge.py). Purge is intentionally not curator authority (see
+    app/deps.require_purge), so the curation list page calls that existing
+    endpoint directly rather than this module growing a second, weaker path
+    to the same destructive action.
+    """
+    doc = session.get(Document, doc_id, with_for_update=True)
+    if doc is None or not user.can_curate_org(doc.owner_org):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    if doc.status not in EDITABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"document is '{doc.status}' and cannot be edited from the curation list -- "
+            f"only {', '.join(sorted(EDITABLE_STATUSES))} documents can be",
+        )
+
+    # #229: which collection this document's chunks are currently stamped
+    # with -- kept as its own variable, not just read back out of `before`,
+    # since a classification correction moves the chunks to a different
+    # collection rather than writing in place, and update_document_payload
+    # needs to be told where they're coming from.
+    original_classification: str = doc.classification
+    before: dict[str, str | list[str]] = {
+        "classification": doc.classification,
+        "releasability": list(doc.releasability),
+        "access_scope": list(doc.access_scope),
+        "status": doc.status,
+    }
+    changed_qdrant: dict[str, str | list[str]] = {}
+
+    if body.classification is not None and body.classification != doc.classification:
+        doc.classification = body.classification
+        changed_qdrant["classification"] = doc.classification
+    if body.releasability is not None and body.releasability != doc.releasability:
+        doc.releasability = body.releasability
+        changed_qdrant["releasability"] = doc.releasability
+    if body.access_scope is not None and body.access_scope != doc.access_scope:
+        doc.access_scope = body.access_scope
+        changed_qdrant["access_scope"] = doc.access_scope
+    if body.source_originator is not None:
+        doc.source_originator = body.source_originator
+    if body.doc_type is not None:
+        doc.doc_type = body.doc_type
+    if body.program_community is not None:
+        doc.program_community = body.program_community or None
+    if body.effective_date is not None:
+        doc.effective_date = body.effective_date or None
+
+    # Issue #268: if the *edited* classification/releasability land outside
+    # the caller's own authority, don't 403 -- apply the edit but send the
+    # document back to pending_review so a curator who does hold that
+    # authority has to sign off on it. approve()/reject() still hard-block on
+    # authority (that's the act of granting/publishing access in the first
+    # place); this is correcting metadata on something already published.
+    demoted = False
+    tags_changed = "classification" in changed_qdrant or "releasability" in changed_qdrant
+    if (
+        tags_changed
+        and doc.status != "pending_review"
+        and not _authorized_for_tags(user, doc.classification, doc.releasability, session)
+    ):
+        doc.status = "pending_review"
+        doc.reviewed_by_sub = None
+        doc.reviewed_at = None
+        changed_qdrant["status"] = doc.status
+        demoted = True
+
+    doc.updated_at = datetime.now(UTC)
+
+    if not changed_qdrant:
+        # Nothing that Qdrant also holds a copy of changed -- e.g. only
+        # source_originator/doc_type/program_community/effective_date edited.
+        # No access-control-relevant write, so no NFR-13 revert dance needed.
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.metadata_edit",
+                target_id=str(doc.id),
+                detail={"fields": list(body.model_dump(exclude_none=True))},
+            )
+        )
+        session.commit()
+        session.refresh(doc)
+        return doc
+
+    # #229: which collection this document's chunks are stamped with *before*
+    # this call -- if changed_qdrant corrects classification, QdrantStore
+    # moves them to the target collection rather than writing in place. The
+    # revert below has to target where they end up, not where they started.
+    resulting_classification: str = doc.classification
+    store = get_store()
+    store.update_document_payload(str(doc.id), original_classification, changed_qdrant)
+    # NFR-13: same reasoning as approve()/reject() -- best-effort revert the
+    # Qdrant write if the Postgres commit doesn't durably land, so the two
+    # stores don't end up disagreeing about this document's access-control
+    # fields.
+    try:
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.metadata_edit",
+                target_id=str(doc.id),
+                detail={
+                    "fields": list(body.model_dump(exclude_none=True)),
+                    "demoted_to_pending_review": demoted,
+                },
+            )
+        )
+        session.commit()
+    except Exception:
+        try:
+            store.update_document_payload(
+                str(doc.id), resulting_classification, {k: before[k] for k in changed_qdrant}
+            )
+        except Exception:
+            logger.exception(
+                "metadata edit of document %s failed and the Qdrant revert also "
+                "failed -- its payload may not match Postgres; needs manual "
+                "reconciliation",
+                doc.id,
+            )
+        raise
+    session.refresh(doc)
+    return doc
 
 
 def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) -> Document:
@@ -51,6 +295,21 @@ def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) ->
     if doc.status != "pending_review":
         raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
     return doc
+
+
+def _authorized_for_tags(
+    user: UserClaims, classification: str, releasability: list[str], session: Session
+) -> bool:
+    """FR-14.1: whether `user` personally holds clearance for `classification`
+    and every `releasability` value, mirroring validate_against_claims'
+    uploader-side check (common/metadata.py) exactly. A pure predicate rather
+    than _check_curator_authority's raise -- edit_metadata (issue #268) wants
+    to decide *what to do* when this is False (demote to pending_review)
+    rather than reject the request outright."""
+    allowed = allowed_classifications(session, user.clearance)
+    if classification not in allowed:
+        return False
+    return releasability_authorized(releasability, user.releasability)
 
 
 def _check_curator_authority(user: UserClaims, doc: Document, session: Session) -> None:

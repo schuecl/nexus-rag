@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block title %}Curation List — {{ app_name }}{% endblock %}
+{% block content %}
+<h1>Curation</h1>
+<nav class="subnav" aria-label="Curation views">
+  <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">Queue</a>
+  <a class="{% if request.url.path == '/curate/list' %}active{% endif %}" href="/curate/list">List</a>
+</nav>
+<p>Every document across the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover
+(FR-12), any status -- not just what's waiting in the queue. Edit a document's metadata
+after it has already cleared curation, without going through supersession. Changes to
+Classification/Releasability/Access scope are re-checked against your own curator authority
+the same as an approval correction.</p>
+
+<div class="doc-toolbar">
+  <label>
+    Search
+    <input type="search" id="docSearch" placeholder="filename, originator, type, uploader..." />
+  </label>
+  <label>
+    Status
+    <select id="docStatusFilter">
+      <option value="">Any</option>
+      <option value="pending_review">Pending review</option>
+      <option value="approved">Approved</option>
+      <option value="rejected">Rejected</option>
+      <option value="superseded">Superseded</option>
+      <option value="failed">Failed</option>
+      <option value="purged">Purged</option>
+    </select>
+  </label>
+  <label>
+    Classification
+    <select id="docClassificationFilter">
+      <option value="">Any</option>
+      {% for value, rank in classifications %}
+      <option value="{{ value }}">{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="button" onclick="loadDocuments()">Refresh</button>
+  <span class="doc-count" id="docCount"></span>
+</div>
+
+<div id="documents"></div>
+<div id="result" class="msg" hidden></div>
+
+<script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
+<script>
+const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
+const RELEASABILITY = {{ releasability | tojson }};
+// Issue #123: purge is a deliberately separate authority from curation (see
+// app/deps.require_purge) -- a curator without the rag-purge role should
+// never see a delete action they'd just get a 403 from.
+const CAN_PURGE = {{ current_user.can_purge | tojson }};
+// Issue #268: mirrors the server-side authority check (app/routes/curate.py's
+// _authorized_for_tags) client-side, purely to decide whether to warn before
+// a save -- the server re-derives this from the caller's own verified claims
+// regardless of what this page thinks, and demotes the document to
+// pending_review on its own if the values land outside it either way.
+const CLASSIFICATION_RANKS = Object.fromEntries({{ classifications | tojson }});
+const CURATOR_CLEARANCE_RANK = CLASSIFICATION_RANKS[{{ current_user.clearance | tojson }}];
+const CURATOR_RELEASABILITY = {{ current_user.releasability | tojson }};
+const NO_RELEASABILITY_RESTRICTION = {{ no_releasability_restriction | tojson }};
+
+function exceedsCuratorAuthority(classification, releasability) {
+  const rank = CLASSIFICATION_RANKS[classification];
+  if (CURATOR_CLEARANCE_RANK === undefined || rank === undefined || rank > CURATOR_CLEARANCE_RANK) {
+    return true;
+  }
+  return releasability.some(
+    (v) => v !== NO_RELEASABILITY_RESTRICTION && !CURATOR_RELEASABILITY.includes(v)
+  );
+}
+
+let listedDocs = {};
+let searchDebounce = null;
+
+function statusPill(status) {
+  return el('span', { className: 'status-pill', attrs: { 'data-status': status }, text: status });
+}
+
+function summaryLine(doc) {
+  const parts = [`org: ${doc.owner_org} · uploaded by ${doc.uploader_username}`];
+  parts.push(`classification: ${doc.classification}`);
+  if (doc.releasability && doc.releasability.length) {
+    parts.push(`releasability: ${doc.releasability.join(', ')}`);
+  }
+  return parts.join(' · ');
+}
+
+function editFormNode(doc) {
+  const classification = el('select', { id: `edit-classification-${doc.id}`,
+                                        children: optionNodes(CLASSIFICATIONS, doc.classification) });
+  const releasability = el('select', { id: `edit-releasability-${doc.id}`, attrs: { multiple: '' },
+                                       children: multiOptionNodes(RELEASABILITY, doc.releasability) });
+  const accessScope = el('input', { id: `edit-access_scope-${doc.id}`, attrs: { type: 'text' } });
+  accessScope.value = doc.access_scope.join(', ');
+  const sourceOriginator = el('input', { id: `edit-source_originator-${doc.id}`, attrs: { type: 'text' } });
+  sourceOriginator.value = doc.source_originator;
+  const docType = el('input', { id: `edit-doc_type-${doc.id}`, attrs: { type: 'text' } });
+  docType.value = doc.doc_type;
+  const programCommunity = el('input', { id: `edit-program_community-${doc.id}`, attrs: { type: 'text' } });
+  programCommunity.value = doc.program_community || '';
+  const effectiveDate = el('input', { id: `edit-effective_date-${doc.id}`, attrs: { type: 'date' } });
+  effectiveDate.value = doc.effective_date || '';
+
+  const form = el('div', { className: 'doc-row-edit', id: `edit-form-${doc.id}`, attrs: { hidden: '' },
+    children: [
+      el('div', { children: [
+        el('label', { children: ['Classification', classification] }),
+        el('label', { children: [
+          'Releasability ', el('span', { className: 'hint', text: '(ctrl/cmd-click for more than one)' }),
+          releasability,
+        ] }),
+        el('label', { children: ['Access scope ', el('span', { className: 'hint', text: '(comma-separated)' }), accessScope] }),
+        el('label', { children: ['Source / Originator', sourceOriginator] }),
+        el('label', { children: ['Document type', docType] }),
+        el('label', { children: ['Program / community', programCommunity] }),
+        el('label', { children: ['Effective date', effectiveDate] }),
+      ] }),
+    ] });
+
+  const saveBtn = el('button', { text: 'Save' });
+  saveBtn.addEventListener('click', () => saveEdit(doc.id));
+  const cancelBtn = el('button', { className: 'text-button', text: 'Cancel' });
+  cancelBtn.addEventListener('click', () => toggleEdit(doc.id, false));
+  form.append(el('div', { className: 'doc-row-actions', children: [saveBtn, cancelBtn] }));
+  return form;
+}
+
+function toggleEdit(id, open) {
+  const form = document.getElementById(`edit-form-${id}`);
+  if (form) form.hidden = !open;
+}
+
+async function loadDocuments() {
+  const params = new URLSearchParams();
+  const q = document.getElementById('docSearch').value.trim();
+  const status = document.getElementById('docStatusFilter').value;
+  const classification = document.getElementById('docClassificationFilter').value;
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  if (classification) params.set('classification', classification);
+
+  const res = await fetch(`/curate/documents?${params}`, { headers: authHeaders() });
+  const listEl = document.getElementById('documents');
+  const countEl = document.getElementById('docCount');
+  if (!res.ok) {
+    listEl.textContent = 'Error: ' + res.status + ' ' + (await res.text());
+    countEl.textContent = '';
+    return;
+  }
+  const docs = await res.json();
+  listedDocs = Object.fromEntries(docs.map(d => [d.id, d]));
+  listEl.innerHTML = '';
+  countEl.textContent = docs.length === 1 ? '1 document' : `${docs.length} documents`;
+  if (docs.length === 0) {
+    listEl.textContent = 'No documents match.';
+    return;
+  }
+
+  const EDITABLE_STATUSES = ['pending_review', 'approved', 'rejected'];
+  for (const doc of docs) {
+    const row = el('div', { className: 'doc-row' });
+    const info = el('div');
+    // doc.filename is uploader-controlled input -- text content only, never
+    // markup, same reasoning as curate.html (issue #207/#266).
+    info.append(el('strong', { text: doc.filename }), ' ', statusPill(doc.status),
+                el('br'), summaryLine(doc));
+    if (doc.rejection_reason) {
+      info.append(el('br'), el('span', { className: 'hint', text: 'rejection reason: ' + doc.rejection_reason }));
+    }
+
+    const actions = el('div', { className: 'doc-row-actions' });
+    if (EDITABLE_STATUSES.includes(doc.status)) {
+      const editBtn = el('button', { className: 'text-button', text: 'Edit' });
+      editBtn.addEventListener('click', () => toggleEdit(doc.id, document.getElementById(`edit-form-${doc.id}`).hidden));
+      actions.append(editBtn);
+    }
+    if (CAN_PURGE && doc.status !== 'purged' && doc.status !== 'purging') {
+      const deleteBtn = el('button', { className: 'text-button danger-button', text: 'Delete' });
+      deleteBtn.addEventListener('click', () => deleteDoc(doc.id, doc.filename));
+      actions.append(deleteBtn);
+    }
+
+    const summary = el('div', { className: 'doc-row-summary', children: [info, actions] });
+    row.append(summary);
+    if (EDITABLE_STATUSES.includes(doc.status)) {
+      row.append(editFormNode(doc));
+    }
+    listEl.appendChild(row);
+  }
+}
+
+async function saveEdit(id) {
+  const doc = listedDocs[id];
+  const classification = document.getElementById(`edit-classification-${id}`).value;
+  const releasability = Array.from(document.getElementById(`edit-releasability-${id}`).selectedOptions)
+    .map(o => o.value);
+  const accessScope = document.getElementById(`edit-access_scope-${id}`).value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const sourceOriginator = document.getElementById(`edit-source_originator-${id}`).value.trim();
+  const docType = document.getElementById(`edit-doc_type-${id}`).value.trim();
+  const programCommunity = document.getElementById(`edit-program_community-${id}`).value.trim();
+  const effectiveDate = document.getElementById(`edit-effective_date-${id}`).value;
+
+  // Only send fields that actually changed -- keeps the audit log (FR-16)
+  // meaningful, same reasoning as curate.html's readCorrections(). Compared
+  // sorted: releasability is a set, and its <select>'s DOM order follows the
+  // admin-configured RELEASABILITY list rather than doc.releasability's
+  // original order, so an unsorted compare flagged a same-set reorder as a
+  // change every time the form was opened and saved untouched.
+  const body = {};
+  if (classification !== doc.classification) body.classification = classification;
+  if (JSON.stringify([...releasability].sort()) !== JSON.stringify([...doc.releasability].sort())) {
+    body.releasability = releasability;
+  }
+  if (JSON.stringify(accessScope) !== JSON.stringify(doc.access_scope)) body.access_scope = accessScope;
+  if (sourceOriginator !== doc.source_originator) body.source_originator = sourceOriginator;
+  if (docType !== doc.doc_type) body.doc_type = docType;
+  if (programCommunity !== (doc.program_community || '')) body.program_community = programCommunity;
+  if (effectiveDate !== (doc.effective_date || '')) body.effective_date = effectiveDate;
+
+  if (Object.keys(body).length === 0) {
+    toggleEdit(id, false);
+    return;
+  }
+
+  // Issue #268: the server applies this edit regardless -- a curator without
+  // authority for the new values doesn't get to decide those values are fine
+  // by having the request rejected outright -- but it demotes the document to
+  // pending_review rather than leaving it retrievable under tags the caller
+  // couldn't have approved in the first place. Warn before that happens
+  // rather than surprising the curator with a status change after the fact.
+  if (('classification' in body || 'releasability' in body) &&
+      exceedsCuratorAuthority(
+        'classification' in body ? body.classification : doc.classification,
+        'releasability' in body ? body.releasability : doc.releasability,
+      )) {
+    const proceed = confirm(
+      `You don't hold clearance/releasability for the values you selected on “${doc.filename}”. ` +
+      'Saving will send it back to Pending Review for another curator to re-approve, and you will ' +
+      'lose the ability to curate it until then. Continue?'
+    );
+    if (!proceed) return;
+  }
+
+  const res = await fetch(`/curate/documents/${id}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await reportResult(document.getElementById('result'), res, (saved) =>
+    saved && saved.status === 'pending_review' && doc.status !== 'pending_review'
+      ? `Saved changes to “${doc.filename}” — sent back to Pending Review for re-approval.`
+      : `Saved changes to “${doc.filename}”.`
+  );
+  loadDocuments();
+}
+
+async function deleteDoc(id, filename) {
+  const reason = prompt(`Purge “${filename}” everywhere (originals, chunks) -- this is irreversible.\nReason (required):`);
+  if (!reason) return;
+  const res = await fetch(`/documents/${id}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  await reportResult(document.getElementById('result'), res, () => `Purged “${filename}”.`);
+  loadDocuments();
+}
+
+document.getElementById('docSearch').addEventListener('input', () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(loadDocuments, 300);
+});
+document.getElementById('docStatusFilter').addEventListener('change', loadDocuments);
+document.getElementById('docClassificationFilter').addEventListener('change', loadDocuments);
+
+loadDocuments();
+</script>
+{% endblock %}
