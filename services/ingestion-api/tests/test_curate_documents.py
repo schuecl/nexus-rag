@@ -65,18 +65,19 @@ def _document(**overrides: Any) -> Document:
 
 
 class _PayloadCalls:
-    """Same stand-in for the #160 vector-store seam used by
+    """Same stand-in for the #160/#229 vector-store seam used by
     test_curate_nfr13_revert.py, reused here for the edit endpoint's own
-    NFR-13-style revert path."""
+    NFR-13-style revert path. `classification` is the collection the chunks
+    were stamped with *before* this call (issue #229)."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict | None]] = []
+        self.calls: list[tuple[str, str, str, dict | None]] = []
 
-    def update_document_payload(self, document_id: str, fields: dict) -> None:
-        self.calls.append(("update", document_id, fields))
+    def update_document_payload(self, document_id: str, classification: str, fields: dict) -> None:
+        self.calls.append(("update", document_id, classification, fields))
 
-    def delete_document_chunks(self, document_id: str) -> None:
-        self.calls.append(("delete", document_id, None))
+    def delete_document_chunks(self, document_id: str, classification: str) -> None:
+        self.calls.append(("delete", document_id, classification, None))
 
 
 def _break_commit(session: Session, error: Exception) -> None:
@@ -195,7 +196,7 @@ class TestEditMetadata:
 
         assert result.classification == "SECRET"
         assert result.program_community == "J2"
-        assert _stub_qdrant.calls == [("update", str(doc.id), {"classification": "SECRET"})]
+        assert _stub_qdrant.calls == [("update", str(doc.id), "CUI", {"classification": "SECRET"})]
         entries = session.exec(select(AuditLogEntry)).all()
         assert len(entries) == 1
         assert entries[0].action == "document.metadata_edit"
@@ -312,6 +313,7 @@ class TestEditMetadata:
             (
                 "update",
                 str(doc.id),
+                "CUI",
                 {"classification": "TOP SECRET", "status": "pending_review"},
             )
         ]
@@ -340,6 +342,7 @@ class TestEditMetadata:
             (
                 "update",
                 str(doc.id),
+                "CUI",
                 {"releasability": ["NOFORN"], "status": "pending_review"},
             )
         ]
@@ -362,7 +365,7 @@ class TestEditMetadata:
 
         assert result.classification == "SECRET"
         assert result.status == "rejected"
-        assert _stub_qdrant.calls == [("update", str(doc.id), {"classification": "SECRET"})]
+        assert _stub_qdrant.calls == [("update", str(doc.id), "CUI", {"classification": "SECRET"})]
 
     def test_commit_failure_reverts_qdrant_and_reraises(
         self, session: Session, _stub_qdrant: _PayloadCalls
@@ -383,6 +386,6 @@ class TestEditMetadata:
             )
 
         assert _stub_qdrant.calls == [
-            ("update", str(doc.id), {"classification": "SECRET"}),
-            ("update", str(doc.id), {"classification": "CUI"}),
+            ("update", str(doc.id), "CUI", {"classification": "SECRET"}),
+            ("update", str(doc.id), "SECRET", {"classification": "CUI"}),
         ]

@@ -146,7 +146,13 @@ def edit_metadata(
             f"only {', '.join(sorted(EDITABLE_STATUSES))} documents can be",
         )
 
-    before = {
+    # #229: which collection this document's chunks are currently stamped
+    # with -- kept as its own variable, not just read back out of `before`,
+    # since a classification correction moves the chunks to a different
+    # collection rather than writing in place, and update_document_payload
+    # needs to be told where they're coming from.
+    original_classification: str = doc.classification
+    before: dict[str, str | list[str]] = {
         "classification": doc.classification,
         "releasability": list(doc.releasability),
         "access_scope": list(doc.access_scope),
@@ -211,8 +217,13 @@ def edit_metadata(
         session.refresh(doc)
         return doc
 
+    # #229: which collection this document's chunks are stamped with *before*
+    # this call -- if changed_qdrant corrects classification, QdrantStore
+    # moves them to the target collection rather than writing in place. The
+    # revert below has to target where they end up, not where they started.
+    resulting_classification: str = doc.classification
     store = get_store()
-    store.update_document_payload(str(doc.id), changed_qdrant)
+    store.update_document_payload(str(doc.id), original_classification, changed_qdrant)
     # NFR-13: same reasoning as approve()/reject() -- best-effort revert the
     # Qdrant write if the Postgres commit doesn't durably land, so the two
     # stores don't end up disagreeing about this document's access-control
@@ -234,7 +245,9 @@ def edit_metadata(
         session.commit()
     except Exception:
         try:
-            store.update_document_payload(str(doc.id), {k: before[k] for k in changed_qdrant})
+            store.update_document_payload(
+                str(doc.id), resulting_classification, {k: before[k] for k in changed_qdrant}
+            )
         except Exception:
             logger.exception(
                 "metadata edit of document %s failed and the Qdrant revert also "
