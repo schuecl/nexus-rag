@@ -189,11 +189,17 @@ point maps it to 401 like any other malformed token. Duplicate *identical*
 values and zero clearance roles remain valid. Previously the first role in
 `rag_roles` order won silently.
 
-**G5 — Static service credentials with no rotation story.** Qdrant keys, NATS
-account passwords, the reranker secret, and `APP_DB_USER` are long-lived
-values in env/config. No documented rotation procedure or dual-key overlap
-window exists. At minimum, document rotation; better, support two concurrently
-valid values per secret so rotation needs no downtime.
+**G5 — Static service credentials, rotation now documented but still
+downtime-only (#281).** Qdrant keys, NATS account passwords, the reranker
+secret, `APP_DB_USER`, the session-token Fernet key, and the Keycloak client
+secret are long-lived values in env/config. Stage 1 of #281 closed the
+"no documented procedure" half: [`docs/credential-rotation.md`](credential-rotation.md)
+has an order-of-operations runbook per credential, including which side has
+to restart first and what breaks if the order is reversed. Stage 2 — dual-
+concurrently-valid values per secret, so rotation needs no downtime — remains
+open, to be done per-credential as separate small PRs (the reranker secret's
+`RERANKER_SECRET_PREVIOUS` and the Fernet key's `MultiFernet` migration are
+the two concretely scoped in the issue).
 
 **G6 — `rag-query` retrieval has no per-document view audit granularity.**
 The audit row records the filter and result count, not *which* documents were
