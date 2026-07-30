@@ -69,3 +69,8 @@ Feature: Claims-based access control (FR-18, FR-26, REQUIREMENTS.md Section 6)
     Then that user's need-to-know matches an access scope of "USAREUR-AF"
     And that user's need-to-know matches an access scope of "ALL_AUTHENTICATED"
     And that user's need-to-know does not match an access scope of "Signal-Corps"
+
+  Scenario: A purge request cannot be confirmed by its own requester
+    Given a purge request filed by "dave-admin"
+    Then that same requester cannot confirm it
+    But a different rag-purge holder "eve-purge" can confirm it

@@ -338,6 +338,12 @@ services:
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       QUEUE_RECONCILE_INTERVAL_SECONDS: ${QUEUE_RECONCILE_INTERVAL_SECONDS:-15}
       QUEUE_RECONCILE_BATCH_SIZE: ${QUEUE_RECONCILE_BATCH_SIZE:-100}
+      # Issue #279 (gap G3): code defaults this true (production-safe); the
+      # dev stack sets it false because dave-admin is the only seeded
+      # rag-purge holder -- a second confirming identity would never be
+      # available, and seed-sample-data never purges anyway. See
+      # app/routes/upload.py.
+      PURGE_TWO_PERSON_REQUIRED: "false"
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}

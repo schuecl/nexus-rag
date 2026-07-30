@@ -381,10 +381,19 @@ environment.**
 | `bob-query` | `rag-query` | SECRET | FVEY, NATO | USAREUR-AF | query-only |
 | `carol-curator` | `rag-query`, `rag-curate:USAREUR-AF` | SECRET | FVEY, NATO | USAREUR-AF | curator scoped to one org |
 | `dave-admin` | all roles + both curator orgs | SECRET | NOFORN, USA, NATO, FVEY | USAREUR-AF | admin |
+| `eve-purge` | `rag-purge` only | — | — | USAREUR-AF | second, independent purge holder |
 
 Clearance and Releasability are both granted via `rag-clearance:<value>` and
 `rag-releasability:<value>` client roles (same convention as `rag-curate:<org>`), not user
 attributes — see REQUIREMENTS.md Section 6.2.
+
+Issue #279 (gap G3): `dave-admin` already holds `rag-purge` alongside every other role,
+which collapses the separation `deps.require_purge`'s docstring argues for. `eve-purge` is
+seeded specifically so the two-person purge-request/confirm flow
+(`docs/roles-and-permissions.md` §7 G3) has a second, genuinely independent `rag-purge`
+identity to confirm with — `PURGE_TWO_PERSON_REQUIRED` is off by default in this dev
+stack (see `docker-compose.yml`), so exercising the two-person path here means setting it
+to `true` yourself.
 
 ## Getting a token for API testing (dev-only password grant)
 

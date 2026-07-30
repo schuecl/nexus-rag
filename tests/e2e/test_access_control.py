@@ -22,6 +22,7 @@ from common.metadata import (
     validate_against_claims,
 )
 from common.models import Document
+from common.purge import purge_confirmation_authorized
 from common.qdrant_filters import build_access_filter
 from common.versioning import SupersedeValidationError, validate_supersede_target
 
@@ -100,6 +101,11 @@ def test_curator_need_to_know_scope_matching():
     pass
 
 
+@scenario(FEATURE, "A purge request cannot be confirmed by its own requester")
+def test_purge_two_person_confirmation():
+    pass
+
+
 # ---------------------------------------------------------------------- steps
 
 
@@ -165,6 +171,16 @@ def ctx_existing_doc(ctx, status, org):
         doc_type="report",
         status=status,
     )
+
+
+@given(parsers.parse('a purge request filed by "{username}"'), target_fixture="ctx")
+def ctx_purge_request(username):
+    # Issue #279 (gap G3): the invariant under test is a plain sub
+    # comparison (common.purge.purge_confirmation_authorized), so no
+    # DB-backed PurgeRequest row is needed here -- just the requester's
+    # identity, mirroring how the supersede scenarios above build only the
+    # Document fields their own predicate actually reads.
+    return {"requested_by_sub": f"{username}-sub"}
 
 
 @when("the server-side access filter is built for that user", target_fixture="ctx")
@@ -312,3 +328,16 @@ def supersede_status_error(ctx):
 def supersede_org_error(ctx):
     assert isinstance(ctx["error"], SupersedeValidationError)
     assert any("different org" in e for e in ctx["error"].errors)
+
+
+@then("that same requester cannot confirm it")
+def purge_same_requester_refused(ctx):
+    sub = ctx["requested_by_sub"]
+    assert not purge_confirmation_authorized(requested_by_sub=sub, confirming_sub=sub)
+
+
+@then(parsers.parse('a different rag-purge holder "{username}" can confirm it'))
+def purge_different_holder_allowed(ctx, username):
+    assert purge_confirmation_authorized(
+        requested_by_sub=ctx["requested_by_sub"], confirming_sub=f"{username}-sub"
+    )
