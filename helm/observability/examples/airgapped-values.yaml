@@ -1,0 +1,135 @@
+# Ready-to-edit values for the topology this chart exists for (issue #257):
+# an air-gapped cluster whose Grafana runs OUTSIDE it and connects to these
+# stores by LoadBalancer IP.
+#
+#   helm install nexus-rag-obs ./helm/observability \
+#     --namespace observability --create-namespace \
+#     --values helm/observability/examples/airgapped-values.yaml
+#
+# Every CHANGEME below has to be replaced. The chart deliberately fails to
+# render rather than defaulting two of them (source ranges, and the postgres
+# exporter DSN) -- see README.md's "Fail-closed defaults".
+
+global:
+  # The registry the images were pre-staged into (NFR-1: nothing is pulled from
+  # the internet at deploy time). Mirror the nine images listed in README.md.
+  imageRegistry: "CHANGEME.registry.internal.example.mil/nexus-rag"
+  imagePullSecrets: []
+  labels:
+    # Whatever the environment stamps on everything for accreditation tracking.
+    # example.mil/system: nexus-rag
+
+# --- Who may reach the four published stores -------------------------------
+externalAccess:
+  loadBalancerSourceRanges:
+    # The subnet the external Grafana sits on. This is the only thing standing
+    # between these addresses and the corpus's operational telemetry -- these
+    # four services have no authentication of their own.
+    - "CHANGEME/32"
+  # Preserves the client source IP, which is what makes the ranges above
+  # meaningful on most providers.
+  externalTrafficPolicy: Local
+  annotations: {}
+    # MetalLB:            metallb.universe.tf/address-pool: internal
+    # AWS internal NLB:   service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  loadBalancerClass: ""
+
+# --- Pre-assigned addresses, so the datasource file renders complete --------
+# Leave these empty and the provider allocates; the generated datasource file
+# then carries REPLACE_WITH_* placeholders you fill in from `kubectl get svc`.
+prometheus:
+  service:
+    loadBalancerIP: "CHANGEME"
+  persistence:
+    size: 50Gi
+    storageClass: "CHANGEME-block-storageclass"
+  # 15d matches the Compose stack. Raise it if the retrieval-quality trend
+  # (FR-30) needs a longer window than the golden-query history provides.
+  retention: 15d
+  blackboxTargets:
+    # Services with no /metrics of their own. This chart deploys none of them,
+    # so only you know their in-cluster URLs.
+    # - https://librechat.example.mil/login
+    # - http://litellm.chat.svc:4000/health/liveliness
+    # - http://ollama.gen.svc:11434/api/version
+
+loki:
+  service:
+    loadBalancerIP: "CHANGEME"
+  persistence:
+    size: 50Gi
+    storageClass: "CHANGEME-block-storageclass"
+
+tempo:
+  service:
+    loadBalancerIP: "CHANGEME"
+  persistence:
+    size: 30Gi
+    storageClass: "CHANGEME-block-storageclass"
+
+alertmanager:
+  service:
+    loadBalancerIP: "CHANGEME"
+  # Enable once a real receiver is configured, so a restart does not re-fire
+  # everything that was silenced.
+  persistence:
+    enabled: false
+  # Replace the no-op default with the environment's approved integration.
+  config: {}
+
+# --- The nexus-rag release being observed -----------------------------------
+nexusRag:
+  releaseName: nexus-rag
+  namespace: nexus-rag
+  qdrant:
+    enabled: true
+    # Secret holding the read-only Qdrant API key. Without it the qdrant scrape
+    # gets a 401 and the Vector store dashboard reads "No data".
+    existingSecret: "CHANGEME-qdrant-read-only"
+    secretKey: qdrant-read-only-api-key
+  milvus:
+    # #160: one vector backend per deployment, never both.
+    enabled: false
+  keycloak:
+    enabled: true
+    # Keycloak's MANAGEMENT port (9000 in 23+), not the realm port.
+    target: "CHANGEME-keycloak.identity.svc:9000"
+
+# --- Exporters --------------------------------------------------------------
+exporters:
+  postgres:
+    enabled: true
+    # Secret with key DATA_SOURCE_NAME holding a libpq URI for a read-only
+    # monitoring role -- NFR-3, not the application's own credentials.
+    existingSecret: "CHANGEME-postgres-exporter-dsn"
+  nats:
+    enabled: true
+  blackbox:
+    enabled: true
+
+# --- What the external Grafana needs told about itself ----------------------
+externalGrafana:
+  url: "https://CHANGEME-grafana.example.mil"
+  emitDatasourcesConfigMap: true
+  documentsDatasource:
+    enabled: true
+    # Grafana connects to Postgres DIRECTLY for the Documents dashboard, not
+    # through anything this chart deploys. Requires a network path from Grafana
+    # to the database, infra/postgres/document-metrics-view.sql applied, and
+    # grafana_ro granted SELECT on document_metrics.
+    host: "CHANGEME-postgres.data.svc"
+    port: 5432
+    database: nexus_rag
+    user: grafana_ro
+
+alloy:
+  enabled: true
+  environmentLabel: production
+
+# --- Defence in depth on top of the LB source ranges ------------------------
+networkPolicy:
+  enabled: true
+  grafanaCIDRs:
+    - "CHANGEME/32"
+  allowedNamespaces:
+    - nexus-rag

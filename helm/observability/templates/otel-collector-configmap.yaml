@@ -1,0 +1,77 @@
+{{- /*
+#257 / #134: OTLP collector, from infra/observability/otel-collector.yml.
+
+ClusterIP and a Deployment (not a StatefulSet): it holds no state beyond an
+in-flight batch, and its only clients are the four nexus-rag app services. The
+NOTES print the endpoint to set as the nexus-rag chart's
+observability.tracing.otlpEndpoint -- tracing is a no-op until that value is
+set (services/common/common/tracing.py returns early when
+OTEL_EXPORTER_OTLP_ENDPOINT is unset), so deploying this chart alone does not
+turn tracing on.
+*/}}
+{{- if .Values.otelCollector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "observability.fullname" . }}-otel-collector
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:{{ .Values.otelCollector.service.grpcPort }}
+          http:
+            endpoint: 0.0.0.0:{{ .Values.otelCollector.service.httpPort }}
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: {{ .Values.otelCollector.memoryLimitMib }}
+      batch:
+        timeout: 2s
+        send_batch_size: 1024
+
+    exporters:
+      {{- if .Values.tempo.enabled }}
+      otlphttp/tempo:
+        endpoint: http://{{ include "observability.fullname" . }}-tempo-otlp:{{ .Values.tempo.otlpPorts.http }}
+        tls:
+          insecure: true
+      {{- else }}
+      # tempo.enabled=false: traces are accepted and dropped rather than
+      # failing the collector's own startup on an unknown exporter. Visible in
+      # the collector's otelcol_exporter_* metrics, not silent.
+      nop: {}
+      {{- end }}
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.otelCollector.healthCheckPort }}
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [{{ if .Values.tempo.enabled }}otlphttp/tempo{{ else }}nop{{ end }}]
+      telemetry:
+        metrics:
+          level: normal
+          # service.telemetry.metrics.address is ignored by Collector >= 0.123.
+          # The pull reader is configured explicitly so Prometheus's :8888
+          # target exists on the pinned release -- the same workaround the
+          # Compose config carries, for the same reason.
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: {{ .Values.otelCollector.telemetryPort }}
+                    without_type_suffix: true
+                    without_units: true
+{{- end }}

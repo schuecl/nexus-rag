@@ -219,6 +219,12 @@ jobs:
       # Helm can't reference files outside its own chart directory.
       - name: Issue #212 -- NATS ACL config matches across compose and chart
         run: python scripts/check_nats_conf_sync.py
+      # Issue #257: same reason as #212, applied to the Grafana dashboards and
+      # Prometheus alert rules that helm/observability vendors. A dashboard
+      # fixed on one side only means the air-gapped Grafana imports the stale
+      # copy and nothing reports it.
+      - name: Issue #257 -- observability assets match across compose and chart
+        run: python scripts/check_observability_assets_sync.py
 
   build:
     runs-on: ubuntu-latest

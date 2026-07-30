@@ -1,0 +1,102 @@
+groups:
+  - name: nexus-rag-availability
+    rules:
+      - alert: NexusRagServiceDown
+        expr: up{job=~"nexus-rag-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nexus RAG service is unavailable"
+          description: "{{ $labels.job }} at {{ $labels.instance }} has been down for one minute."
+
+      - alert: NexusRagWorkerConsumerStopped
+        expr: nexus_rag_ingestion_worker_consumer_running == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ingestion consumer is not running"
+          description: "The HTTP process may still be alive, but its durable JetStream consumer is stopped."
+
+      - alert: NexusRagDependencyDown
+        expr: up{job=~"nats|postgres|qdrant|keycloak"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nexus RAG dependency is unavailable"
+          description: "{{ $labels.job }} at {{ $labels.instance }} has not been scrapeable for two minutes."
+
+  - name: nexus-rag-ingestion
+    rules:
+      - alert: NexusRagQueuePublishFailure
+        expr: increase(nexus_rag_ingestion_queue_publish_total{outcome="failed"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "A document could not be published to JetStream"
+          description: "The reconciler will retry, but the Postgres-to-JetStream hand-off is degraded."
+
+      - alert: NexusRagUnpublishedDocumentStale
+        expr: nexus_rag_ingestion_queue_oldest_unpublished_seconds > 60
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A queued document has not reached JetStream"
+          description: "The oldest unacknowledged queue publication is {{ $value | humanizeDuration }} old."
+
+      - alert: NexusRagWorkerTransientFailures
+        expr: increase(nexus_rag_ingestion_worker_jobs_total{outcome="transient_failure"}[10m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ingestion jobs are repeatedly retrying"
+          description: "More than two transient worker failures occurred in ten minutes."
+
+      - alert: NexusRagWorkerDeliveryExhausted
+        expr: increase(nexus_rag_ingestion_worker_jobs_total{outcome="delivery_exhausted"}[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "An ingestion job exhausted its retry budget"
+          description: "At least one document was marked failed after all JetStream delivery attempts."
+
+  - name: nexus-rag-retrieval
+    rules:
+      - alert: NexusRagHighQueryLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(nexus_rag_query_stage_seconds_bucket{stage="total"}[10m])
+            )
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG query p95 latency is above five seconds"
+          description: "The retrieval and reranking path has exceeded the provisional operational threshold."
+
+      - alert: NexusRagRerankerFallbackHigh
+        expr: |
+          sum(rate(nexus_rag_reranker_fallback_total[10m]))
+            /
+          clamp_min(sum(rate(nexus_rag_queries_total[10m])), 0.001)
+          > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10% of queries are bypassing the reranker"
+          description: "Results are being served in fused order, which can silently reduce ranking quality."
+
+      - alert: NexusRagQueryDeniedSpike
+        expr: increase(nexus_rag_queries_total{outcome="denied"}[10m]) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "Query authorization denials spiked"
+          description: "More than twenty denied retrieval attempts occurred in ten minutes; correlate with SIEM audit events."
