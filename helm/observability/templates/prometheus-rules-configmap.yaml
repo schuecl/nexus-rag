@@ -1,0 +1,25 @@
+{{- /*
+#257: the 10 alert rules from infra/observability/prometheus/rules/, embedded
+verbatim. Helm cannot reference files outside its own chart directory, so the
+rules exist as two copies -- helm/observability/files/rules/nexus-rag.yml and
+the infra/ original. scripts/check_observability_assets_sync.py keeps them
+identical, the same arrangement issue #212 uses for nats.conf.
+
+The rules are unmodified on purpose: they match on `up{job=~"nexus-rag-.*"}`
+and on the nexus_rag_* metric names, both of which prometheus-configmap.yaml
+preserves, so an alert that fires in the Compose stack fires here too.
+*/}}
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "observability.fullname" . }}-prometheus-rules
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  {{- range $path, $_ := .Files.Glob "files/rules/*.yml" }}
+  {{ base $path }}: |
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}
+{{- end }}

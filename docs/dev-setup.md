@@ -246,13 +246,19 @@ the volume.
 
 ### Kubernetes
 
-The chart does not deploy a monitoring stack; a cluster inside the
+The `nexus-rag` chart does not deploy a monitoring stack; a cluster inside the
 accreditation boundary already runs one. Set
 `observability.serviceMonitor.enabled=true` (off by default, since rendering a
 ServiceMonitor without the Prometheus Operator's CRDs fails the install) to
 let that stack discover the services' `/metrics` endpoints — and allow the
 monitoring namespace through the chart's default-deny NetworkPolicies, which
-otherwise block the scrape.
+otherwise block the scrape. **This remains the preferred arrangement.**
+
+For a cluster that has *no* monitoring stack, and whose Grafana runs outside it
+on the air-gapped network, there is a second, separately-installed chart:
+`helm/observability` (#257) deploys Prometheus/Loki/Tempo/Alertmanager on
+LoadBalancer addresses, vendors the 13 dashboards for import, and deploys no
+Grafana. See [observability.md](observability.md).
 
 ## Prerequisites
 

@@ -83,6 +83,30 @@ jobs:
           helm template helm/nexus-rag --debug
           --set ingestionApi.oidcRedirectUri=https://rag.ci.example/auth/callback
           > /dev/null
+      # Issue #257. ci/lint-values.yaml is not an example to copy -- it is the
+      # widest render (every component enabled, every optional block
+      # populated), so a template that only breaks under some combination of
+      # flags breaks the build instead of a deployment. It also supplies the
+      # two values this chart fails closed on, for the same reason the
+      # nexus-rag step above supplies oidcRedirectUri: the defaults publish
+      # four unauthenticated services on LoadBalancer addresses and there is
+      # no safe default for "who may reach them".
+      - name: helm lint (observability)
+        run: helm lint helm/observability --values helm/observability/ci/lint-values.yaml
+      - name: helm template renders (observability)
+        run: >
+          helm template helm/observability --debug
+          --values helm/observability/ci/lint-values.yaml
+          > /dev/null
+      - name: Observability chart fails closed without source ranges
+        # Asserts the guard rail actually fires. A fail-closed default that
+        # quietly stopped working would render an open Prometheus and pass CI.
+        run: |
+          if helm template helm/observability > /dev/null 2>&1; then
+            echo "::error::helm/observability rendered with no loadBalancerSourceRanges set" >&2
+            exit 1
+          fi
+          echo "Chart correctly refuses to render an unrestricted LoadBalancer."
 
   trivy-fs:
     runs-on: ubuntu-latest

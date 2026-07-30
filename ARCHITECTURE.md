@@ -443,12 +443,18 @@ much the access filter matched and how many candidates were reranked, so
 per-stage figures would sharpen the membership-inference surface #127
 describes. Operators get them via the audit log and the scrape endpoint.
 
-Still open: `ingestion-api`, `ingestion-worker`, and `reranker-service` have no
-metrics surface, so ingestion throughput, queue depth, and worker processing
-duration remain unmeasured (NATS exposes its own monitoring endpoint on :8222
-to align with). NFR-4's end-to-end latency budget also remains an open question
-in REQUIREMENTS.md — the instrumentation to eventually answer it with data now
-exists for the query path only.
+Closed since this section was written (#133): `ingestion-api` (:8001),
+`ingestion-worker` (:8004), and `reranker-service` (:8003) all expose `/metrics`
+too, so ingestion throughput, queue depth, and worker processing duration are
+measured. The full stack that consumes them — Prometheus, Loki, Tempo,
+Alertmanager, 13 Grafana dashboards, 10 alert rules — ships as a Compose profile
+(`docs/dev-setup.md`) and, for clusters with no monitoring stack of their own, as
+the separately-installed `helm/observability` chart (#257, `docs/observability.md`).
+
+Still open: NFR-4's end-to-end latency budget remains an open question in
+REQUIREMENTS.md, so the retrieval alert rule's 5 s p95 threshold is a provisional
+stand-in rather than an agreed target — the instrumentation to answer it with data
+now exists, the number to compare against does not.
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based
