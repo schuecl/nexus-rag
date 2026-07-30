@@ -31,7 +31,10 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "templates"
 
 # Pages that render values originating from user input (uploader filenames,
 # curator rejection reasons) fetched as JSON.
-USER_DATA_PAGES = ["curate.html", "notifications.html"]
+# Issue #266: curate_list.html (the curation "master list") renders the same
+# uploader-controlled document fields as curate.html, plus a curator-editable
+# metadata form -- same sink to avoid.
+USER_DATA_PAGES = ["curate.html", "curate_list.html", "notifications.html"]
 
 # `x.innerHTML = ''` is a clear, and the idiomatic way to empty a container --
 # it can't introduce markup. Anything else assigned to innerHTML is the sink.

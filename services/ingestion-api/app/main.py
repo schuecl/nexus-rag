@@ -282,6 +282,30 @@ def curate_page(
     return templates.TemplateResponse(request, "curate.html", ctx)
 
 
+@app.get("/curate/list", response_class=HTMLResponse)
+def curate_list_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
+) -> HTMLResponse:
+    """Issue #266: the curation "master list" -- every document a curator
+    holds authority over, any status, with filtering/search and a metadata
+    edit dialog (GET/PATCH /curate/documents in app/routes/curate.py). A
+    separate page from /curate (the pending_review queue) rather than a tab on
+    it, per the issue's own suggestion.
+
+    Same pattern as curate_page above: role authorization (require_curator)
+    lives on the API the page calls, not here -- a signed-in visitor without
+    any rag-curate:<org> role still sees the page render and gets an honest
+    403 from the endpoints, rather than this page pretending not to exist.
+    """
+    if current_user is None:
+        return _login_page(request, session)
+    ctx = _live_controlled_vocab(session)
+    ctx.update(_page_context(session, current_user))
+    return templates.TemplateResponse(request, "curate_list.html", ctx)
+
+
 @app.get("/notifications", response_class=HTMLResponse)
 def notifications_page(
     request: Request,

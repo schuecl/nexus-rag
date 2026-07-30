@@ -242,7 +242,7 @@ def require_purge(user: UserClaims = Depends(get_current_user)) -> UserClaims:
     person who manages the tagging vocabulary is not automatically the person
     who may erase evidence.
     """
-    if "rag-purge" not in user.rag_roles:
+    if not user.can_purge:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "missing rag-purge role")
     return user
 

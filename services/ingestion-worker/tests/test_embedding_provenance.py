@@ -89,7 +89,7 @@ def captured(monkeypatch):
 
     # #160: the pipeline writes through the vector-store seam now.
     class _Store:
-        def ensure_ready(self, dense_size):
+        def ensure_ready(self, dense_size, classification):
             return None
 
         def upsert(self, pts):
