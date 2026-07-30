@@ -111,6 +111,9 @@ spec:
                   # #278: this service's own role, falling back to the
                   # shared pre-#278 credential when unset.
                   key: {{ .Values.externalPostgres.perServiceKeys.ingestionWorker | default .Values.externalPostgres.secretKey }}
+            - name: DB_POOL_RECYCLE_SECONDS
+              # #236 tuning knob: see externalPostgres.poolRecycleSeconds.
+              value: {{ .Values.externalPostgres.poolRecycleSeconds | quote }}
             {{- if eq .Values.vectorBackend "qdrant" }}
             - name: QDRANT_URL
               value: {{ include "nexus-rag.qdrantUrl" . | quote }}

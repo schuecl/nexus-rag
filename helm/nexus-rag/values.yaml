@@ -139,6 +139,18 @@ externalPostgres:
   # init_db; init_db()"` (or the equivalent ALTER TABLE statements from
   # _ADDITIVE_COLUMNS) as a role that owns the tables, before rolling out a
   # release that added a new entry there, same as any other schema change.
+  # Seconds after which a pooled connection is retired and reopened. #236 set
+  # pool_recycle=1800 on the shared engine, but that number is a guess about
+  # *other* systems -- PgBouncer's server_idle_timeout, a cloud proxy or LB idle
+  # limit, idle_session_timeout -- and this chart connects to a Postgres it does
+  # not deploy, behind whatever intermediary your environment provides. Lower it
+  # to sit below that intermediary's idle timeout; -1 disables recycling.
+  #
+  # Not a correctness setting: pool_pre_ping already replaces a dead connection
+  # at checkout, so a mismatched value costs round trips, not errors. An
+  # unparseable value falls back to 1800 with a warning rather than failing the
+  # pod's startup.
+  poolRecycleSeconds: 1800
   perServiceKeys:
     # Empty = fall back to secretKey above, i.e. the pre-#278 shared
     # credential. Set all three once your Postgres has the roles.

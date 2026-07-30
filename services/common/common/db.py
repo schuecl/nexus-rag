@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 from functools import lru_cache
@@ -7,9 +8,84 @@ from functools import lru_cache
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
+logger = logging.getLogger(__name__)
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql+psycopg://nexus_rag:nexus_rag@postgres:5432/nexus_rag"
 )
+
+
+# Issue #236: a pooled connection outlives the server it points at.
+#
+# Without pool_pre_ping, SQLAlchemy hands out a connection from the pool
+# without checking it is alive. Any Postgres restart -- patching, failover, a
+# managed-Postgres maintenance window, a plain `docker compose restart
+# postgres` -- therefore leaves every service holding dead connections and
+# serving 500s until someone restarts the service itself.
+#
+# That is worse than it sounds, because /health does not touch the database.
+# The service reports healthy, an orchestrator sees no reason to restart it,
+# and an operator sees green while every real request fails. The failure is
+# silent exactly where it should be loud.
+#
+# pool_pre_ping costs one cheap round trip per checkout, which is nothing next
+# to the embedding call and vector search already on the retrieval path.
+#
+# pool_recycle is the other half: pre_ping catches a connection that is already
+# dead, while recycle retires one before whatever sits in front of Postgres
+# (PgBouncer, a cloud proxy, idle_session_timeout) drops it silently. 1800s is
+# below the common defaults for all three and well below Postgres's own
+# (disabled by default), so it is a safe floor rather than a tuned value.
+#
+# Tunable because 1800 is a guess about *other* systems, and an air-gapped
+# deployment sits behind whatever intermediary the environment provides. An
+# operator whose proxy is more aggressive can lower it; -1 disables recycling
+# (SQLAlchemy's own sentinel) for an environment that has no such intermediary.
+DEFAULT_POOL_RECYCLE_SECONDS = 1800
+
+
+def _pool_recycle_seconds() -> int:
+    """Read DB_POOL_RECYCLE_SECONDS, falling back loudly on a bad value.
+
+    Deliberately does not raise. This is read at import time, so a typo -- or
+    the far more likely `DB_POOL_RECYCLE_SECONDS=` that an unset key in a .env
+    file produces, which Compose passes through as an empty string -- would
+    otherwise crash every service at startup with a traceback several layers
+    from its cause. That is the #221 failure mode: the symptom surfaces nowhere
+    near the mistake, and in an air-gapped environment nobody can afford to
+    debug it.
+
+    A wrong recycle interval costs round trips; pool_pre_ping still guarantees a
+    dead connection is replaced at checkout. So degrading to the default and
+    saying so is strictly better than refusing to start.
+    """
+    raw = os.environ.get("DB_POOL_RECYCLE_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_POOL_RECYCLE_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "DB_POOL_RECYCLE_SECONDS=%r is not an integer; using the default %ds",
+            raw,
+            DEFAULT_POOL_RECYCLE_SECONDS,
+        )
+        return DEFAULT_POOL_RECYCLE_SECONDS
+    # -1 is SQLAlchemy's "never recycle". 0 would retire every connection on
+    # checkout, which silently turns pooling off and is never what anyone means.
+    if value == 0 or value < -1:
+        logger.warning(
+            "DB_POOL_RECYCLE_SECONDS=%d is not a usable interval (0 recycles every "
+            "connection, negative values other than -1 are undefined); using the "
+            "default %ds. Use -1 to disable recycling.",
+            value,
+            DEFAULT_POOL_RECYCLE_SECONDS,
+        )
+        return DEFAULT_POOL_RECYCLE_SECONDS
+    return value
+
+
+POOL_RECYCLE_SECONDS = _pool_recycle_seconds()
 
 
 @lru_cache(maxsize=1)
@@ -17,18 +93,8 @@ def get_engine():
     return create_engine(
         DATABASE_URL,
         echo=False,
-        # Issue #236: after a Postgres restart every pooled connection is dead,
-        # and without a checkout-time liveness check the first query on each one
-        # raises OperationalError -- services then serve 500s until manually
-        # restarted. pre_ping issues a cheap round trip on checkout and
-        # transparently replaces a dead connection.
         pool_pre_ping=True,
-        # Retire connections after 30 minutes so anything in front of Postgres
-        # (PgBouncer server_idle_timeout, cloud proxy/LB idle limits,
-        # idle_session_timeout) can't silently drop one first: common defaults
-        # for those sit at 60 minutes or above, and 30 minutes is still far
-        # coarser than this stack's request rate, so recycling cost is noise.
-        pool_recycle=1800,
+        pool_recycle=POOL_RECYCLE_SECONDS,
     )
 
 
