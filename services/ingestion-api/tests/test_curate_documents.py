@@ -94,6 +94,49 @@ def _stub_qdrant(monkeypatch: pytest.MonkeyPatch) -> _PayloadCalls:
     return calls
 
 
+class TestListQueue:
+    """Issue #273: /curate/queue must not surface a pending document the
+    curator lacks clearance or releasability authority for, even when it's
+    owned by an org they otherwise curate."""
+
+    def test_document_above_curator_clearance_is_hidden(self, session: Session) -> None:
+        visible = _document(status="pending_review", classification="CUI")
+        above_clearance = _document(
+            status="pending_review", classification="TOP SECRET", filename="ts.pdf"
+        )
+        session.add(visible)
+        session.add(above_clearance)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [visible.id]
+
+    def test_document_with_unheld_releasability_is_hidden(self, session: Session) -> None:
+        visible = _document(status="pending_review", releasability=["NONE"])
+        noforn = _document(status="pending_review", releasability=["NOFORN"], filename="noforn.pdf")
+        session.add(visible)
+        session.add(noforn)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [visible.id]
+
+    def test_still_scoped_to_curatable_orgs(self, session: Session) -> None:
+        mine = _document(status="pending_review")
+        someone_elses = _document(
+            status="pending_review", owner_org="Signal-Corps", filename="x.pdf"
+        )
+        session.add(mine)
+        session.add(someone_elses)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [mine.id]
+
+
 class TestListDocuments:
     def test_scoped_to_curatable_orgs_across_every_status(self, session: Session) -> None:
         mine_approved = _document(status="approved")
@@ -147,6 +190,39 @@ class TestListDocuments:
         )
 
         assert [d.id for d in docs] == [target.id]
+
+    def test_document_above_curator_clearance_is_hidden_regardless_of_status(
+        self, session: Session
+    ) -> None:
+        """Issue #273: unlike list_queue, this covers *any* status -- an
+        already-approved document above the curator's clearance must not
+        appear on the master list either."""
+        visible = _document(status="approved", classification="CUI")
+        above_clearance = _document(
+            status="approved", classification="TOP SECRET", filename="ts.pdf"
+        )
+        session.add(visible)
+        session.add(above_clearance)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None, classification=None, q=None, user=CURATOR, session=session
+        )
+
+        assert [d.id for d in docs] == [visible.id]
+
+    def test_document_with_unheld_releasability_is_hidden(self, session: Session) -> None:
+        visible = _document(status="approved", releasability=["NONE"])
+        fvey = _document(status="approved", releasability=["FVEY"], filename="fvey.pdf")
+        session.add(visible)
+        session.add(fvey)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None, classification=None, q=None, user=CURATOR, session=session
+        )
+
+        assert [d.id for d in docs] == [visible.id]
 
     def test_no_curatable_orgs_returns_nothing(self, session: Session) -> None:
         session.add(_document())

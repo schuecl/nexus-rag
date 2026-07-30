@@ -1,6 +1,12 @@
 """FR-10..FR-16: curation queue, scoped to the orgs a curator holds authority
 for (FR-12), with approval capped by org (FR-14.2) and by clearance/releasability
 (FR-14.1, mirroring FR-18's uploader-side check).
+
+Issue #273: that same clearance/releasability authority is also enforced at
+*list* time (list_queue/list_documents below), not just at approve/reject/edit
+-- a curator who lacks clearance for a document, or lacks one of its
+releasability values, must not see that it exists at all, purely by virtue of
+sharing an org with it.
 """
 
 from __future__ import annotations
@@ -32,12 +38,22 @@ def list_queue(
     user: UserClaims = Depends(require_curator),
     session: Session = Depends(get_session),
 ) -> Sequence[Document]:
+    # Issue #273: org membership alone used to be the whole scope -- a
+    # curator saw every pending document their org owned, including ones
+    # tagged above their own clearance or carrying a releasability caveat
+    # they don't hold. Classification is filtered in SQL (allowed_classifications
+    # is cheap -- one query, reused for every row); releasability is a
+    # per-value check (releasability_authorized) with no clean SQL
+    # equivalent against the JSON column, so it's applied in Python after the
+    # DB has already done the org/classification narrowing.
+    allowed = allowed_classifications(session, user.clearance)
     docs = session.exec(
         select(Document)
         .where(Document.status == "pending_review")
         .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
     ).all()
-    return docs
+    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
 
 
 # Issue #266: statuses a document can be edited from through the curation
@@ -63,11 +79,17 @@ def list_documents(
 ) -> Sequence[Document]:
     """Issue #266: the "master list" -- every document (any status) the
     curator holds authority over, not just the pending_review queue
-    /curate/queue above returns. Scoped identically (owner_org in
-    curatable_orgs); the filters below only ever narrow that set further,
-    never widen it.
+    /curate/queue above returns. Scoped identically to list_queue (owner_org
+    in curatable_orgs, classification at or below clearance, every
+    releasability value held -- issue #273); the filters below only ever
+    narrow that set further, never widen it.
     """
-    stmt = select(Document).where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+    allowed = allowed_classifications(session, user.clearance)
+    stmt = (
+        select(Document)
+        .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
+    )
     if status_filter:
         stmt = stmt.where(Document.status == status_filter)
     if classification:
@@ -82,7 +104,8 @@ def list_documents(
                 Document.uploader_username.ilike(needle),  # type: ignore[attr-defined]
             )
         )
-    return session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
+    docs = session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
+    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
 
 
 class DocumentEdit(BaseModel):
