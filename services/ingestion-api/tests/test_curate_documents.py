@@ -10,7 +10,6 @@ HTTP plumbing.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -149,21 +148,15 @@ class TestListQueue:
         assert [d.id for d in docs] == [mine.id]
 
 
-class TestScopePreferenceGracePeriod:
-    """Issue #277 (gap G1): within CURATOR_SCOPE_GRACE_PERIOD of entering
-    pending_review, the queue prefers curators whose sub/groups/org match
-    the document's access_scope; past that window (or with no tracked
-    start), visibility falls back to the pre-#277 org/clearance/
-    releasability-only behavior so nothing rots unreviewed."""
+class TestScopeGating:
+    """Issue #277 (gap G1): access_scope is a hard requirement for seeing a
+    *pending* document, on par with clearance/releasability -- no grace
+    period, no fallback. A curator outside a document's access_scope simply
+    never sees it in the queue; there is no time after which visibility
+    opens up to them regardless."""
 
-    def test_out_of_scope_curator_does_not_see_it_within_grace_period(
-        self, session: Session
-    ) -> None:
-        doc = _document(
-            status="pending_review",
-            access_scope=["Signal-Corps"],
-            pending_review_since=datetime.now(UTC),
-        )
+    def test_out_of_scope_curator_never_sees_it(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
         session.add(doc)
         session.commit()
 
@@ -171,12 +164,8 @@ class TestScopePreferenceGracePeriod:
 
         assert docs == []
 
-    def test_in_scope_curator_sees_it_within_grace_period(self, session: Session) -> None:
-        doc = _document(
-            status="pending_review",
-            access_scope=["Signal-Corps"],
-            pending_review_since=datetime.now(UTC),
-        )
+    def test_in_scope_curator_sees_it(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
         session.add(doc)
         session.commit()
 
@@ -184,41 +173,8 @@ class TestScopePreferenceGracePeriod:
 
         assert [d.id for d in docs] == [doc.id]
 
-    def test_falls_back_to_everyone_once_grace_period_elapses(self, session: Session) -> None:
-        doc = _document(
-            status="pending_review",
-            access_scope=["Signal-Corps"],
-            pending_review_since=datetime.now(UTC)
-            - curate.CURATOR_SCOPE_GRACE_PERIOD
-            - timedelta(hours=1),
-        )
-        session.add(doc)
-        session.commit()
-
-        docs = curate.list_queue(user=CURATOR, session=session)
-
-        assert [d.id for d in docs] == [doc.id]
-
-    def test_null_pending_review_since_falls_back_to_everyone(self, session: Session) -> None:
-        # A row from before issue #277 (or before the additive column
-        # backfilled it) -- must not become invisible to every curator with
-        # no way to ever become visible again.
-        doc = _document(
-            status="pending_review", access_scope=["Signal-Corps"], pending_review_since=None
-        )
-        session.add(doc)
-        session.commit()
-
-        docs = curate.list_queue(user=CURATOR, session=session)
-
-        assert [d.id for d in docs] == [doc.id]
-
-    def test_all_authenticated_scope_is_never_scope_gated(self, session: Session) -> None:
-        doc = _document(
-            status="pending_review",
-            access_scope=["ALL_AUTHENTICATED"],
-            pending_review_since=datetime.now(UTC),
-        )
+    def test_all_authenticated_scope_is_never_gated(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["ALL_AUTHENTICATED"])
         session.add(doc)
         session.commit()
 
@@ -227,14 +183,10 @@ class TestScopePreferenceGracePeriod:
         assert [d.id for d in docs] == [doc.id]
 
     def test_approved_documents_are_never_scope_gated(self, session: Session) -> None:
-        # _visible_to_curator only applies the scope/grace-period check to
+        # _visible_to_curator only applies the access_scope check to
         # pending_review rows -- list_documents (the "any status" master
         # list) must not start hiding already-decided documents.
-        doc = _document(
-            status="approved",
-            access_scope=["Signal-Corps"],
-            pending_review_since=datetime.now(UTC),
-        )
+        doc = _document(status="approved", access_scope=["Signal-Corps"])
         session.add(doc)
         session.commit()
 
@@ -243,6 +195,42 @@ class TestScopePreferenceGracePeriod:
         )
 
         assert [d.id for d in docs] == [doc.id]
+
+    def test_out_of_scope_curator_cannot_approve_directly(self, session: Session) -> None:
+        # Not just hidden from the queue -- the actual access-control point
+        # (approve/reject) has to refuse it too, or hiding it from the list
+        # would be security theater against a curator who already has the id.
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        with pytest.raises(Exception) as excinfo:
+            curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        assert excinfo.value.status_code == 403  # type: ignore[attr-defined]
+
+    def test_out_of_scope_curator_cannot_reject_directly(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        with pytest.raises(Exception) as excinfo:
+            curate.reject(
+                doc.id, curate.Rejection(reason="no"), user=CURATOR, session=session, _csrf=None
+            )
+
+        assert excinfo.value.status_code == 403  # type: ignore[attr-defined]
+
+    def test_in_scope_curator_can_approve(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        approved = curate.approve(
+            doc.id, corrections=None, user=SIGNAL_CORPS_CURATOR, session=session, _csrf=None
+        )
+
+        assert approved.status == "approved"
 
 
 class TestListDocuments:
