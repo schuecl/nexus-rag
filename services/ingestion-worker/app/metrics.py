@@ -36,6 +36,18 @@ chunks_produced = Histogram(
     "Chunks produced per successfully parsed document.",
     buckets=(0, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000),
 )
+# Issue #92: image captioning is degrade-on-failure (app/captioning.py), so
+# these counters are the visibility that replaces a hard error -- a rising
+# skip rate is how an operator learns figures are dropping out of the corpus.
+images_captioned_total = Counter(
+    "nexus_rag_ingestion_worker_images_captioned_total",
+    "Embedded images successfully captioned at ingestion.",
+)
+images_skipped_total = Counter(
+    "nexus_rag_ingestion_worker_images_skipped_total",
+    "Embedded images not captioned, by reason.",
+    ["reason"],
+)
 delivery_attempts = Histogram(
     "nexus_rag_ingestion_worker_delivery_attempts",
     "JetStream delivery number observed by the worker.",

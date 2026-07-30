@@ -113,11 +113,11 @@
            check (app/deps.py) -- a user with no rag-curate:<org> role would
            just get a 403 from every action this tab leads to. #}
         {% if current_user and current_user.curatable_orgs %}
-        <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">
+        <a class="{% if request.url.path.startswith('/curate') %}active{% endif %}" href="/curate">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"></path>
           </svg>
-          Curation queue
+          Curation
         </a>
         {% endif %}
         <a

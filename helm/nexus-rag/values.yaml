@@ -437,6 +437,12 @@ ingestionWorker:
   # starting point.
   chunkTargetWords: 512
   chunkOverlapRatio: 0.15
+  # Issue #92: vision model for image/figure captioning at ingestion, served
+  # by the same Ollama instance as embeddings (embeddingService). Empty
+  # disables captioning entirely (no env var injected, no VLM calls). The
+  # model must be provisioned on that Ollama instance separately -- this
+  # chart's embedding-service init only pulls embeddingService.model.
+  visionModel: ""
   service:
     port: 8004
   resources:

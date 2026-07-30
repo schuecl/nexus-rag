@@ -1,0 +1,4 @@
+# Vendored Typst Universe payload (~53M) is fetch-scripted, not committed --
+# same pattern as models/images (NFR-1): run ./fetch-templates.sh from a
+# connected enclave and stage the output for air-gapped use.
+preview/

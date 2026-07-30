@@ -31,6 +31,18 @@ groups, org}. Built server-side from verified claims; string values are
 escaped before entering the expression so a hostile group/org name cannot
 break out of the filter (the injection rule log_safety.py applies to logs,
 applied here to filter expressions).
+
+Issue #229 (recorded "not yet", not a silent gap): QdrantStore splits the
+corpus into one collection per classification level for defence in depth;
+this backend does not. `ensure_ready`/`update_document_payload`/
+`delete_document_chunks` accept the same `classification` parameter the
+Protocol now requires but ignore it, continuing to operate on the single
+`MILVUS_COLLECTION` -- the FR-26 boolean expression above is still the sole
+enforcement point here, exactly as it was before #229. Milvus support for the
+same per-classification split, if wanted, is separate follow-up work: unlike
+Qdrant's collections (cheap, created on demand), Milvus collection creation is
+comparatively heavyweight and its RBAC/partition model would need its own
+design pass rather than a direct port of qdrant_store.py's approach.
 """
 
 from __future__ import annotations
@@ -98,7 +110,9 @@ def _sparse_dict(sparse: SparseVector) -> dict[int, float]:
 
 
 class MilvusStore:
-    def ensure_ready(self, dense_size: int) -> None:
+    def ensure_ready(self, dense_size: int, classification: str) -> None:
+        # classification: unused, see module docstring (#229 not implemented here).
+        del classification
         from pymilvus import DataType
 
         client = _client()
@@ -236,11 +250,17 @@ class MilvusStore:
             "expr": build_access_expr(claims, allowed_classifications=allowed_classifications),
         }
 
-    def update_document_payload(self, document_id: str, fields: dict) -> None:
+    def update_document_payload(self, document_id: str, classification: str, fields: dict) -> None:
         """FR-13 parity. Milvus has no update-by-filter, so: read the
         document's rows (vectors included), patch, upsert back. Bounded by a
         document's chunk count, and curation is a human-paced action -- the
-        cost is acceptable and stated rather than hidden."""
+        cost is acceptable and stated rather than hidden.
+
+        classification: unused, see module docstring (#229 not implemented
+        here) -- a classification correction is a plain payload patch like
+        any other field, not a move between collections.
+        """
+        del classification
         client = _client()
         rows = client.query(
             collection_name=MILVUS_COLLECTION,
@@ -265,7 +285,9 @@ class MilvusStore:
                     row[key] = fields[key]
         client.upsert(collection_name=MILVUS_COLLECTION, data=rows)
 
-    def delete_document_chunks(self, document_id: str) -> None:
+    def delete_document_chunks(self, document_id: str, classification: str) -> None:
+        # classification: unused, see module docstring (#229 not implemented here).
+        del classification
         _client().delete(
             collection_name=MILVUS_COLLECTION,
             filter=f"document_id == {_quote(document_id)}",

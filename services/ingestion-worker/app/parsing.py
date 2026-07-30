@@ -100,9 +100,11 @@ class ParsedSection:
     section boundaries, only within them.
 
     content_type (issue #89): what kind of content this section holds --
-    "text" (prose, the default) or "table" (a markdown table block extracted
+    "text" (prose, the default), "table" (a markdown table block extracted
     by `_table_to_markdown`, or a spreadsheet sheet, which is tabular by
-    construction). Tables are emitted as their own section rather than joined
+    construction), or "image" (a VLM-generated caption of an embedded figure,
+    issue #92 -- produced by app/captioning.py after parsing, not by this
+    module). Tables are emitted as their own section rather than joined
     into the surrounding prose specifically so chunking never mixes the two
     within one chunk -- that's what lets each chunk carry a single, accurate
     content_type through to the Qdrant payload instead of a per-chunk guess."""

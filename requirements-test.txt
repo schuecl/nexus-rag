@@ -21,6 +21,9 @@ pypdf==6.14.2
 python-docx==1.2.0
 python-pptx==1.0.2
 openpyxl==3.1.5
+# #92: image decode/size-filter in ingestion-worker's captioning tests (the
+# tests also use it to author fixture images/PDFs in memory)
+pillow==12.3.0
 # #241: OCR wrapper; unit tests mock image_to_string, no tesseract binary
 # needed outside the worker container.
 pytesseract==0.3.13

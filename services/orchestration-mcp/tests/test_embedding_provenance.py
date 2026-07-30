@@ -55,39 +55,107 @@ class _Point:
         self.payload = payload
 
 
+class _Collection:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Collections:
+    def __init__(self, names):
+        self.collections = [_Collection(n) for n in names]
+
+
 class _Client:
     """Minimal stand-in for the bits collection_embedding_model() touches."""
 
-    def __init__(self, *, exists=True, points=None, raises=False):
+    def __init__(self, *, exists=True, points=None, raises=False, collections=None):
         self._exists, self._points, self._raises = exists, points or [], raises
+        # Issue #229: per-classification collection name -> points, for
+        # any_collection_embedding_model's cross-collection scan. Defaults to
+        # a single collection sharing _points, so the existing single-
+        # collection tests below don't need to know about this.
+        self._by_collection = collections
 
     def collection_exists(self, _name):
         return self._exists
 
-    def scroll(self, **_kwargs):
+    def scroll(self, *, collection_name=None, **_kwargs):
         if self._raises:
             raise RuntimeError("qdrant unreachable")
+        if self._by_collection is not None:
+            return self._by_collection.get(collection_name, []), None
         return self._points, None
+
+    def get_collections(self):
+        if self._by_collection is not None:
+            return _Collections(self._by_collection.keys())
+        return _Collections([])
 
 
 class TestCollectionEmbeddingModel:
     def test_reads_the_model_off_a_sampled_point(self, monkeypatch):
         client = _Client(points=[_Point({"embedding_model": "nomic-embed-text"})])
 
-        assert qdrant_store.collection_embedding_model(client) == "nomic-embed-text"
+        assert qdrant_store.collection_embedding_model(client, "CUI") == "nomic-embed-text"
 
     def test_absent_collection_is_unknown_not_an_error(self, monkeypatch):
-        assert qdrant_store.collection_embedding_model(_Client(exists=False)) is None
+        assert qdrant_store.collection_embedding_model(_Client(exists=False), "CUI") is None
 
     def test_empty_collection_is_unknown(self, monkeypatch):
-        assert qdrant_store.collection_embedding_model(_Client(points=[])) is None
+        assert qdrant_store.collection_embedding_model(_Client(points=[]), "CUI") is None
 
     def test_unstamped_legacy_point_is_unknown(self, monkeypatch):
         """Points written before #122 carry no provenance. That must read as
         'cannot tell', never as a mismatch."""
         client = _Client(points=[_Point({"document_id": "d1", "text": "body"})])
 
-        assert qdrant_store.collection_embedding_model(client) is None
+        assert qdrant_store.collection_embedding_model(client, "CUI") is None
+
+
+class TestAnyCollectionEmbeddingModel:
+    """Issue #229: provenance now spans every classification collection, not
+    a single sampled one -- see qdrant_store.any_collection_embedding_model."""
+
+    def test_no_collections_is_unknown(self):
+        client = _Client(collections={})
+
+        assert qdrant_store.any_collection_embedding_model(client) is None
+
+    def test_single_model_across_collections_is_returned(self):
+        prefix = qdrant_store.QDRANT_COLLECTION
+        client = _Client(
+            collections={
+                f"{prefix}__cui": [_Point({"embedding_model": "nomic-embed-text"})],
+                f"{prefix}__secret": [_Point({"embedding_model": "nomic-embed-text"})],
+            }
+        )
+
+        assert qdrant_store.any_collection_embedding_model(client) == "nomic-embed-text"
+
+    def test_disagreement_across_collections_is_reported_as_mixed(self):
+        """A mixed result is meant to compare unequal to any single
+        EMBEDDING_MODEL value in rag_search's mismatch check -- collections
+        disagreeing about their embedding model is exactly the silent
+        degradation issue #122 exists to catch."""
+        prefix = qdrant_store.QDRANT_COLLECTION
+        client = _Client(
+            collections={
+                f"{prefix}__cui": [_Point({"embedding_model": "nomic-embed-text"})],
+                f"{prefix}__secret": [_Point({"embedding_model": "all-minilm"})],
+            }
+        )
+
+        result = qdrant_store.any_collection_embedding_model(client)
+
+        assert result is not None and result.startswith("mixed:")
+        assert "nomic-embed-text" in result
+        assert "all-minilm" in result
+
+    def test_unstamped_collections_are_unknown(self):
+        prefix = qdrant_store.QDRANT_COLLECTION
+        client = _Client(collections={f"{prefix}__cui": [_Point({"document_id": "d1"})]})
+
+        assert qdrant_store.any_collection_embedding_model(client) is None
 
 
 def _patch_store_model(monkeypatch, model_fn):
