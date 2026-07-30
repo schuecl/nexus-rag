@@ -257,41 +257,112 @@ class TestEditMetadata:
             )
         assert exc_info.value.status_code == 409  # type: ignore[attr-defined]
 
-    def test_403_when_edited_classification_exceeds_curator_clearance(
-        self, session: Session
+    def test_editing_unrelated_field_succeeds_even_above_curator_clearance(
+        self, session: Session, _stub_qdrant: _PayloadCalls
     ) -> None:
+        """Issue #268: this used to 403 outright -- edit_metadata re-checked
+        the document's *current* classification/releasability against the
+        caller's authority before looking at what was actually being edited,
+        so any edit of a document tagged above a curator's clearance failed,
+        even one that never touched classification/releasability at all."""
+        doc = _document(classification="TOP SECRET")
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        result = curate.edit_metadata(
+            doc.id,
+            curate.DocumentEdit(doc_type="regulation"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+
+        assert result.doc_type == "regulation"
+        assert result.classification == "TOP SECRET"
+        assert result.status == "approved"
+        assert _stub_qdrant.calls == []
+
+    def test_classification_beyond_curator_clearance_is_applied_and_demoted(
+        self, session: Session, _stub_qdrant: _PayloadCalls
+    ) -> None:
+        """Issue #268: a curator without clearance for the value they're
+        setting doesn't get the request rejected outright -- the edit is
+        applied, but the document is sent back to pending_review so a curator
+        who does hold that authority has to sign off before it's retrievable
+        again."""
         doc = _document(classification="CUI")
         session.add(doc)
         session.commit()
         session.refresh(doc)
 
-        with pytest.raises(Exception) as exc_info:
-            curate.edit_metadata(
-                doc.id,
-                curate.DocumentEdit(classification="TOP SECRET"),
-                user=CURATOR,
-                session=session,
-                _csrf=None,
-            )
-        assert exc_info.value.status_code == 403  # type: ignore[attr-defined]
+        result = curate.edit_metadata(
+            doc.id,
+            curate.DocumentEdit(classification="TOP SECRET"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
 
-    def test_403_when_edited_releasability_exceeds_curator_authority(
-        self, session: Session
+        assert result.classification == "TOP SECRET"
+        assert result.status == "pending_review"
+        assert result.reviewed_by_sub is None
+        assert result.reviewed_at is None
+        assert _stub_qdrant.calls == [
+            (
+                "update",
+                str(doc.id),
+                {"classification": "TOP SECRET", "status": "pending_review"},
+            )
+        ]
+        entries = session.exec(select(AuditLogEntry)).all()
+        assert entries[0].detail["demoted_to_pending_review"] is True
+
+    def test_releasability_beyond_curator_authority_is_applied_and_demoted(
+        self, session: Session, _stub_qdrant: _PayloadCalls
     ) -> None:
         doc = _document()
         session.add(doc)
         session.commit()
         session.refresh(doc)
 
-        with pytest.raises(Exception) as exc_info:
-            curate.edit_metadata(
-                doc.id,
-                curate.DocumentEdit(releasability=["NOFORN"]),
-                user=CURATOR,
-                session=session,
-                _csrf=None,
+        result = curate.edit_metadata(
+            doc.id,
+            curate.DocumentEdit(releasability=["NOFORN"]),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+
+        assert result.releasability == ["NOFORN"]
+        assert result.status == "pending_review"
+        assert _stub_qdrant.calls == [
+            (
+                "update",
+                str(doc.id),
+                {"releasability": ["NOFORN"], "status": "pending_review"},
             )
-        assert exc_info.value.status_code == 403  # type: ignore[attr-defined]
+        ]
+
+    def test_edit_within_curator_authority_leaves_status_untouched(
+        self, session: Session, _stub_qdrant: _PayloadCalls
+    ) -> None:
+        doc = _document(classification="CUI", status="rejected")
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        result = curate.edit_metadata(
+            doc.id,
+            curate.DocumentEdit(classification="SECRET"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+
+        assert result.classification == "SECRET"
+        assert result.status == "rejected"
+        assert _stub_qdrant.calls == [("update", str(doc.id), {"classification": "SECRET"})]
 
     def test_commit_failure_reverts_qdrant_and_reraises(
         self, session: Session, _stub_qdrant: _PayloadCalls

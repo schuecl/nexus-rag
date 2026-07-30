@@ -53,6 +53,25 @@ const RELEASABILITY = {{ releasability | tojson }};
 // app/deps.require_purge) -- a curator without the rag-purge role should
 // never see a delete action they'd just get a 403 from.
 const CAN_PURGE = {{ current_user.can_purge | tojson }};
+// Issue #268: mirrors the server-side authority check (app/routes/curate.py's
+// _authorized_for_tags) client-side, purely to decide whether to warn before
+// a save -- the server re-derives this from the caller's own verified claims
+// regardless of what this page thinks, and demotes the document to
+// pending_review on its own if the values land outside it either way.
+const CLASSIFICATION_RANKS = Object.fromEntries({{ classifications | tojson }});
+const CURATOR_CLEARANCE_RANK = CLASSIFICATION_RANKS[{{ current_user.clearance | tojson }}];
+const CURATOR_RELEASABILITY = {{ current_user.releasability | tojson }};
+const NO_RELEASABILITY_RESTRICTION = {{ no_releasability_restriction | tojson }};
+
+function exceedsCuratorAuthority(classification, releasability) {
+  const rank = CLASSIFICATION_RANKS[classification];
+  if (CURATOR_CLEARANCE_RANK === undefined || rank === undefined || rank > CURATOR_CLEARANCE_RANK) {
+    return true;
+  }
+  return releasability.some(
+    (v) => v !== NO_RELEASABILITY_RESTRICTION && !CURATOR_RELEASABILITY.includes(v)
+  );
+}
 
 let listedDocs = {};
 let searchDebounce = null;
@@ -187,10 +206,16 @@ async function saveEdit(id) {
   const effectiveDate = document.getElementById(`edit-effective_date-${id}`).value;
 
   // Only send fields that actually changed -- keeps the audit log (FR-16)
-  // meaningful, same reasoning as curate.html's readCorrections().
+  // meaningful, same reasoning as curate.html's readCorrections(). Compared
+  // sorted: releasability is a set, and its <select>'s DOM order follows the
+  // admin-configured RELEASABILITY list rather than doc.releasability's
+  // original order, so an unsorted compare flagged a same-set reorder as a
+  // change every time the form was opened and saved untouched.
   const body = {};
   if (classification !== doc.classification) body.classification = classification;
-  if (JSON.stringify(releasability) !== JSON.stringify(doc.releasability)) body.releasability = releasability;
+  if (JSON.stringify([...releasability].sort()) !== JSON.stringify([...doc.releasability].sort())) {
+    body.releasability = releasability;
+  }
   if (JSON.stringify(accessScope) !== JSON.stringify(doc.access_scope)) body.access_scope = accessScope;
   if (sourceOriginator !== doc.source_originator) body.source_originator = sourceOriginator;
   if (docType !== doc.doc_type) body.doc_type = docType;
@@ -202,12 +227,35 @@ async function saveEdit(id) {
     return;
   }
 
+  // Issue #268: the server applies this edit regardless -- a curator without
+  // authority for the new values doesn't get to decide those values are fine
+  // by having the request rejected outright -- but it demotes the document to
+  // pending_review rather than leaving it retrievable under tags the caller
+  // couldn't have approved in the first place. Warn before that happens
+  // rather than surprising the curator with a status change after the fact.
+  if (('classification' in body || 'releasability' in body) &&
+      exceedsCuratorAuthority(
+        'classification' in body ? body.classification : doc.classification,
+        'releasability' in body ? body.releasability : doc.releasability,
+      )) {
+    const proceed = confirm(
+      `You don't hold clearance/releasability for the values you selected on “${doc.filename}”. ` +
+      'Saving will send it back to Pending Review for another curator to re-approve, and you will ' +
+      'lose the ability to curate it until then. Continue?'
+    );
+    if (!proceed) return;
+  }
+
   const res = await fetch(`/curate/documents/${id}`, {
     method: 'PATCH',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  await reportResult(document.getElementById('result'), res, () => `Saved changes to “${doc.filename}”.`);
+  await reportResult(document.getElementById('result'), res, (saved) =>
+    saved && saved.status === 'pending_review' && doc.status !== 'pending_review'
+      ? `Saved changes to “${doc.filename}” — sent back to Pending Review for re-approval.`
+      : `Saved changes to “${doc.filename}”.`
+  );
   loadDocuments();
 }
 

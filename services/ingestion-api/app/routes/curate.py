@@ -107,14 +107,27 @@ def edit_metadata(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> Document:
-    """Issue #266: lets a curator correct a document's metadata after it has
-    already cleared curation, without going through supersession -- the gap
-    the issue calls out ("no mechanism to affect the metadata of an ingested
-    file after ingestion"). Same authority model as approve()/reject(): a 404
-    for a document outside the caller's curatable orgs (no existence oracle,
-    same reasoning as _check_curator_authority), and a re-check against the
-    *edited* classification/releasability so a curator can't use this to
-    approve-adjacent their way past their own clearance/releasability ceiling.
+    """Issue #266/#268: lets a curator correct a document's metadata after it
+    has already cleared curation, without going through supersession -- the
+    gap the issue calls out ("no mechanism to affect the metadata of an
+    ingested file after ingestion"). Authority to *edit* a document at all is
+    org authority only (`user.can_curate_org`) -- unlike approve()/reject(),
+    this deliberately does not also require the curator to hold the
+    document's *current* classification/releasability, since a curator
+    editing e.g. only `doc_type` on a document tagged above their own
+    clearance isn't granting or exercising any access.
+
+    What the edit sets classification/releasability *to* is a different
+    question (FR-14.1): if the resulting values are within the caller's own
+    clearance/releasability, the edit is applied as approved/rejected/
+    whatever the document's status already was. If they're not, the edit is
+    still applied -- a curator without the right authority isn't the one who
+    gets to decide those values are fine -- but the document is demoted back
+    to `pending_review` so a curator who does hold that authority has to sign
+    off on it before it's retrievable again (see _authorized_for_tags below).
+    This replaced a hard 403 that made *any* edit of a document tagged above
+    the caller's clearance fail outright, including edits that never touched
+    classification/releasability at all.
 
     Deletion is deliberately NOT handled here -- that is the separate,
     rag-purge-gated DELETE /documents/{id} in app/routes/upload.py
@@ -132,12 +145,12 @@ def edit_metadata(
             f"document is '{doc.status}' and cannot be edited from the curation list -- "
             f"only {', '.join(sorted(EDITABLE_STATUSES))} documents can be",
         )
-    _check_curator_authority(user, doc, session)
 
     before = {
         "classification": doc.classification,
         "releasability": list(doc.releasability),
         "access_scope": list(doc.access_scope),
+        "status": doc.status,
     }
     changed_qdrant: dict[str, str | list[str]] = {}
 
@@ -159,10 +172,24 @@ def edit_metadata(
     if body.effective_date is not None:
         doc.effective_date = body.effective_date or None
 
-    # Re-check authority against the *edited* tags, not just what the document
-    # already carried -- same reasoning as approve()'s post-correction re-check.
-    if "classification" in changed_qdrant or "releasability" in changed_qdrant:
-        _check_curator_authority(user, doc, session)
+    # Issue #268: if the *edited* classification/releasability land outside
+    # the caller's own authority, don't 403 -- apply the edit but send the
+    # document back to pending_review so a curator who does hold that
+    # authority has to sign off on it. approve()/reject() still hard-block on
+    # authority (that's the act of granting/publishing access in the first
+    # place); this is correcting metadata on something already published.
+    demoted = False
+    tags_changed = "classification" in changed_qdrant or "releasability" in changed_qdrant
+    if (
+        tags_changed
+        and doc.status != "pending_review"
+        and not _authorized_for_tags(user, doc.classification, doc.releasability, session)
+    ):
+        doc.status = "pending_review"
+        doc.reviewed_by_sub = None
+        doc.reviewed_at = None
+        changed_qdrant["status"] = doc.status
+        demoted = True
 
     doc.updated_at = datetime.now(UTC)
 
@@ -198,7 +225,10 @@ def edit_metadata(
                 actor_username=user.preferred_username,
                 action="document.metadata_edit",
                 target_id=str(doc.id),
-                detail={"fields": list(body.model_dump(exclude_none=True))},
+                detail={
+                    "fields": list(body.model_dump(exclude_none=True)),
+                    "demoted_to_pending_review": demoted,
+                },
             )
         )
         session.commit()
@@ -229,6 +259,21 @@ def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) ->
     if doc.status != "pending_review":
         raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
     return doc
+
+
+def _authorized_for_tags(
+    user: UserClaims, classification: str, releasability: list[str], session: Session
+) -> bool:
+    """FR-14.1: whether `user` personally holds clearance for `classification`
+    and every `releasability` value, mirroring validate_against_claims'
+    uploader-side check (common/metadata.py) exactly. A pure predicate rather
+    than _check_curator_authority's raise -- edit_metadata (issue #268) wants
+    to decide *what to do* when this is False (demote to pending_review)
+    rather than reject the request outright."""
+    allowed = allowed_classifications(session, user.clearance)
+    if classification not in allowed:
+        return False
+    return releasability_authorized(releasability, user.releasability)
 
 
 def _check_curator_authority(user: UserClaims, doc: Document, session: Session) -> None:
