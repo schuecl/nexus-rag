@@ -34,4 +34,4 @@ opentelemetry-sdk==1.30.0
 opentelemetry-exporter-otlp-proto-http==1.30.0
 # #160: the Milvus backend's client (unit tests cover the FR-26 expression
 # builder and backend selection; live parity runs against a real container)
-pymilvus==2.5.18
+pymilvus==3.0.1
