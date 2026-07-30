@@ -63,3 +63,9 @@ Feature: Claims-based access control (FR-18, FR-26, REQUIREMENTS.md Section 6)
     And an existing document with status "approved" owned by org "Signal-Corps"
     When that user names the existing document as a supersede target
     Then the supersede is rejected with an org error
+
+  Scenario: A curator's need-to-know matches on org, group, sub, or ALL_AUTHENTICATED
+    Given a user "carol-curator" with clearance "SECRET" and releasability "NONE" and org "USAREUR-AF"
+    Then that user's need-to-know matches an access scope of "USAREUR-AF"
+    And that user's need-to-know matches an access scope of "ALL_AUTHENTICATED"
+    And that user's need-to-know does not match an access scope of "Signal-Corps"

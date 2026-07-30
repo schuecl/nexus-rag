@@ -50,6 +50,11 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         # rewrite.
         "queue_published_at": "TIMESTAMP WITH TIME ZONE",
         "processing_started_at": "TIMESTAMP WITH TIME ZONE",
+        # Issue #277: drives the curation queue's scope-preference grace
+        # period. Nullable so existing pending_review rows fall back to the
+        # pre-#277 org+clearance+releasability-only visibility rather than
+        # being hidden with no way to become visible.
+        "pending_review_since": "TIMESTAMP WITH TIME ZONE",
     },
     "portal_settings": {
         # #248: branding + login popup banner, all defaulted so an existing

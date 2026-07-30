@@ -7,14 +7,28 @@ Issue #273: that same clearance/releasability authority is also enforced at
 -- a curator who lacks clearance for a document, or lacks one of its
 releasability values, must not see that it exists at all, purely by virtue of
 sharing an org with it.
+
+Issue #277 (gap G1): org/clearance/releasability alone still don't check a
+pending document's `access_scope` (need-to-know) -- a Signal-Corps-scoped
+document is, before this, fully readable by any same-org curator with the
+clearance and caveats, whether or not they're in Signal-Corps, even though
+the FR-26 retrieval filter would deny that same person the approved chunks.
+Recorded as an accepted-cost decision in docs/roles-and-permissions.md
+rather than fixed outright: reviewing requires reading, and there is no
+directory of who else could curate a document, so an out-of-scope curator
+can never be replaced with certainty -- only *preferred against*, for a
+bounded window, so nothing rots unreviewed if no scope-matching curator
+ever shows up. See CURATOR_SCOPE_GRACE_PERIOD and _within_scope_grace_period
+below.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -24,13 +38,49 @@ from sqlmodel import Session, select
 from app.deps import allowed_classifications, require_curator, verify_csrf
 from common.claims import UserClaims
 from common.db import get_session
-from common.metadata import releasability_authorized
+from common.metadata import access_scope_authorized, releasability_authorized
 from common.models import AuditLogEntry, Document, Notification
 from common.vector_store import get_store
 
 logger = logging.getLogger("ingestion-api")
 
 router = APIRouter(prefix="/curate", tags=["curation"])
+
+# Issue #277 (gap G1): how long the queue prefers scope-matching curators
+# before falling back to org+clearance+releasability visibility for
+# everyone else authorized to curate the org. There is no curator directory
+# to check "does a scope-matching curator exist" against (identity is
+# per-request, decoded from that request's own OIDC token -- see
+# common/claims.py), so this is a time-based approximation of that
+# preference rather than a literal existence check.
+CURATOR_SCOPE_GRACE_PERIOD = timedelta(
+    hours=int(os.environ.get("CURATOR_SCOPE_GRACE_PERIOD_HOURS", "24"))
+)
+
+
+def _within_scope_grace_period(doc: Document, *, now: datetime) -> bool:
+    """True while a pending document is still inside its scope-preference
+    window -- a null `pending_review_since` (a row from before issue #277,
+    or one that predates this column's backfill) counts as already elapsed,
+    so an old row falls back to the pre-#277 behavior rather than becoming
+    invisible to every curator with no way to become visible again."""
+    if doc.pending_review_since is None:
+        return False
+    since = doc.pending_review_since
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=UTC)
+    return now - since < CURATOR_SCOPE_GRACE_PERIOD
+
+
+def _visible_to_curator(doc: Document, user: UserClaims, *, now: datetime) -> bool:
+    """Issue #277: on top of the existing org/clearance/releasability
+    narrowing, a *pending* document still inside its grace period is only
+    shown to a curator whose sub/groups/org match its access_scope. Once the
+    window elapses (or for anything not pending_review), visibility is
+    unchanged from before this issue."""
+    if doc.status != "pending_review" or not _within_scope_grace_period(doc, now=now):
+        return True
+    return access_scope_authorized(doc.access_scope, sub=user.sub, groups=user.groups, org=user.org)
 
 
 @router.get("/queue")
@@ -53,7 +103,13 @@ def list_queue(
         .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
         .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
     ).all()
-    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+    now = datetime.now(UTC)
+    return [
+        d
+        for d in docs
+        if releasability_authorized(d.releasability, user.releasability)
+        and _visible_to_curator(d, user, now=now)
+    ]
 
 
 # Issue #266: statuses a document can be edited from through the curation
@@ -81,8 +137,9 @@ def list_documents(
     curator holds authority over, not just the pending_review queue
     /curate/queue above returns. Scoped identically to list_queue (owner_org
     in curatable_orgs, classification at or below clearance, every
-    releasability value held -- issue #273); the filters below only ever
-    narrow that set further, never widen it.
+    releasability value held -- issue #273 -- and, for rows still
+    pending_review, the same scope-preference grace period -- issue #277);
+    the filters below only ever narrow that set further, never widen it.
     """
     allowed = allowed_classifications(session, user.clearance)
     stmt = (
@@ -105,7 +162,13 @@ def list_documents(
             )
         )
     docs = session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
-    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+    now = datetime.now(UTC)
+    return [
+        d
+        for d in docs
+        if releasability_authorized(d.releasability, user.releasability)
+        and _visible_to_curator(d, user, now=now)
+    ]
 
 
 class DocumentEdit(BaseModel):
@@ -217,6 +280,12 @@ def edit_metadata(
         doc.status = "pending_review"
         doc.reviewed_by_sub = None
         doc.reviewed_at = None
+        # Issue #277: this is a fresh entry into pending_review -- restart
+        # the scope-preference grace period rather than leaving the
+        # timestamp from whenever it was originally embedded (or not
+        # tracked at all), so a corrected document gets the same
+        # scope-matching preference window a newly-ingested one would.
+        doc.pending_review_since = datetime.now(UTC)
         changed_qdrant["status"] = doc.status
         demoted = True
 

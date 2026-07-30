@@ -154,6 +154,16 @@ class Document(SQLModel, table=True):
     reviewed_at: datetime | None = None
     chunk_count: int = Field(default=0)
 
+    # Issue #277 (gap G1): when this document most recently *entered*
+    # pending_review -- set by the worker on first embed, and again on the
+    # edit_metadata demotion path (app/routes/curate.py). Null for anything
+    # ingested before this column existed. Drives the curation queue's
+    # scope-preference grace period: within the window, /curate/queue prefers
+    # curators whose groups/org/sub match the document's access_scope; a null
+    # or elapsed timestamp falls back to org+clearance+releasability only, so
+    # nothing rots unreviewed for want of a scope-matching curator.
+    pending_review_since: datetime | None = None
+
     # The submission row and original are committed before JetStream publish.
     # This timestamp is the durable hand-off marker: null means the API's
     # reconciliation loop must retry publishing this queued document. It is

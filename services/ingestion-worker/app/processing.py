@@ -413,6 +413,7 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
 
             doc.status = "pending_review"
             doc.processing_started_at = None
+            doc.pending_review_since = _utcnow()
             doc.updated_at = _utcnow()
             session.add(doc)
             session.add(

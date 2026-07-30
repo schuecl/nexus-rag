@@ -18,6 +18,7 @@ from common.metadata import (
     NO_RELEASABILITY_RESTRICTION,
     DocumentMetadataIn,
     MetadataValidationError,
+    access_scope_authorized,
     validate_against_claims,
 )
 from common.models import Document
@@ -91,6 +92,11 @@ def test_supersede_status_guard():
 
 @scenario(FEATURE, "A supersede target in another org is rejected")
 def test_supersede_org_guard():
+    pass
+
+
+@scenario(FEATURE, "A curator's need-to-know matches on org, group, sub, or ALL_AUTHENTICATED")
+def test_curator_need_to_know_scope_matching():
     pass
 
 
@@ -275,6 +281,25 @@ def user_can_curate(ctx, org):
 @then(parsers.parse('that user cannot curate org "{org}"'))
 def user_cannot_curate(ctx, org):
     assert not ctx["claims"].can_curate_org(org)
+
+
+@then(parsers.parse('that user\'s need-to-know matches an access scope of "{value}"'))
+def need_to_know_matches(ctx, value):
+    # Issue #277 (gap G1): the same predicate app/routes/curate.py's
+    # scope-preference grace period uses to decide queue visibility for a
+    # pending document -- pinned here as a security invariant independent of
+    # any DB-backed grace-period timing (covered separately in
+    # services/ingestion-api/tests/test_curate_documents.py).
+    claims = ctx["claims"]
+    assert access_scope_authorized([value], sub=claims.sub, groups=claims.groups, org=claims.org)
+
+
+@then(parsers.parse('that user\'s need-to-know does not match an access scope of "{value}"'))
+def need_to_know_does_not_match(ctx, value):
+    claims = ctx["claims"]
+    assert not access_scope_authorized(
+        [value], sub=claims.sub, groups=claims.groups, org=claims.org
+    )
 
 
 @then("the supersede is rejected with a status error")

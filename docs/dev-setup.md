@@ -634,6 +634,20 @@ the docs, not a silent "it works" — flag it if you find one.
   tokens instead of a hardcoded light-mode color. **Tested against mocks only** (unit
   tests covering scoping/filters/authority/NFR-13-revert against an in-memory SQLite
   session) — not yet exercised against a live Postgres/Qdrant pair or a browser.
+- **Curation queue scope-preference grace period (issue #277, gap G1)** — a pending
+  document is now hidden from a same-org, cleared, releasability-holding curator whose
+  groups/org/sub don't match its `access_scope`, for `CURATOR_SCOPE_GRACE_PERIOD_HOURS`
+  (default 24) after it enters `pending_review` (`Document.pending_review_since`); past
+  that window — or for a document ingested before this field existed — visibility falls
+  back to the pre-#277 org+clearance+releasability-only behavior, so a document can
+  never rot unreviewed for want of a scope-matching curator. A time-based approximation
+  of "prefer a scope-matching curator when one exists," not the literal thing — there is
+  no curator directory to check against, so `access_scope` is preferred at the queue
+  listing only, not hard-enforced at approve/reject (see `docs/roles-and-permissions.md`
+  §7's gap G1 for the full writeup and accepted residual gaps). **Tested against mocks
+  only** (unit tests against the shared `access_scope_authorized` predicate, plus
+  service-level tests covering the grace-period/fallback logic against an in-memory
+  SQLite session) — not yet exercised against a live Postgres pair or a browser.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

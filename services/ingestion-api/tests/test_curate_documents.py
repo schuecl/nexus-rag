@@ -10,6 +10,7 @@ HTTP plumbing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -24,6 +25,17 @@ CURATOR = UserClaims(
     sub="curator-sub",
     preferred_username="carol-curator",
     org="USAREUR-AF",
+    rag_roles=["rag-curate:USAREUR-AF", "rag-clearance:SECRET", "rag-releasability:NONE"],
+)
+
+# Issue #277: a same-org curator who additionally holds the Signal-Corps
+# group -- CURATOR above deliberately holds neither that group nor sub, so
+# it stands in for an org-authorized-but-out-of-scope curator.
+SIGNAL_CORPS_CURATOR = UserClaims(
+    sub="signal-corps-curator-sub",
+    preferred_username="sam-curator",
+    org="USAREUR-AF",
+    groups=["Signal-Corps"],
     rag_roles=["rag-curate:USAREUR-AF", "rag-clearance:SECRET", "rag-releasability:NONE"],
 )
 
@@ -135,6 +147,102 @@ class TestListQueue:
         docs = curate.list_queue(user=CURATOR, session=session)
 
         assert [d.id for d in docs] == [mine.id]
+
+
+class TestScopePreferenceGracePeriod:
+    """Issue #277 (gap G1): within CURATOR_SCOPE_GRACE_PERIOD of entering
+    pending_review, the queue prefers curators whose sub/groups/org match
+    the document's access_scope; past that window (or with no tracked
+    start), visibility falls back to the pre-#277 org/clearance/
+    releasability-only behavior so nothing rots unreviewed."""
+
+    def test_out_of_scope_curator_does_not_see_it_within_grace_period(
+        self, session: Session
+    ) -> None:
+        doc = _document(
+            status="pending_review",
+            access_scope=["Signal-Corps"],
+            pending_review_since=datetime.now(UTC),
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert docs == []
+
+    def test_in_scope_curator_sees_it_within_grace_period(self, session: Session) -> None:
+        doc = _document(
+            status="pending_review",
+            access_scope=["Signal-Corps"],
+            pending_review_since=datetime.now(UTC),
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=SIGNAL_CORPS_CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_falls_back_to_everyone_once_grace_period_elapses(self, session: Session) -> None:
+        doc = _document(
+            status="pending_review",
+            access_scope=["Signal-Corps"],
+            pending_review_since=datetime.now(UTC)
+            - curate.CURATOR_SCOPE_GRACE_PERIOD
+            - timedelta(hours=1),
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_null_pending_review_since_falls_back_to_everyone(self, session: Session) -> None:
+        # A row from before issue #277 (or before the additive column
+        # backfilled it) -- must not become invisible to every curator with
+        # no way to ever become visible again.
+        doc = _document(
+            status="pending_review", access_scope=["Signal-Corps"], pending_review_since=None
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_all_authenticated_scope_is_never_scope_gated(self, session: Session) -> None:
+        doc = _document(
+            status="pending_review",
+            access_scope=["ALL_AUTHENTICATED"],
+            pending_review_since=datetime.now(UTC),
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_approved_documents_are_never_scope_gated(self, session: Session) -> None:
+        # _visible_to_curator only applies the scope/grace-period check to
+        # pending_review rows -- list_documents (the "any status" master
+        # list) must not start hiding already-decided documents.
+        doc = _document(
+            status="approved",
+            access_scope=["Signal-Corps"],
+            pending_review_since=datetime.now(UTC),
+        )
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None, classification=None, q=None, user=CURATOR, session=session
+        )
+
+        assert [d.id for d in docs] == [doc.id]
 
 
 class TestListDocuments:
