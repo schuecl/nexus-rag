@@ -101,7 +101,25 @@ docker compose --profile eval run --rm eval-retrieval
   scoped, read-only-plus-`security-events:write` token GitHub grants for this
   case, without widening what fork-authored code can otherwise touch.
 - **`.github/dependabot.yml`**: weekly pip (per service + test toolchain),
-  GitHub Actions, and Docker base-image updates.
+  GitHub Actions, and Docker base-image updates. Issue #230: each service's
+  pip directory also carries a hash-pinned `requirements.txt` (compiled
+  from `requirements.in` via `pip-compile --generate-hashes`), installed
+  with `pip install --require-hashes` in that service's Dockerfile instead
+  of the floor ranges in `pyproject.toml` directly — Dependabot updates
+  both the floors and the lockfile hashes from the same directory entry.
+  reranker-service's lockfile excludes `torch` (installed separately from
+  a configurable CPU/CUDA index; see that service's `requirements.in` and
+  Dockerfile for why hash-pinning it would defeat that toggle) — it was
+  compiled with a local stub `torch` package (version `999.0.0`, no
+  dependencies) supplied via `--find-links` so the resolver picks it over
+  the real package without needing torch's own transitive deps, then that
+  stub's own entry was deleted from the resulting `requirements.txt` by
+  hand; regenerating that one lockfile needs the same trick, not a plain
+  `pip-compile` run. Every other lockfile regenerates after a
+  `pyproject.toml` floor edit with
+  `pip-compile --generate-hashes --output-file=requirements.txt requirements.in`
+  run inside a `python:3.11-slim` container (matching the Dockerfile's base
+  image) from that service's directory.
 
 ## Branch protection (merge gates)
 
@@ -352,3 +370,11 @@ baseline capture, not a regression fix.
   just this integration layer.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
+- Issue #230's hash-pinned lockfiles cover the four services' and scripts'
+  *Dockerfiles* only. `ci.yml`'s own `pip install "pkg>=x"` lines (unit,
+  service-tests, types jobs) and `security.yml`'s `pip-audit` job install
+  the same floor ranges independently and unpinned by hash — deliberately
+  out of scope here (those jobs need the latest compatible version to
+  catch a regression/CVE early, which a hash-pinned lockfile would work
+  against), but worth knowing the lockfiles aren't a single source of
+  truth for every dependency install path in this repo.

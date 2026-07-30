@@ -1,0 +1,13 @@
+# Direct runtime dependencies of orchestration-mcp (see pyproject.toml),
+# plus services/common's own deps (-r) since this image installs common
+# from local source with --no-deps and needs common's deps satisfied from
+# this lockfile instead. nexus-rag-common itself is installed from local
+# source, not from this file. Compiled to requirements.txt with
+# `pip-compile --generate-hashes`; see issue #230.
+-r ../common/requirements.in
+opentelemetry-instrumentation-httpx>=0.51b0
+mcp>=1.6,<2.0
+uvicorn[standard]>=0.30
+httpx>=0.27
+prometheus-client>=0.20
+qdrant-client>=1.10
