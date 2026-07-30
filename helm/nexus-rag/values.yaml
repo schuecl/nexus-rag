@@ -313,6 +313,14 @@ rerankerService:
   sharedSecret:
     existingSecret: ""
     secretKey: "shared-secret"
+    # Issue #281 gap G5 stage 2: set only while rotating the value above --
+    # reranker-service accepts either the current or this previous value, so
+    # it and orchestration-mcp don't have to switch in the same instant.
+    # orchestration-mcp itself never reads this; it only ever sends the
+    # current value. Unset (default) outside a rotation window. See
+    # docs/credential-rotation.md.
+    previousExistingSecret: ""
+    previousSecretKey: "shared-secret-previous"
   service:
     port: 8003
   persistence:
@@ -382,6 +390,13 @@ ingestionApi:
   sessionTokenEncryption:
     existingSecret: "nexus-rag-session-token-key"
     secretKey: "key"
+    # Issue #281 gap G5 stage 2: set only while rotating the key above --
+    # common/token_crypto.py tries this via MultiFernet if the current key
+    # fails to decrypt a row, so sessions written under the old key keep
+    # working until it's retired. Unset (default) outside a rotation
+    # window. See docs/credential-rotation.md.
+    previousExistingSecret: ""
+    previousSecretKey: "key-previous"
   resources:
     requests:
       cpu: "250m"

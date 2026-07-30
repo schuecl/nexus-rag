@@ -4,14 +4,16 @@ Stage 1 of gap **G5** (`docs/roles-and-permissions.md` §7, issue #281): every
 machine credential in §6's table is a long-lived static value with no
 documented rotation procedure today. This document is that procedure.
 
-**What this document does not do.** None of these credentials currently
-support two concurrently valid values, so every rotation below is
+**What this document does not do.** Most of these credentials still don't
+support two concurrently valid values, so most rotations below remain
 rotation-with-downtime: there is a window, however short, where the old value
 has been replaced but not every consumer has picked up the new one, and calls
-made in that window fail closed (401/403), not open. Stage 2 (dual-value
-support — e.g. a reranker `RERANKER_SECRET_PREVIOUS`, `MultiFernet` for the
-session key) removes that window per-credential and should land as separate,
-small PRs against this list. Until a given credential has a stage-2 PR, plan
+made in that window fail closed (401/403), not open. Two credentials —
+the reranker shared secret and the session-token Fernet key, the two named as
+concrete examples in issue #281 — now support a `_PREVIOUS` overlap value and
+are called out below as no longer needing a synchronized restart. The
+remaining stage-2 candidates (documented per-credential below) should land as
+separate, small PRs against this list. Until a given credential has one, plan
 rotation for a maintenance window sized to "restart every consumer."
 
 Compose commands below assume `.env` at the repo root (dev stack). Helm
@@ -29,9 +31,9 @@ that mount it.
 | Qdrant read/write API key | `ingestion-api`, `ingestion-worker` → Qdrant | Yes — Qdrant restart | Writes/curation actions 401 until restarted with new key |
 | Qdrant read-only API key | `orchestration-mcp` → Qdrant; Prometheus scrape (dev, `--profile observability`) | Yes — Qdrant restart | Queries 401 (fails closed — no results, not unfiltered results); scrape 401s silently (#133) if forgotten |
 | NATS account passwords | `ingestion-api` (publish), `ingestion-worker` (consume) | Yes — NATS restart | Publish/consume auth failures; JetStream redelivery means no message loss, just a stall (NFR-11) |
-| Reranker shared secret | `orchestration-mcp` → `reranker-service` | Yes — both restart | `/rerank` 401s; `orchestration-mcp` falls back to fused order per its own design, so retrieval degrades rather than fails (noted in the response) |
+| Reranker shared secret | `orchestration-mcp` → `reranker-service` | **No**, if `RERANKER_SHARED_SECRET_PREVIOUS` is used during rotation | `/rerank` 401s only if the previous-value step is skipped; `orchestration-mcp` falls back to fused order regardless, so retrieval degrades rather than fails outright (noted in the response) |
 | `APP_DB_USER` Postgres password | `ingestion-api`, `orchestration-mcp` | Partial — see below | App services fail every DB query until restarted with new password |
-| `SESSION_TOKEN_ENCRYPTION_KEY` (Fernet) | `ingestion-api` only | Yes, and **destructive** | Every stored session becomes undecryptable — forces re-login, not data loss (§5 of `roles-and-permissions.md`) |
+| `SESSION_TOKEN_ENCRYPTION_KEY` (Fernet) | `ingestion-api` only | **No**, if `SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS` is used during rotation | Skipping the previous-key step makes every stored session undecryptable — forces re-login, not data loss (§5 of `roles-and-permissions.md`) |
 | Keycloak client secret (`rag-app`) | `ingestion-api` OIDC token exchange | Yes — `ingestion-api` restart | Login/token-refresh calls to Keycloak fail until restarted with new secret |
 
 ## Qdrant API keys
@@ -102,31 +104,38 @@ no message is dropped either way.
 
 `orchestration-mcp` sends `X-Reranker-Shared-Secret`; `reranker-service`
 checks it with `hmac.compare_digest` against its own `RERANKER_SHARED_SECRET`
-(#216). Today it's a single value on each side — no
-`RERANKER_SECRET_PREVIOUS`-style overlap (that's the concrete stage-2 example
-named in issue #281).
+(#216), and — since issue #281 gap G5 stage 2 — also against an optional
+`RERANKER_SHARED_SECRET_PREVIOUS` (`app/main.py`'s `_check_shared_secret`).
+This is the credential to rotate first if you want to see the stage-2 pattern
+in practice: `reranker-service` is the only side with new logic; the sender
+(`orchestration-mcp`) is unchanged, since it only ever presents one current
+value.
 
-Order of operations:
+No-downtime order of operations:
 
 1. Generate a new value.
-2. Compose: update `RERANKER_SHARED_SECRET` in `.env` (read by both
-   services). Helm: update the `Secret` referenced by
-   `rerankerService.sharedSecret.existingSecret` — note this is unset
-   (`""`) by default in the chart, meaning `/rerank` runs unauthenticated
-   unless a deployment has already opted in; if that's your starting state,
-   "rotation" here is really "turning auth on for the first time," and both
-   services need it set to the *same* Secret.
-3. Restart `reranker-service` and `orchestration-mcp` together. Order
-   between the two doesn't matter — whichever restarts first, the other is
-   still presenting/checking the old value for a brief window, and that
-   direction fails closed (401), not open.
+2. Set it as `RERANKER_SHARED_SECRET_PREVIOUS` on `reranker-service` — Compose:
+   add it to `.env` (already wired as a passthrough); Helm: point
+   `rerankerService.sharedSecret.previousExistingSecret`/`previousSecretKey`
+   at a `Secret` containing the *current* (about-to-be-replaced) value. Note
+   this key is unset (`""`) by default in the chart, same as
+   `sharedSecret.existingSecret` — meaning `/rerank` runs unauthenticated
+   until a deployment opts in; if that's your starting state, "rotation"
+   here is "turning auth on for the first time," and step 2 doesn't apply.
+3. Restart `reranker-service`. It now accepts both the old and new values.
+4. Update `RERANKER_SHARED_SECRET` (both services, same as before) to the new
+   value and restart `orchestration-mcp`. There is no ordering constraint
+   between this step and step 3 completing everywhere, since
+   `reranker-service` already accepts the new value from step 2 onward.
+5. Once every `orchestration-mcp` replica is confirmed on the new value,
+   unset `RERANKER_SHARED_SECRET_PREVIOUS` on `reranker-service` and restart
+   it again to retire the old value.
 
-Blast radius: `/rerank` calls 401 during the window. `orchestration-mcp`'s
-own fallback (fused RRF order, noted in the response per
-`app/reranking.py`) means retrieval degrades in ranking quality rather than
-failing outright — the one rotation in this table where a mismatch doesn't
-break the user-facing feature, just its quality, and says so in the response
-it returns.
+Blast radius: `/rerank` only 401s if step 2 is skipped (rotating
+`RERANKER_SHARED_SECRET` directly, the old single-value procedure) — and even
+then, `orchestration-mcp`'s own fallback (fused RRF order, noted in the
+response per `app/reranking.py`) means retrieval degrades in ranking quality
+rather than failing outright.
 
 ## `APP_DB_USER` Postgres password
 
@@ -161,36 +170,48 @@ since it's a hard outage instead of old-connections-still-working.
 ## `SESSION_TOKEN_ENCRYPTION_KEY` (Fernet key)
 
 Encrypts `UserSession`'s stored OIDC access/refresh/id tokens at rest
-(`services/common/common/token_crypto.py`, #213). This is the one rotation
-in this table that is not just "downtime," it's **destructive**: the module
-uses a single `Fernet(key)`, not `cryptography.fernet.MultiFernet`, so there
-is no code path today that can decrypt a row written under the old key once
-the env var changes. Every stored session becomes permanently unreadable the
-moment the new key is live.
+(`services/common/common/token_crypto.py`, #213). Since issue #281 gap G5
+stage 2, `_fernet()` builds a `cryptography.fernet.MultiFernet` from the
+primary key plus an optional `SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS`: new
+writes always encrypt under the primary key, and decrypts try the primary
+key first, then the previous one. Rotation is no longer destructive as long
+as the previous key is set through the overlap window.
 
-This is deliberately a lower-severity kind of destructive than losing a key
-over durable document content — `UserSession` rows are ephemeral and bounded
-by `SESSION_LIFETIME` (see the comment in `token_crypto.py`), so the
-consequence is every logged-in user is forced to re-authenticate, not data
-loss. Still worth doing on purpose, not by accident:
+There's deliberately no separate re-encryption job: `_refresh_session`
+(`app/deps.py`) already rewrites `access_token`/`refresh_token`/`id_token`
+on every silent token refresh, which re-encrypts that row under the primary
+key as a side effect of the normal write path. Combined with `UserSession`
+rows being ephemeral and bounded by `SESSION_LIFETIME`, every row is off the
+previous key within one `SESSION_LIFETIME` of the rotation even if you never
+write to it directly.
+
+No-downtime order of operations:
 
 1. Generate a new key: `python -c "from cryptography.fernet import Fernet;
    print(Fernet.generate_key().decode())"` (same method `.env.example`
    documents for the dev default).
-2. Compose: update `SESSION_TOKEN_ENCRYPTION_KEY` in `.env`. Helm: update the
-   `nexus-rag-session-token-key` `Secret`'s `key` field
-   (`ingestionApi.sessionTokenEncryption.existingSecret`/`secretKey`).
-3. Restart `ingestion-api`. Every existing `UserSession` row is now
-   undecryptable; the next request against any of them hits a decrypt error
-   and should be treated as "session invalid, re-authenticate" — there's no
-   recovery path other than the user logging in again.
+2. Set the *current* key as `SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS` — Compose:
+   add it to `.env` (already wired as a passthrough); Helm: point
+   `ingestionApi.sessionTokenEncryption.previousExistingSecret`/
+   `previousSecretKey` at a `Secret` containing it.
+3. Set `SESSION_TOKEN_ENCRYPTION_KEY` to the new value (same field as
+   before).
+4. Restart `ingestion-api` once, with both env vars set from steps 2–3
+   together — unlike the reranker secret, there's only one consumer here, so
+   there's no benefit to splitting this into two restarts. Existing sessions
+   keep decrypting via the previous key; new writes and any row touched by a
+   refresh move to the new key immediately.
+5. After at least one `SESSION_LIFETIME` (8 hours, `app/deps.py`) has
+   elapsed since step 4, every row created before the rotation has expired.
+   Unset `SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS` and restart `ingestion-api`
+   again to retire the old key.
 
-Stage 2 for this credential (tracked separately per issue #281's proposal)
-is switching to `MultiFernet([Fernet(new), Fernet(old)])`: new writes use the
-first key, reads try each key in order, and a background or on-read
-re-encryption pass migrates rows off the old key before it's retired. Until
-that lands, treat any rotation of this key as forcing a full re-login for
-every active session, on purpose.
+Blast radius of skipping step 2 (setting only the new
+`SESSION_TOKEN_ENCRYPTION_KEY` and restarting, the old single-value
+procedure): every existing `UserSession` row becomes immediately
+undecryptable — forces re-login for every active session, not data loss
+(rows are ephemeral, §5 of `roles-and-permissions.md`), but avoidable now
+that step 2 exists.
 
 ## Keycloak client secret (`rag-app`)
 
@@ -224,7 +245,8 @@ session rows).
   updating what nexus-rag's services present to those systems, not those
   systems' internal auth stores. Regenerating them Keycloak/Qdrant/NATS-side
   is each system's own admin process.
-- **Dual-value / no-downtime rotation** — issue #281's stage 2, tracked
-  per-credential as its own small PR. The reranker shared secret is the
-  concrete example named in the issue (`RERANKER_SECRET_PREVIOUS`); Fernet's
-  `MultiFernet` is noted above as the session-key equivalent.
+- **Dual-value / no-downtime rotation for the remaining credentials** — issue
+  #281's stage 2 is done for the reranker shared secret and the session-token
+  Fernet key (both above); Qdrant/NATS/Keycloak rotation stays config-level
+  on their side per the issue's own scoping (no code change proposed for
+  them), and `APP_DB_USER` remains a candidate not yet picked up.

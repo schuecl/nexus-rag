@@ -130,6 +130,15 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.ingestionApi.sessionTokenEncryption.existingSecret }}
                   key: {{ .Values.ingestionApi.sessionTokenEncryption.secretKey }}
+            {{- if .Values.ingestionApi.sessionTokenEncryption.previousExistingSecret }}
+            # Issue #281 gap G5 stage 2: tried via MultiFernet if the key
+            # above fails to decrypt a row -- set only while rotating.
+            - name: SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ingestionApi.sessionTokenEncryption.previousExistingSecret }}
+                  key: {{ .Values.ingestionApi.sessionTokenEncryption.previousSecretKey }}
+            {{- end }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
             # NFR-15: full read/write key -- this service creates the

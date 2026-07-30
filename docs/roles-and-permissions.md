@@ -189,17 +189,23 @@ point maps it to 401 like any other malformed token. Duplicate *identical*
 values and zero clearance roles remain valid. Previously the first role in
 `rag_roles` order won silently.
 
-**G5 — Static service credentials, rotation now documented but still
-downtime-only (#281).** Qdrant keys, NATS account passwords, the reranker
+**G5 — Static service credentials, rotation documented and two of six now
+no-downtime (#281).** Qdrant keys, NATS account passwords, the reranker
 secret, `APP_DB_USER`, the session-token Fernet key, and the Keycloak client
-secret are long-lived values in env/config. Stage 1 of #281 closed the
-"no documented procedure" half: [`docs/credential-rotation.md`](credential-rotation.md)
-has an order-of-operations runbook per credential, including which side has
-to restart first and what breaks if the order is reversed. Stage 2 — dual-
-concurrently-valid values per secret, so rotation needs no downtime — remains
-open, to be done per-credential as separate small PRs (the reranker secret's
-`RERANKER_SECRET_PREVIOUS` and the Fernet key's `MultiFernet` migration are
-the two concretely scoped in the issue).
+secret are long-lived values in env/config.
+[`docs/credential-rotation.md`](credential-rotation.md) has an
+order-of-operations runbook per credential (stage 1), including which side
+has to restart first and what breaks if the order is reversed. Stage 2 —
+dual-concurrently-valid values per secret, so rotation needs no downtime — is
+done for the two credentials the issue scoped concretely: the reranker
+secret now accepts an optional `RERANKER_SHARED_SECRET_PREVIOUS`
+(`reranker-service/app/main.py`), and the session-token key uses
+`cryptography.fernet.MultiFernet` with an optional
+`SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS` (`common/token_crypto.py`), with
+existing sessions migrating off the retired key automatically as normal
+token-refresh writes touch each row. Qdrant/NATS/Keycloak rotation stays
+config-level on those systems' own side (no code change proposed for them in
+the issue); `APP_DB_USER` remains open as a candidate not yet picked up.
 
 **G6 — `rag-query` retrieval has no per-document view audit granularity.**
 The audit row records the filter and result count, not *which* documents were

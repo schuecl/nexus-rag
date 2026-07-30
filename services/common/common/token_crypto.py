@@ -17,6 +17,17 @@ Fernet (AES-128-CBC + HMAC, from the `cryptography` package already a
 project dependency) rather than a hash: the whole point is these values stay
 retrievable, so a one-way function is off the table -- see #213's rejection
 of "store a hash of the access token" for the same reason.
+
+Issue #281 gap G5 stage 2: SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS, if set,
+is accepted for decryption alongside the primary key via `MultiFernet`, so
+rotating the primary key doesn't instantly strand every session created
+under the old one. New writes always encrypt under the primary key; a row
+still under the previous key gets re-encrypted under the primary the next
+time it's written (routes/auth.py's session refresh already rewrites
+access_token/refresh_token/id_token periodically) -- there's no separate
+migration pass, since UserSession rows are ephemeral and bounded by
+SESSION_LIFETIME anyway (see the comment below). Retire the previous key
+once you don't need sessions older than that to keep working.
 """
 
 from __future__ import annotations
@@ -24,7 +35,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet
 from sqlalchemy import String
 from sqlalchemy.types import TypeDecorator
 
@@ -39,9 +50,13 @@ _DEV_DEFAULT_KEY = "VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM="
 
 
 @lru_cache(maxsize=1)
-def _fernet() -> Fernet:
+def _fernet() -> MultiFernet:
     key = os.environ.get("SESSION_TOKEN_ENCRYPTION_KEY", _DEV_DEFAULT_KEY)
-    return Fernet(key.encode())
+    keys = [Fernet(key.encode())]
+    previous_key = os.environ.get("SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS", "")
+    if previous_key:
+        keys.append(Fernet(previous_key.encode()))
+    return MultiFernet(keys)
 
 
 class EncryptedString(TypeDecorator[str]):
