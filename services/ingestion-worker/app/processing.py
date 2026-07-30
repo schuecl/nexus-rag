@@ -28,6 +28,7 @@ from nats.js.api import ConsumerConfig
 from sqlmodel import Session, select
 
 from app import metrics
+from app.captioning import caption_images, captioning_enabled
 from app.chunking import chunk_sections
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import ParsedSection, ParsingError, parse_document
@@ -311,7 +312,22 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     sections = await asyncio.to_thread(parse_document, doc.filename, contents)
                     span.set_attribute("document.sections", len(sections))
                 # Issue #138: advisory only, never blocks -- see _apply_tagging_advisory.
+                # Runs on the parsed sections only, before captions are added:
+                # the advisory looks for uploader-applied banner/portion
+                # markings, and a model-generated caption is not one.
                 _apply_tagging_advisory(session, doc, sections)
+                # Issue #92: caption embedded images so figure content becomes
+                # retrievable. Degrade-on-failure by contract (never raises,
+                # never fails the document) and internally bounded well under
+                # PROCESSING_TIMEOUT_SECONDS -- see app/captioning.py.
+                if captioning_enabled():
+                    with (
+                        metrics.stage_seconds.labels(stage="caption").time(),
+                        tracer.start_as_current_span("caption") as span,
+                    ):
+                        image_sections = await caption_images(doc.filename, contents)
+                        span.set_attribute("document.image_sections", len(image_sections))
+                    sections.extend(image_sections)
                 with (
                     metrics.stage_seconds.labels(stage="chunk").time(),
                     tracer.start_as_current_span("chunk") as span,
