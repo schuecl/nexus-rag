@@ -107,6 +107,41 @@ Host prerequisites for the GPU path: an NVIDIA driver, the
 `nvidia-container-toolkit`, and Docker configured with the `nvidia` runtime.
 Air-gapped (NFR-1): mirror the chosen torch index internally and point
 `TORCH_INDEX_URL` at it, same as PyPI is already mirrored.
+## Image/figure captioning (optional, #92)
+
+Off by default. When enabled, `ingestion-worker` extracts embedded images from
+PDF/DOCX/PPTX at ingestion, captions each with a vision model on the stack's
+existing Ollama, and stores every caption as its own retrievable chunk
+(`content_type: "image"`, issue #89's tagging — so `CONTENT_TYPE_BOOSTS`
+can weight figure content at query time).
+
+Enable by setting a vision-capable Ollama model in `.env`:
+
+```bash
+VISION_MODEL=moondream        # ~1.7GB, usable on CPU
+# or granite3.2-vision       # ~2.4GB, stronger on charts/document figures
+```
+
+`ollama-model-init` pulls the model on the next `up` (needs internet once,
+NFR-1: mirror it internally like the other models). Leaving `VISION_MODEL`
+empty keeps ingestion byte-identical to today: no pull, no VLM calls.
+
+Failure semantics are degrade-not-fail (the reranker pattern, not
+`ParsingError`'s): a down/missing model, a per-image error, or the captioning
+pass outrunning its budget (`CAPTIONING_TIMEOUT_SECONDS`, default 90s) costs
+captions, never the document — the gap is visible in the
+`nexus_rag_ingestion_worker_images_skipped_total{reason=...}` counter rather
+than in a failed ingestion. Glyph/logo-sized images are filtered
+(`CAPTION_MIN_IMAGE_BYTES`/`CAPTION_MIN_IMAGE_DIMENSION`), repeats are
+deduplicated, and `MAX_IMAGES_PER_DOCUMENT` (default 20) bounds the model
+calls per document.
+
+Status: extraction/captioning/degrade paths are tested against mocks
+(`services/ingestion-worker/tests/test_captioning.py`; respx-mocked Ollama,
+in-memory fixture documents); the enabled path is validated against a live
+environment (a real `docker compose up` with `VISION_MODEL=moondream`: a
+PPTX with an embedded chart ingested, captioned, curator-approved, and the
+caption chunk retrieved through `/debug/rag_search`).
 ## OCR for scanned and image content (#241)
 
 Always on -- OCR is parsing, not an optional enrichment, and it involves no

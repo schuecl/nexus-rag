@@ -77,7 +77,7 @@ pytest tests/unit/common/test_purge.py::TestIdempotenceAndErrors::test_unknown_d
 # first's already-imported `app` package). `pytest` at the repo root does NOT
 # reach these.
 (cd services/ingestion-api && pytest tests -q)
-(cd services/ingestion-worker && pytest tests -q --cov=app.chunking --cov=app.parsing --cov-fail-under=85)
+(cd services/ingestion-worker && pytest tests -q --cov=app.chunking --cov=app.parsing --cov=app.captioning --cov=app.ocr --cov-fail-under=85)
 (cd services/orchestration-mcp && pytest tests -q --cov=app.reranking --cov-fail-under=85)
 
 # Full-stack e2e (identical to e2e.yml's golden-query job)

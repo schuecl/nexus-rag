@@ -9,9 +9,10 @@ to compute without pulling in a tokenizer dependency. Revisit if chunk sizes
 need to track the embedding model's actual token count precisely.
 
 issue #90: a section's content_type marks whether its text is an atomic
-block that must never be cut by the sliding window -- currently just
-"table" (a markdown table from `_table_to_markdown`, or a spreadsheet sheet;
-see parsing.py), since those are the only non-prose content_type today. A
+block that must never be cut by the sliding window -- "table" (a markdown
+table from `_table_to_markdown`, or a spreadsheet sheet; see parsing.py) and
+"image" (a figure caption, app/captioning.py; captions are short, so
+atomicity costs nothing and keeps one caption one chunk). A
 table section is emitted as a single chunk even when it's longer than
 target_words -- splitting it mid-row would scatter a row's fields across two
 separate embedded chunks, which is worse than one oversized chunk.
