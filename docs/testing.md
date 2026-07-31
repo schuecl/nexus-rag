@@ -101,7 +101,25 @@ docker compose --profile eval run --rm eval-retrieval
   scoped, read-only-plus-`security-events:write` token GitHub grants for this
   case, without widening what fork-authored code can otherwise touch.
 - **`.github/dependabot.yml`**: weekly pip (per service + test toolchain),
-  GitHub Actions, and Docker base-image updates.
+  GitHub Actions, and Docker base-image updates. Issue #230: each service's
+  pip directory also carries a hash-pinned `requirements.txt` (compiled
+  from `requirements.in` via `pip-compile --generate-hashes`), installed
+  with `pip install --require-hashes` in that service's Dockerfile instead
+  of the floor ranges in `pyproject.toml` directly — Dependabot updates
+  both the floors and the lockfile hashes from the same directory entry.
+  reranker-service's lockfile excludes `torch` (installed separately from
+  a configurable CPU/CUDA index; see that service's `requirements.in` and
+  Dockerfile for why hash-pinning it would defeat that toggle) — it was
+  compiled with a local stub `torch` package (version `999.0.0`, no
+  dependencies) supplied via `--find-links` so the resolver picks it over
+  the real package without needing torch's own transitive deps, then that
+  stub's own entry was deleted from the resulting `requirements.txt` by
+  hand; regenerating that one lockfile needs the same trick, not a plain
+  `pip-compile` run. Every other lockfile regenerates after a
+  `pyproject.toml` floor edit with
+  `pip-compile --generate-hashes --output-file=requirements.txt requirements.in`
+  run inside a `python:3.11-slim` container (matching the Dockerfile's base
+  image) from that service's directory.
 
 ## Branch protection (merge gates)
 
@@ -128,9 +146,13 @@ filter, so a required check can never be left permanently "waiting"):
 - `CodeQL` (GitHub code-scanning integration check, distinct from the
   `Analyze (python)` workflow job it's derived from)
 - `unit (3.11)`, `unit (3.12)`
-- `service-tests (ingestion-api)`,
-  `service-tests (ingestion-worker, --cov=app.chunking --cov=app.parsing)`,
-  `service-tests (orchestration-mcp, --cov=app.reranking)`
+- `service-tests (ingestion-api)`, `service-tests (ingestion-worker)`,
+  `service-tests (orchestration-mcp)`, `service-tests (reranker-service)`
+  (issue #256: the job now carries an explicit `name: service-tests
+  (${{ matrix.service }})`, so these four context strings are stable —
+  editing the per-service `cov` flags in `ci.yml`'s matrix no longer renames
+  the check. `reranker-service` joins the required list here for the first
+  time; it already ran unconditionally with real tests, just wasn't pinned.)
 - `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
 - `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
 
@@ -170,6 +192,24 @@ fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
 `Analyze (python)` passing, so no further action was needed on that half of
 the issue.
 
+**Issue #256 (check names decoupled from coverage flags).** The
+`service-tests` job previously had no explicit `name:`, so GitHub derived the
+check name from the matrix values, embedding the `cov` flags in the pinned
+context string (e.g. `service-tests (ingestion-worker, --cov=app.chunking
+--cov=app.parsing)`). Editing those flags renamed the check out from under
+the rulesets, and the pinned context then never reported — every PR stuck on
+"Expected — waiting for status to be reported" with nothing red to fix. Fixed
+by pinning `name: service-tests (${{ matrix.service }})` on the job, so the
+four stable names above can be pinned once and the `cov` matrix can change
+freely going forward. `app.ocr`, previously routed around this trap via
+ingestion-worker's own `addopts` (#241), moved back into `ci.yml`'s matrix now
+that doing so is safe, so the gated-module list lives in one place again.
+Landing this needed a deliberate merge-blocking window, since the PR making
+the change can't satisfy the required-check names it's renaming: an admin
+removed the old `service-tests (…)` contexts from both rulesets, the workflow
+PR merged, then the admin re-pinned the four stable names above (adding
+`reranker-service` to the required list for the first time in the process).
+
 **Applying ruleset changes.** The ruleset REST API's `PATCH` endpoint 404s
 for at least one token type (an OAuth-app token with `repo` scope) even with
 admin permission on the repo — `GET`, `POST` (create), and `DELETE` all work
@@ -195,14 +235,13 @@ The enforced `--cov-fail-under=85` applies to:
   ~99% today.
 - `app.chunking` + `app.parsing` + `app.ocr` (ingestion-worker) — the pure
   FR-3/FR-4 logic. `app.processing`/`app.embedding` are pipeline glue
-  exercised by the e2e job. `app.ocr` (#241) is added by the service's own
-  `[tool.pytest.ini_options] addopts` rather than by ci.yml's matrix, because
-  that matrix string *is* part of the required check's name (see the
-  required-checks list above): editing it renames the check, the context both
-  `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
-  "Expected — waiting for status to be reported" until an admin re-pins it.
-  Making the names independent of the flags needs that same coordinated
-  ruleset edit, so it is tracked as #256 rather than done here.
+  exercised by the e2e job. `app.ocr` (#241) lives in ci.yml's matrix `cov`
+  string alongside `app.chunking`/`app.parsing`; `app.captioning` (#92) stays
+  in the service's own `[tool.pytest.ini_options] addopts` since it's outside
+  this coverage floor. Both used to route around the matrix string entirely,
+  since it doubled as the required check's name and editing it renamed the
+  check out from under the rulesets — fixed by #256, which pins an explicit
+  job `name:` instead (see "Branch protection" above).
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured
@@ -315,10 +354,32 @@ Validated against the live stack: `bob-query` and `carol-curator` (SECRET,
 FVEY/NATO) each saw 9 of 9 permitted documents and none of the six NOFORN/USA
 ones; `dave-admin` (SECRET, all four holdings) saw 15 of 15.
 
-The same run also establishes, empirically, that all three classification levels
-share one Qdrant collection today — 72 points in `nexus_rag_chunks`, 24
-UNCLASSIFIED / 27 CUI / 21 SECRET. That is the current design, and the evidence
-behind issue #229's proposal to split it.
+That run predates issue #229: at the time, all three classification levels shared
+one Qdrant collection -- 72 points in `nexus_rag_chunks`, 24 UNCLASSIFIED / 27 CUI
+/ 21 SECRET -- which was the evidence behind #229's proposal to split it.
+
+**#229 status: implemented, unit-tested against a fake Qdrant client, not yet
+validated against the live stack.** `common/qdrant_store.py` now derives one
+collection per Classification value (`classification_collection_name`), routes
+ingestion/curation/supersession/purge through it, and `qdrant_backend.py` fans
+`hybrid_query` out over every collection the caller is cleared for, fusing
+results by rank (`common/vector_store.fuse_ranked`) rather than by score --
+see `tests/unit/common/test_classification_collections.py`,
+`test_qdrant_backend_fanout.py`, and `test_rrf_fusion.py` for the pure-logic
+coverage (collection naming/routing, the classification-correction migration
+path including its partial-failure case, and the fusion arithmetic). What that
+coverage cannot exercise -- and what a `docker compose up` + golden-query run
+still needs to confirm before this is called *validated against a live
+environment* rather than merely *implemented* (see this file's confidence-label
+convention) -- is real Qdrant behavior: collections actually created on demand,
+`scroll`/`upsert`/`delete` pagination against a live server, and whether recall
+holds once BM25's IDF is computed per classification-skewed collection instead
+of over the whole corpus. **`scripts/golden_queries.json` has not been
+re-baselined against the split** -- the issue calls this out explicitly as part
+of the work, not something to discover when CI goes red, and it remains open:
+whoever next runs the live e2e job against this change should expect the
+`--baseline`/`--regression-tolerance` comparison (see above) to need a fresh
+baseline capture, not a regression fix.
 
 ## Known gaps / follow-ups
 
@@ -337,3 +398,11 @@ behind issue #229's proposal to split it.
   just this integration layer.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
+- Issue #230's hash-pinned lockfiles cover the four services' and scripts'
+  *Dockerfiles* only. `ci.yml`'s own `pip install "pkg>=x"` lines (unit,
+  service-tests, types jobs) and `security.yml`'s `pip-audit` job install
+  the same floor ranges independently and unpinned by hash — deliberately
+  out of scope here (those jobs need the latest compatible version to
+  catch a regression/CVE early, which a hash-pinned lockfile would work
+  against), but worth knowing the lockfiles aren't a single source of
+  truth for every dependency install path in this repo.

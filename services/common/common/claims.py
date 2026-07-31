@@ -66,6 +66,20 @@ if OIDC_SKIP_VERIFY:  # pragma: no cover - a startup-time side effect
     )
 
 
+class ConflictingClearanceError(jwt.InvalidTokenError):
+    """Issue #280 (gap G4): one token carries two or more *distinct*
+    rag-clearance:<value> roles.
+
+    Clearance is a single ranked ceiling that every enforcement point derives
+    from (FR-18 tagging, FR-14 curator authority, FR-26 retrieval filter), so
+    a token that names two levels has no correct interpretation -- picking one
+    silently by rag_roles serialization order meant a mis-provisioned user
+    could read/tag/approve at whichever level Keycloak happened to emit first.
+    A jwt.InvalidTokenError subclass so every existing entry point's
+    PyJWTError handling rejects it like any other malformed token (401),
+    rather than 500ing wherever `.clearance` is first read."""
+
+
 class UserClaims(BaseModel):
     sub: str
     preferred_username: str
@@ -99,11 +113,12 @@ class UserClaims(BaseModel):
         # FR-18/FR-26/FR-14: the user's Classification level, derived from a
         # rag-clearance:<value> client role -- same rag_roles-prefix pattern as
         # curatable_orgs/releasability below, but a single ranked value rather
-        # than a set, so exactly one such role is expected per user. A stray
-        # second role just wins by rag_roles order; that's a Keycloak-admin
-        # misconfiguration to fix, not something this layer needs to guard
-        # against (it has no DB access to the ClassificationLevel rank table
-        # here anyway -- see common/classification.py).
+        # than a set, so exactly one such role is expected per user. A token
+        # naming two distinct levels never gets this far: parse_claims rejects
+        # it (ConflictingClearanceError, issue #280), so first-match here can
+        # only ever see one distinct value. Ranking against the
+        # ClassificationLevel table happens elsewhere -- this layer has no DB
+        # access (see common/classification.py).
         for role in self.rag_roles:
             if role.startswith(RAG_CLEARANCE_PREFIX):
                 return role[len(RAG_CLEARANCE_PREFIX) :]
@@ -135,6 +150,14 @@ class UserClaims(BaseModel):
 
     def can_curate_org(self, org: str) -> bool:
         return org in self.curatable_orgs
+
+    @property
+    def can_purge(self) -> bool:
+        """Issue #123: destruction authority, deliberately separate from
+        curation -- see app/deps.py's require_purge for why. Exposed here so
+        templates can gate the delete action the same way deps.require_purge
+        gates the endpoint, without duplicating the role-name check."""
+        return "rag-purge" in self.rag_roles
 
 
 @lru_cache(maxsize=1)
@@ -170,6 +193,23 @@ def parse_claims(bearer_token: str) -> UserClaims:
     REQUIREMENTS.md Section 6.2. Raises jwt.PyJWTError on an invalid/expired token.
     """
     payload = decode_verified_token(bearer_token)
+
+    rag_roles = payload.get("rag_roles", [])
+    clearances = {
+        role[len(RAG_CLEARANCE_PREFIX) :]
+        for role in rag_roles
+        if role.startswith(RAG_CLEARANCE_PREFIX)
+    }
+    if len(clearances) > 1:
+        # Issue #280: fail loud at the verification boundary instead of
+        # letting UserClaims.clearance pick a level by token order. Naming
+        # the conflicting values is safe -- this surfaces to the Keycloak
+        # admin fixing the assignment, and the roles are the caller's own.
+        raise ConflictingClearanceError(
+            "token carries conflicting rag-clearance roles "
+            f"({', '.join(sorted(clearances))}); exactly one clearance level "
+            "is allowed per identity -- fix the Keycloak role assignment"
+        )
 
     return UserClaims(
         sub=payload["sub"],

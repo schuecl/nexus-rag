@@ -1,0 +1,30 @@
+# Additions to infra/librechat/librechat.yaml for the Grafana Assistant agent.
+# Merge these into the existing keys -- this file is not loadable on its own.
+
+mcpSettings:
+  allowedDomains:
+    # Same lesson as issue #75/#99: LibreChat's default-deny SSRF protection
+    # rejects private Docker-network hostnames unless explicitly allowlisted.
+    - "http://grafana-mcp:8000"
+    - "http://typst-mcp:8001"
+
+mcpServers:
+  # Key stays short on purpose: LibreChat namespaces every tool as
+  # "{tool}_mcp_{key}" (issue #99 follow-up: long composite names hurt small
+  # local models' tool-call reliability). "grafana" =>
+  # "query_prometheus_mcp_grafana" etc. -- must match the tool allowlist in
+  # grafana-assistant.json.
+  grafana:
+    type: streamable-http
+    url: "http://grafana-mcp:8000/mcp"
+    # NOTE: unlike the "rag" server (per-user OAuth, claims-scoped), this
+    # server authenticates to Grafana as ONE shared read-only service
+    # account. Every guardrail that matters is on the Grafana/mcp-grafana
+    # side (see README.md's layer table); nothing here carries user identity.
+
+  # Typst authoring/preview for the grafana-reports skill. Data-blind by
+  # construction: this server holds no credentials and only ever sees the
+  # Typst source the agent sends it. Tool names become *_mcp_typst.
+  typst:
+    type: streamable-http
+    url: "http://typst-mcp:8001/mcp"

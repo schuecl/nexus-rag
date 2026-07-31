@@ -1,0 +1,17 @@
+# Direct runtime dependencies of reranker-service (see pyproject.toml).
+# torch is deliberately NOT listed here: the Dockerfile installs it
+# separately from a configurable index (TORCH_INDEX_URL, CPU vs CUDA
+# wheel) so the same lockfile serves both build variants; hash-pinning it
+# here would fix it to one index/variant, defeating that toggle. This is a
+# known, documented exception to issue #230's hash-pinning -- torch's own
+# supply-chain risk is separately mitigated by pinning TORCH_INDEX_URL to a
+# specific, air-gap-mirrorable index rather than a hash list.
+# Compiled to requirements.txt with `pip-compile --generate-hashes`.
+opentelemetry-api>=1.30
+opentelemetry-sdk>=1.30
+opentelemetry-exporter-otlp-proto-http>=1.30
+opentelemetry-instrumentation-fastapi>=0.51b0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+prometheus-client>=0.20
+sentence-transformers>=3.0

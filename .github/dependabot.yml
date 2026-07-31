@@ -9,6 +9,17 @@ version: 2
 # - Each ecosystem groups its minor+patch updates into a single PR to cut the
 #   weekly volume. Major bumps are deliberately left ungrouped so each lands as
 #   its own PR and gets reviewed on its own.
+# - Issue #230: services/common and every services/*/ pip directory below also
+#   carries a hash-pinned requirements.txt, compiled from requirements.in with
+#   `pip-compile --generate-hashes` (reranker-service's excludes torch --
+#   installed separately from a configurable index, see its requirements.in).
+#   Dependabot's pip ecosystem detects the pip-compile header comment in a
+#   requirements.txt and updates it (version *and* hashes) by re-running
+#   pip-compile against its requirements.in, alongside the pyproject.toml
+#   floor bumps already configured per directory below -- no separate
+#   ecosystem entry is needed for the lockfiles themselves. Not yet observed
+#   against a live Dependabot run in this repo; flag if a lockfile update PR
+#   doesn't regenerate hashes as expected.
 
 updates:
   - package-ecosystem: github-actions

@@ -10,11 +10,19 @@ RUN apt-get update \
 WORKDIR /srv
 
 COPY services/common /srv/common-pkg
-RUN pip install --no-cache-dir /srv/common-pkg
+
+# Issue #230: third-party deps installed from a hash-pinned lockfile
+# (includes services/common's own deps, since it's installed --no-deps
+# below) so a compromised/typosquatted PyPI package can't slip in even if
+# it satisfies the floor ranges in pyproject.toml. Regenerate with
+# `pip-compile --generate-hashes` from requirements.in after editing either
+# pyproject.toml.
+COPY services/ingestion-worker/requirements.txt /srv/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /srv/requirements.txt
 
 COPY services/ingestion-worker/pyproject.toml /srv/pyproject.toml
 COPY services/ingestion-worker/app /srv/app
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps /srv/common-pkg .
 
 # Caches the BM25 sparse model (common.sparse_embedding); mount a volume here
 # (see docker-compose.yml) so it isn't re-downloaded on every restart.

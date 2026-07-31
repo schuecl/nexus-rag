@@ -105,7 +105,12 @@ class TestAuthenticatedVisitorSeesRealPage:
         app/deps.py), so the tab itself should not be offered."""
         resp = main.upload_page(_request(), session=db, current_user=user)
 
-        assert b"Curation queue" not in resp.body
+        # Issue #266: nav label covers both /curate (queue) and /curate/list
+        # (master list) now, hence "Curation" rather than "Curation queue" --
+        # checked via the nav link's href rather than the bare word, since
+        # upload.html's sidebar also has an unrelated "Curation workflow"
+        # heading that would otherwise false-positive this assertion.
+        assert b'href="/curate"' not in resp.body
 
     def test_nav_shows_curate_tab_for_a_user_with_a_curate_role(self, db):
         curator = UserClaims(
@@ -115,7 +120,7 @@ class TestAuthenticatedVisitorSeesRealPage:
         )
         resp = main.upload_page(_request(), session=db, current_user=curator)
 
-        assert b"Curation queue" in resp.body
+        assert b'href="/curate"' in resp.body
 
     def test_nav_shows_notifications_tab_regardless_of_role(self, db, user):
         """Issue #249 gates the curate tab on role; notifications stays

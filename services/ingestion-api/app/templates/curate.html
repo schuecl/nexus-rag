@@ -1,23 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Curation Queue — {{ app_name }}{% endblock %}
 {% block content %}
-<h1>Curation queue</h1>
+<h1>Curation</h1>
+<nav class="subnav" aria-label="Curation views">
+  <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">Queue</a>
+  <a class="{% if request.url.path == '/curate/list' %}active{% endif %}" href="/curate/list">List</a>
+</nav>
 <p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover (FR-12).
 Correct Classification/Releasability/Access scope below before approving if the uploader's
 tags need fixing (FR-13) -- corrections are re-checked against your own curator authority
 (FR-14) the same as the original tags.</p>
 <button onclick="loadQueue()">Refresh</button>
 <div id="queue"></div>
-<div id="result" class="msg"></div>
+<div id="result" class="msg" hidden></div>
 
-<style>
-  /* Issue #138: the advisory marking-mismatch warning. Deliberately loud --
-     it exists to stop an inattentive approve on a document whose own markings
-     disagree with its tags -- but visually distinct from .msg.err, which
-     reports the *outcome* of an action rather than advising before one. */
-  .advisory { background: #fff3cd; border: 1px solid #d4a017; padding: 0.5rem; margin-top: 0.5rem; }
-</style>
-
+<script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
 <script>
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
 const RELEASABILITY = {{ releasability | tojson }};
@@ -26,57 +23,6 @@ const RELEASABILITY = {{ releasability | tojson }};
 // /documents/{id} is scoped to the uploader (app/routes/upload.py) and
 // 404s for a curator looking up someone else's submission.
 let queuedDocs = {};
-
-// Issue #207: every value rendered below reaches the page as JSON from
-// fetch(), so Jinja's autoescaping never sees it. This page previously built
-// rows with innerHTML and a template literal, which made an uploader-chosen
-// filename executable script in a *curator's* session -- and since the CSRF
-// cookie is deliberately readable by this page's own JS (auth.py), that
-// script could approve documents with the curator's authority.
-//
-// The fix is structural rather than "escape the fields we know about": these
-// helpers build DOM nodes and assign text through textContent, so a value can
-// never be parsed as markup no matter which field it arrives in. Adding a new
-// field here is safe by default; interpolating one into innerHTML is what was
-// unsafe by default.
-function el(tag, opts = {}) {
-  const node = document.createElement(tag);
-  if (opts.text !== undefined) node.textContent = opts.text;
-  if (opts.className) node.className = opts.className;
-  if (opts.id) node.id = opts.id;
-  for (const [k, v] of Object.entries(opts.attrs || {})) node.setAttribute(k, v);
-  for (const child of opts.children || []) node.append(child);
-  return node;
-}
-
-function optionNodes(values, selected) {
-  // Guard against a document tagged with a value that's since been retired
-  // from the admin-configurable list (C9) -- without this, the <select>
-  // would silently default to its first option instead of the document's
-  // actual value, and an inattentive "Approve" click would then silently
-  // *change* the document's classification/releasability, not leave it as
-  // submitted.
-  const all = values.includes(selected) ? values : [selected, ...values];
-  return all.map(v => {
-    const opt = el('option', { text: v });
-    opt.value = v;
-    opt.selected = v === selected;
-    return opt;
-  });
-}
-
-function multiOptionNodes(values, selectedValues) {
-  // Same retired-value guard as optionNodes() above, but for a <select
-  // multiple> whose current value is a list (Releasability, FR-20/Section
-  // 6.3) rather than a single string.
-  const missing = selectedValues.filter(v => !values.includes(v));
-  return [...values, ...missing].map(v => {
-    const opt = el('option', { text: v });
-    opt.value = v;
-    opt.selected = selectedValues.includes(v);
-    return opt;
-  });
-}
 
 function advisoryNode(doc) {
   // Issue #138 (PR #2 review): surface the worker-computed marking-mismatch
@@ -209,17 +155,23 @@ function readCorrections(id, doc) {
 }
 
 async function approve(id) {
-  const corrections = readCorrections(id, queuedDocs[id]);
+  const doc = queuedDocs[id];
+  const corrections = readCorrections(id, doc);
   const res = await fetch(`/curate/${id}/approve`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: corrections ? JSON.stringify(corrections) : undefined,
   });
-  report(res, await res.json());
+  // Issue #266: human-readable outcome instead of a raw JSON dump -- the
+  // filename is text content here (reportResult uses textContent), never
+  // markup, same as everywhere else on this page.
+  await reportResult(document.getElementById('result'), res,
+    () => 'Approved “' + doc.filename + '”.' + (corrections ? ' Tags were corrected before approval.' : ''));
   loadQueue();
 }
 
 async function reject(id) {
+  const doc = queuedDocs[id];
   const reason = prompt('Rejection reason (required):');
   if (!reason) return;
   const res = await fetch(`/curate/${id}/reject`, {
@@ -227,14 +179,9 @@ async function reject(id) {
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ reason }),
   });
-  report(res, await res.json());
+  await reportResult(document.getElementById('result'), res,
+    () => 'Rejected “' + doc.filename + '”: ' + reason);
   loadQueue();
-}
-
-function report(res, body) {
-  const el = document.getElementById('result');
-  el.className = 'msg ' + (res.ok ? 'ok' : 'err');
-  el.textContent = JSON.stringify(body, null, 2);
 }
 
 loadQueue();

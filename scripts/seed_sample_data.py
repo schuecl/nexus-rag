@@ -190,7 +190,14 @@ def main() -> None:
         releasability=["NATO", "FVEY"],  # demonstrates a multi-value Releasability
         access_scope=["Signal-Corps"],
     )
-    approve(carol, d["id"])
+    # Issue #277 (gap G1): access_scope is now a hard requirement to approve a
+    # pending document, same as clearance/releasability -- carol-curator has
+    # no Signal-Corps group membership, so she can no longer approve this one
+    # (previously this was the gap: any USAREUR-AF curator could approve any
+    # USAREUR-AF-owned document regardless of its access_scope). dave-admin is
+    # provisioned with the Signal-Corps group and rag-curate:Signal-Corps
+    # specifically so this sample document has an eligible approver.
+    approve(dave, d["id"])
     seeded.append(("incident-response-plan.md", "approved", "SECRET / NATO+FVEY / Signal-Corps"))
 
     d_v1 = submit(
