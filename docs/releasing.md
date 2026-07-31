@@ -9,10 +9,10 @@ Confidence label, per this repo's convention: **validated live** as of v0.1.0
 [30626111804](https://github.com/schuecl/nexus-rag/actions/runs/30626111804),
 8m42s, green) — tag push through image/chart publish through GitHub Release
 creation ran end to end exactly as documented below. The air-gapped export
-(`scripts/export_release_bundle.sh`) is still *implemented* only: it needs
-docker and helm on a connected host, neither available in the environment
-that cut v0.1.0, so it hasn't run yet. Anything that turns out to differ in
-practice gets corrected here in the same PR that fixes it.
+(`scripts/export_release_bundle.sh`) has since been confirmed working too,
+pulling and bundling the published v0.1.0 images and chart. Anything that
+turns out to differ in practice gets corrected here in the same PR that
+fixes it.
 
 ## Versioning scheme
 
