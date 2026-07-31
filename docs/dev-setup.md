@@ -181,11 +181,27 @@ configured list but only to *guess* doc_type/program_community in its own words.
 Adding real controlled lists for those two fields is a natural follow-up, not part of
 this phase.
 
-Status: **tested against mocks only** (`services/ingestion-worker/tests/
+Status: unit-level behavior is tested against mocks (`services/ingestion-worker/tests/
 test_classification_suggestion.py`, respx-mocked Ollama; `test_llm_suggestion_advisory.py`,
 worker glue against an in-memory SQLite session; `services/ingestion-api/tests/
-test_tagging_advisory_linkage.py`, curator-decision audit linkage) -- not yet exercised
-against a live Ollama, Postgres, or a browser.
+test_tagging_advisory_linkage.py`, curator-decision audit linkage). **Validated against a
+live environment**: real `docker compose up` (`CLASSIFICATION_MODEL=qwen2.5:3b-instruct`,
+the model already pulled for `GENERATION_MODEL`), a document worded to read as sensitive
+content without any literal CAPCO/DoD banner string (so Phase 1's marking-mismatch
+detector stays clean) uploaded through the real `POST /documents` API tagged
+`CUI`/`report`, confirmed end to end: the worker's real Ollama call returned
+`classification=SECRET, doc_type="briefing slide", confidence=0.95` with a substantive
+rationale, `GET /curate/queue` surfaced it alongside Phase 1 (clean) and Phase 2
+(agreeing) in the same advisory object, approving it recorded
+`llm_suggested_classification`/`llm_suggested_doc_type`/`llm_confidence` in the
+`document.approve` audit entry (confirmed via direct DB read for diagnostic purposes --
+ingestion-api's own audit_log grant is INSERT-only, `docs/roles-and-permissions.md`), and
+`nexus_rag_ingestion_worker_llm_suggestions_total{outcome="disagrees"}` incremented on
+`/metrics`. A worker crash-loop from a stale `postgres-data` volume's per-service role
+grants predating this run was hit and resolved by re-running the existing
+`ensure-db-roles`/`lock-down-db-grants` one-shot jobs (both already designed to be
+idempotent and safe to re-run on any `up`, per their own comments in
+`docker-compose.yml`) -- unrelated to this feature, not a new gap it introduced.
 ## OCR for scanned and image content (#241)
 
 Always on -- OCR is parsing, not an optional enrichment, and it involves no
@@ -730,9 +746,11 @@ the docs, not a silent "it works" — flag it if you find one.
   fail-safe (any error, including an unreachable/misconfigured model, is swallowed and
   logged), and a suggested Classification value outside the configured list is dropped
   rather than invented. See "LLM classification suggestion (optional, #308)" above for
-  the full write-up. **Tested against mocks only** (respx-mocked Ollama client tests,
-  worker-glue tests against an in-memory SQLite session, curator-decision audit-linkage
-  tests) — not yet exercised against a live Ollama, Postgres, or a browser.
+  the full write-up, including the live-validation run (real Ollama call, real
+  `/curate/queue` and audit-entry confirmation) -- unit-level behavior is tested against
+  mocks (respx-mocked Ollama client tests, worker-glue tests against an in-memory SQLite
+  session, curator-decision audit-linkage tests); the enabled path is **validated
+  against a live environment**.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
