@@ -35,18 +35,28 @@ document. NFR-2 makes audit_log append-only on purpose and the application role
 holds only SELECT/INSERT, so it *cannot* delete them by construction. That
 tension is real and is called out in #123 -- resolving it needs a policy
 decision and an out-of-band administrative path, not an application function.
+
+Issue #279 (gap G3): `purge_document` above is a complete, irreversible
+destruction in one call -- fine as a primitive, but it means a single
+`rag-purge` holder can act alone. `request_purge`/`confirm_purge` below add a
+two-person gate in front of it: a request records intent and destroys
+nothing, and a *different* `rag-purge` holder must confirm before
+`purge_document` ever runs (`purge_confirmation_authorized` is the actual
+invariant -- confirming_sub != requested_by_sub). Whether this gate is
+mandatory is a deployment decision, not this module's: see
+`PURGE_TWO_PERSON_REQUIRED` in `services/ingestion-api/app/routes/upload.py`.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from .log_safety import log_safe
-from .models import AuditLogEntry, Document
+from .models import AuditLogEntry, Document, PurgeRequest
 from .object_store import get_object_store
 from .vector_store import get_store
 
@@ -54,6 +64,9 @@ logger = logging.getLogger("purge")
 
 PURGED_STATUS = "purged"
 PURGING_STATUS = "purging"
+
+PENDING_STATUS = "pending"
+CONFIRMED_STATUS = "confirmed"
 
 # What a tombstone keeps: id, status, timestamps, and the purge record. Every
 # other field is scrubbed to this marker so nothing about the destroyed
@@ -65,8 +78,23 @@ class PurgeError(Exception):
     pass
 
 
+class PurgeRequestError(Exception):
+    pass
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _as_aware_utc(dt: datetime) -> datetime:
+    """Some drivers/dialects round-trip a tz-aware datetime as naive (sqlite
+    always does; a plain, non-timezone(True) column can too) -- treat a naive
+    value read back from the DB as UTC rather than letting `expires_at <=
+    _utcnow()` raise on offset-naive vs. offset-aware. Same helper as
+    ingestion-api/app/deps.py's `_as_aware_utc` for `UserSession.expires_at`;
+    duplicated rather than imported since `common` must not depend on an
+    app-layer package."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def purge_document(
@@ -76,12 +104,20 @@ def purge_document(
     actor_sub: str,
     actor_username: str,
     reason: str,
+    requested_by_sub: str | None = None,
+    requested_by_username: str | None = None,
 ) -> Document:
     """Destroy a document's content everywhere and tombstone its row.
 
     `reason` is required rather than optional: a purge is an irreversible
     administrative action, and "why" is the first thing an accreditation review
     asks. It is recorded in the audit entry.
+
+    `requested_by_sub`/`requested_by_username` are set only when this call is
+    the confirmation half of the #279 two-person flow below -- `actor_sub` is
+    already the *confirming* identity (the one whose authority actually runs
+    this function), so the requester's identity would otherwise be lost from
+    the audit trail entirely.
     """
     doc = session.get(Document, document_id)
     if doc is None:
@@ -159,6 +195,17 @@ def purge_document(
                 "status_before_purge": original_status,
                 "chunks_destroyed": chunk_count,
                 "original_destroyed": object_key is not None,
+                # #279: both identities land in this one row when a
+                # two-person request/confirm preceded this call -- actor_sub
+                # above is already the confirmer.
+                **(
+                    {
+                        "requested_by_sub": requested_by_sub,
+                        "requested_by_username": requested_by_username,
+                    }
+                    if requested_by_sub is not None
+                    else {}
+                ),
             },
         )
     )
@@ -176,4 +223,117 @@ def purge_document(
         log_safe(original_status),
         chunk_count,
     )
+    return doc
+
+
+def purge_confirmation_authorized(*, requested_by_sub: str, confirming_sub: str) -> bool:
+    """Issue #279 (gap G3): the two-person invariant itself, pulled out as its
+    own predicate -- mirroring `common.metadata.access_scope_authorized` --
+    so it is a security invariant a BDD scenario can pin directly rather than
+    an inline comparison buried inside `confirm_purge`."""
+    return confirming_sub != requested_by_sub
+
+
+def request_purge(
+    session: Session,
+    document_id: uuid.UUID,
+    *,
+    actor_sub: str,
+    actor_username: str,
+    reason: str,
+    expiry_hours: float,
+) -> PurgeRequest:
+    """First half of the two-person flow: records intent, destroys nothing.
+    A second, different `rag-purge` holder must call `confirm_purge` with the
+    returned request's id before anything actually happens.
+    """
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise PurgeRequestError(f"document {document_id} not found")
+    if doc.status == PURGED_STATUS:
+        raise PurgeRequestError(f"document {document_id} is already purged")
+
+    now = _utcnow()
+    existing = session.exec(
+        select(PurgeRequest).where(
+            PurgeRequest.document_id == document_id,
+            PurgeRequest.status == PENDING_STATUS,
+        )
+    ).all()
+    if any(_as_aware_utc(r.expires_at) > now for r in existing):
+        raise PurgeRequestError(
+            f"document {document_id} already has an unexpired pending purge request"
+        )
+
+    req = PurgeRequest(
+        document_id=document_id,
+        reason=reason,
+        requested_by_sub=actor_sub,
+        requested_by_username=actor_username,
+        expires_at=now + timedelta(hours=expiry_hours),
+    )
+    session.add(req)
+    session.add(
+        AuditLogEntry(
+            actor_sub=actor_sub,
+            actor_username=actor_username,
+            action="document.purge_requested",
+            target_id=str(document_id),
+            detail={"reason": reason, "purge_request_id": str(req.id)},
+        )
+    )
+    session.commit()
+    session.refresh(req)
+    return req
+
+
+def confirm_purge(
+    session: Session,
+    request_id: uuid.UUID,
+    *,
+    actor_sub: str,
+    actor_username: str,
+) -> Document:
+    """Second half: a different `rag-purge` holder confirms, which is what
+    actually runs `purge_document`. Refuses a same-actor confirmation and an
+    expired request; anything else (a store failure mid-`purge_document`) is
+    safely retryable by confirming again, exactly like `purge_document`
+    itself -- this only flips the request to `confirmed` once that call has
+    actually succeeded, so a partial failure leaves it `pending` and
+    re-confirmable rather than stuck.
+    """
+    req = session.get(PurgeRequest, request_id)
+    if req is None:
+        raise PurgeRequestError(f"purge request {request_id} not found")
+    if req.status == CONFIRMED_STATUS:
+        doc = session.get(Document, req.document_id)
+        if doc is None:
+            raise PurgeRequestError(f"document {req.document_id} not found")
+        return doc
+    if _as_aware_utc(req.expires_at) <= _utcnow():
+        raise PurgeRequestError(f"purge request {request_id} has expired; submit a new request")
+    if not purge_confirmation_authorized(
+        requested_by_sub=req.requested_by_sub, confirming_sub=actor_sub
+    ):
+        raise PurgeRequestError(
+            "a purge request must be confirmed by a different rag-purge holder "
+            "than the one who filed it"
+        )
+
+    doc = purge_document(
+        session,
+        req.document_id,
+        actor_sub=actor_sub,
+        actor_username=actor_username,
+        reason=req.reason,
+        requested_by_sub=req.requested_by_sub,
+        requested_by_username=req.requested_by_username,
+    )
+
+    req.status = CONFIRMED_STATUS
+    req.confirmed_by_sub = actor_sub
+    req.confirmed_by_username = actor_username
+    req.confirmed_at = _utcnow()
+    session.add(req)
+    session.commit()
     return doc

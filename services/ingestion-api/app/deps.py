@@ -247,6 +247,25 @@ def require_purge(user: UserClaims = Depends(get_current_user)) -> UserClaims:
     return user
 
 
+def require_curator_or_purge(user: UserClaims = Depends(get_current_user)) -> UserClaims:
+    """Issue #279 (gap G3): the curation "List" dashboard (GET
+    /curate/documents, app/routes/curate.py:list_documents) is also how a
+    purge-only holder finds the document they mean to delete -- unlike the
+    Queue (list_queue, still require_curator only, since that's a curation
+    workflow), the List is read-only browsing and Delete is the one action a
+    rag-purge holder needs from it. list_documents branches its own scoping
+    on which authority actually got the caller past this gate: curator-scoped
+    (org/clearance/releasability/access_scope, unchanged) if they hold any
+    rag-curate:<org> role, else unscoped -- matching require_purge's own
+    unscoped authority -- if they only hold rag-purge.
+    """
+    if not user.curatable_orgs and not user.can_purge:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "missing any rag-curate:<org> or rag-purge role"
+        )
+    return user
+
+
 def allowed_classifications(session: Session, clearance: str) -> list[str]:
     """Every Classification value at or below the user's clearance rank (FR-18)."""
     return _allowed_classifications(session, clearance)

@@ -10,6 +10,7 @@ test_embedding_provenance.py already uses for collection_embedding_model.
 
 from __future__ import annotations
 
+import pytest
 from qdrant_client.models import PointStruct, SparseVector
 
 from common import qdrant_store
@@ -172,6 +173,45 @@ class TestUpsertRoutesByClassification:
         secret = client.collections[classification_collection_name("SECRET")]
         assert set(cui) == {"p1", "p2"}
         assert set(secret) == {"p3"}
+
+
+class TestUpsertRejectsMissingClassification:
+    """Issue #271: a point without a non-empty `classification` payload used
+    to default to `""`, silently routing to the `__unspecified` collection --
+    one no retrieval path ever queries -- instead of failing loudly."""
+
+    def test_missing_classification_key_raises(self):
+        client = FakeQdrantClient()
+        point = PointStruct(
+            id="p1",
+            vector={DENSE_VECTOR: [0.1, 0.2], "bm25": SparseVector(indices=[1], values=[0.5])},
+            payload={"document_id": "doc-1"},
+        )
+
+        with pytest.raises(ValueError, match="classification"):
+            upsert_chunks(client, [point])
+
+        assert client.collections == {}
+
+    def test_empty_string_classification_raises(self):
+        client = FakeQdrantClient()
+
+        with pytest.raises(ValueError, match="classification"):
+            upsert_chunks(client, [_point("p1", "doc-1", "")])
+
+        assert classification_collection_name("") not in client.collections
+
+    def test_a_valid_point_earlier_in_the_batch_is_not_left_partially_written(self):
+        """Grouping happens before any client.upsert call, so a bad point
+        anywhere in the batch must not leave a good point from the same call
+        already written to Qdrant."""
+        client = FakeQdrantClient()
+        points = [_point("p1", "doc-1", "CUI"), _point("p2", "doc-2", "")]
+
+        with pytest.raises(ValueError, match="classification"):
+            upsert_chunks(client, points)
+
+        assert client.collections == {}
 
 
 class TestDeleteDocumentChunks:

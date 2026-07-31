@@ -13,7 +13,7 @@ golden-query harness the e2e workflow reuses.
 | Unit | `tests/unit/common/` | `ci.yml` (every PR, py 3.11 + 3.12) | Claims parsing & signature verification, the FR-26 access filter, FR-18 metadata enforcement, classification ranking, FR-7 supersede guards, object store (incl. path-traversal), job-queue publishing |
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
-| Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly + PRs touching the stack) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
+| Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **advisory**) | Test-suite strength on claims/access-filter/metadata/versioning |
 
 Design notes:
@@ -82,10 +82,10 @@ docker compose --profile eval run --rm eval-retrieval
   below), `ruff check`, `mypy` (enforced across `services/common` and all
   four app services as of issue #79), the NFR-16 image-pin check, and a full
   `docker compose build` of all custom images.
-- **`.github/workflows/e2e.yml`** (nightly, manual, and PRs touching
-  `services/`, `scripts/`, `infra/`, `docker-compose.yml`): full-stack
-  golden-query e2e; mutation testing (advisory, see below). Reports uploaded
-  as artifacts.
+- **`.github/workflows/e2e.yml`** (nightly, manual, and a PR labeled
+  `needs-e2e`): full-stack golden-query e2e; mutation testing (advisory,
+  nightly/manual only regardless of label, see below). Reports uploaded as
+  artifacts.
 - **`.github/workflows/security.yml`** (PR + weekly): `bandit`,
   `pip-audit` against the shipped dependency tree (the test toolchain is
   dev-only and excluded), `helm lint` + `helm template`, Trivy filesystem
@@ -101,7 +101,25 @@ docker compose --profile eval run --rm eval-retrieval
   scoped, read-only-plus-`security-events:write` token GitHub grants for this
   case, without widening what fork-authored code can otherwise touch.
 - **`.github/dependabot.yml`**: weekly pip (per service + test toolchain),
-  GitHub Actions, and Docker base-image updates.
+  GitHub Actions, and Docker base-image updates. Issue #230: each service's
+  pip directory also carries a hash-pinned `requirements.txt` (compiled
+  from `requirements.in` via `pip-compile --generate-hashes`), installed
+  with `pip install --require-hashes` in that service's Dockerfile instead
+  of the floor ranges in `pyproject.toml` directly — Dependabot updates
+  both the floors and the lockfile hashes from the same directory entry.
+  reranker-service's lockfile excludes `torch` (installed separately from
+  a configurable CPU/CUDA index; see that service's `requirements.in` and
+  Dockerfile for why hash-pinning it would defeat that toggle) — it was
+  compiled with a local stub `torch` package (version `999.0.0`, no
+  dependencies) supplied via `--find-links` so the resolver picks it over
+  the real package without needing torch's own transitive deps, then that
+  stub's own entry was deleted from the resulting `requirements.txt` by
+  hand; regenerating that one lockfile needs the same trick, not a plain
+  `pip-compile` run. Every other lockfile regenerates after a
+  `pyproject.toml` floor edit with
+  `pip-compile --generate-hashes --output-file=requirements.txt requirements.in`
+  run inside a `python:3.11-slim` container (matching the Dockerfile's base
+  image) from that service's directory.
 
 ## Branch protection (merge gates)
 
@@ -128,9 +146,13 @@ filter, so a required check can never be left permanently "waiting"):
 - `CodeQL` (GitHub code-scanning integration check, distinct from the
   `Analyze (python)` workflow job it's derived from)
 - `unit (3.11)`, `unit (3.12)`
-- `service-tests (ingestion-api)`,
-  `service-tests (ingestion-worker, --cov=app.chunking --cov=app.parsing)`,
-  `service-tests (orchestration-mcp, --cov=app.reranking)`
+- `service-tests (ingestion-api)`, `service-tests (ingestion-worker)`,
+  `service-tests (orchestration-mcp)`, `service-tests (reranker-service)`
+  (issue #256: the job now carries an explicit `name: service-tests
+  (${{ matrix.service }})`, so these four context strings are stable —
+  editing the per-service `cov` flags in `ci.yml`'s matrix no longer renames
+  the check. `reranker-service` joins the required list here for the first
+  time; it already ran unconditionally with real tests, just wasn't pinned.)
 - `lint`, `types`, `pin-check`, `build` (all `ci.yml`)
 - `bandit`, `pip-audit`, `helm`, `trivy-fs`, `secret-scan` (all `security.yml`)
 
@@ -142,18 +164,25 @@ value in practice, disable it there rather than reintroducing a second
 source of truth for the checks list.
 
 **Deliberately not required: `golden-query` and `mutation`.** Both live in
-`e2e.yml`, which is path-filtered (`services/**`, `scripts/**`, `infra/**`,
-`docker-compose.yml`, the workflow file itself) and also runs on a nightly
-schedule. A required status check that never fires for a given PR (e.g. a
-docs-only or workflow-only change that doesn't touch those paths) leaves
+`e2e.yml`. `golden-query` used to be path-filtered (`services/**`,
+`scripts/**`, `infra/**`, `docker-compose.yml`, the workflow file itself),
+triggering on nearly every real PR; issue #301 replaced that with a
+job-level `if` gated on the PR carrying a `needs-e2e` label (or the nightly/
+manual triggers, which always run it) — the full compose boot plus the
+`ollama-model-init` pull was too slow to pay by default on PRs that mostly
+can't regress retrieval. A required status check that never fires for a
+given PR (e.g. a docs-only change, or a code PR nobody labeled) would leave
 GitHub's merge button permanently stuck on "Expected — waiting for status to
 be reported" — the same class of bug the fork-PR CodeQL fix above addresses,
-just triggered by a path filter instead of a fork-token limitation. `mutation`
-is additionally still advisory pending a baseline (see below). Making
-`golden-query` a merge gate would mean either dropping its path filter (paying
-its ~5-6 minute full-stack-compose cost on every PR, including doc-only ones)
-or accepting that gap — worth revisiting once there's an owner for that
-tradeoff, but out of scope here.
+just triggered by a conditional trigger instead of a fork-token limitation.
+A *skipped* job (the `if` false case) does report a status, so this
+specific mechanism wouldn't reproduce that bug on its own — but making
+`golden-query` required would still mean either labeling every single PR
+`needs-e2e` (defeating the point of the opt-in) or accepting that most PRs
+merge without this coverage, which is exactly today's tradeoff stated
+plainly rather than made required and then quietly never enforced.
+`mutation` is additionally still advisory pending a baseline (see below) and
+stays nightly/manual-only regardless of the label.
 
 **Fork-PR CodeQL reporting, confirmed working.** Issue #81's comment flagged
 an open question: does the default CodeQL setup produce a check run on
@@ -162,6 +191,24 @@ The checked-in `codeql.yml` above already fixes it: five current
 fork-authored PRs (#161, #167, #168, #169, #170) all show both `CodeQL` and
 `Analyze (python)` passing, so no further action was needed on that half of
 the issue.
+
+**Issue #256 (check names decoupled from coverage flags).** The
+`service-tests` job previously had no explicit `name:`, so GitHub derived the
+check name from the matrix values, embedding the `cov` flags in the pinned
+context string (e.g. `service-tests (ingestion-worker, --cov=app.chunking
+--cov=app.parsing)`). Editing those flags renamed the check out from under
+the rulesets, and the pinned context then never reported — every PR stuck on
+"Expected — waiting for status to be reported" with nothing red to fix. Fixed
+by pinning `name: service-tests (${{ matrix.service }})` on the job, so the
+four stable names above can be pinned once and the `cov` matrix can change
+freely going forward. `app.ocr`, previously routed around this trap via
+ingestion-worker's own `addopts` (#241), moved back into `ci.yml`'s matrix now
+that doing so is safe, so the gated-module list lives in one place again.
+Landing this needed a deliberate merge-blocking window, since the PR making
+the change can't satisfy the required-check names it's renaming: an admin
+removed the old `service-tests (…)` contexts from both rulesets, the workflow
+PR merged, then the admin re-pinned the four stable names above (adding
+`reranker-service` to the required list for the first time in the process).
 
 **Applying ruleset changes.** The ruleset REST API's `PATCH` endpoint 404s
 for at least one token type (an OAuth-app token with `repo` scope) even with
@@ -188,14 +235,13 @@ The enforced `--cov-fail-under=85` applies to:
   ~99% today.
 - `app.chunking` + `app.parsing` + `app.ocr` (ingestion-worker) — the pure
   FR-3/FR-4 logic. `app.processing`/`app.embedding` are pipeline glue
-  exercised by the e2e job. `app.ocr` (#241) is added by the service's own
-  `[tool.pytest.ini_options] addopts` rather than by ci.yml's matrix, because
-  that matrix string *is* part of the required check's name (see the
-  required-checks list above): editing it renames the check, the context both
-  `Protect-Main*` rulesets pin then never reports, and every open PR blocks on
-  "Expected — waiting for status to be reported" until an admin re-pins it.
-  Making the names independent of the flags needs that same coordinated
-  ruleset edit, so it is tracked as #256 rather than done here.
+  exercised by the e2e job. `app.ocr` (#241) lives in ci.yml's matrix `cov`
+  string alongside `app.chunking`/`app.parsing`; `app.captioning` (#92) stays
+  in the service's own `[tool.pytest.ini_options] addopts` since it's outside
+  this coverage floor. Both used to route around the matrix string entirely,
+  since it doubled as the required check's name and editing it renamed the
+  check out from under the rulesets — fixed by #256, which pins an explicit
+  job `name:` instead (see "Branch protection" above).
 - `app.reranking` (orchestration-mcp) — 100% today.
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured
@@ -352,3 +398,11 @@ baseline capture, not a regression fix.
   just this integration layer.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
+- Issue #230's hash-pinned lockfiles cover the four services' and scripts'
+  *Dockerfiles* only. `ci.yml`'s own `pip install "pkg>=x"` lines (unit,
+  service-tests, types jobs) and `security.yml`'s `pip-audit` job install
+  the same floor ranges independently and unpinned by hash — deliberately
+  out of scope here (those jobs need the latest compatible version to
+  catch a regression/CVE early, which a hash-pinned lockfile would work
+  against), but worth knowing the lockfiles aren't a single source of
+  truth for every dependency install path in this repo.

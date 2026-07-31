@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from common.metadata import (
     DocumentMetadataIn,
     MetadataValidationError,
+    access_scope_authorized,
     validate_against_claims,
 )
 
@@ -86,3 +87,30 @@ class TestValidateAgainstClaims:
                 user_releasability=["FVEY"],
             )
         assert len(excinfo.value.errors) == 2
+
+
+class TestAccessScopeAuthorized:
+    """Issue #277: the same "any element in common" scope-matching used by
+    the retrieval filter (qdrant_filters.build_access_filter), reused by the
+    curation queue's scope-preference check."""
+
+    def test_matches_on_org(self):
+        assert access_scope_authorized(["USAREUR-AF"], sub="carol-sub", groups=[], org="USAREUR-AF")
+
+    def test_matches_on_group(self):
+        assert access_scope_authorized(
+            ["Signal-Corps"], sub="carol-sub", groups=["Signal-Corps"], org="USAREUR-AF"
+        )
+
+    def test_matches_on_sub(self):
+        assert access_scope_authorized(["carol-sub"], sub="carol-sub", groups=[], org="USAREUR-AF")
+
+    def test_matches_on_all_authenticated(self):
+        assert access_scope_authorized(
+            ["ALL_AUTHENTICATED"], sub="carol-sub", groups=[], org="USAREUR-AF"
+        )
+
+    def test_no_overlap_is_not_authorized(self):
+        assert not access_scope_authorized(
+            ["Signal-Corps"], sub="carol-sub", groups=["Other-Unit"], org="USAREUR-AF"
+        )

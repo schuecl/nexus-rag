@@ -111,9 +111,17 @@
         </a>
         {# Issue #249: mirrors the /curate/queue API's own require_curator
            check (app/deps.py) -- a user with no rag-curate:<org> role would
-           just get a 403 from every action this tab leads to. #}
-        {% if current_user and current_user.curatable_orgs %}
-        <a class="{% if request.url.path.startswith('/curate') %}active{% endif %}" href="/curate">
+           just get a 403 from every action this tab leads to. Issue #279
+           (gap G3): a purge-only holder (no rag-curate:<org>, but
+           rag-purge) also gets this tab -- straight to the List, since the
+           Queue is curation workflow they have no authority over (still
+           require_curator only) and List is the one thing they need
+           (require_curator_or_purge, app/routes/curate.py:list_documents). #}
+        {% if current_user and (current_user.curatable_orgs or current_user.can_purge) %}
+        <a
+          class="{% if request.url.path.startswith('/curate') %}active{% endif %}"
+          href="{{ '/curate' if current_user.curatable_orgs else '/curate/list' }}"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"></path>
           </svg>

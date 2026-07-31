@@ -1,0 +1,4 @@
+# Direct runtime dependency of seed_sample_data.py (scripts/Dockerfile).
+# Compiled to requirements.txt with `pip-compile --generate-hashes`; see
+# issue #230.
+httpx>=0.28.1

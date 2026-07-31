@@ -54,10 +54,15 @@ These run automatically on every PR (see `.github/workflows/`, added in #67):
 - **`security.yml`** — `bandit`, `pip-audit` on the shipped dependency tree,
   `helm lint`/`template`, a Trivy filesystem scan (results uploaded to the
   Security tab), and a `gitleaks` secret scan.
-- **`e2e.yml`** — on PRs that touch the stack: `docker compose up` → seed →
-  golden-query retrieval evaluation, failing on any recall miss or any
-  forbidden (pending/rejected/superseded) document leaking into results.
 - **CodeQL** — required for merge.
+
+**Not required on every PR:** `e2e.yml`'s golden-query job — full
+`docker compose up` → seed → golden-query retrieval evaluation, failing on
+any recall miss or any forbidden (pending/rejected/superseded) document
+leaking into results. It runs nightly and on manual dispatch regardless; add
+the `needs-e2e` label to a PR to also run it there when a change is
+genuinely retrieval/ingestion-risky (see `docs/testing.md` for why it isn't
+a required check).
 
 ## Coding conventions
 
