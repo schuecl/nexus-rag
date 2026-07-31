@@ -56,8 +56,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psycopg
-
 DEFAULT_HOST = os.environ.get("POSTGRES_HOST", "postgres")
 DEFAULT_PORT = os.environ.get("POSTGRES_PORT", "5432")
 DEFAULT_DB = os.environ.get("POSTGRES_DB", "nexus_rag")
@@ -86,7 +84,18 @@ def fetch_decisions(dsn: str, since: datetime | None) -> list[dict]:
     for, and audit_log's decision-action volume is small enough that
     filtering the (already sparse) advisory outcomes in Python is simpler and
     just as correct.
+
+    `psycopg` is imported here, not at module level: this is a scripts/-only
+    dependency (scripts/requirements.in) that the repo-root `unit` CI job
+    deliberately never installs (same reasoning as `.coveragerc` excluding
+    `db.py`/`qdrant_store.py` -- see ci.yml's "minus fastembed/psycopg which
+    the unit layer never touches"), and `tests/unit/test_calibrate_tagging_advisory.py`
+    only exercises the pure `aggregate()`/`Tally`/history-store logic below, never
+    this function -- importing psycopg at module level would make just
+    importing this module fail in that job.
     """
+    import psycopg
+
     query = "SELECT action, detail, created_at FROM audit_log WHERE action = ANY(%s)"
     params: list[Any] = [list(_DECISION_ACTIONS)]
     if since is not None:
@@ -103,7 +112,11 @@ def fetch_classification_ranks(dsn: str) -> dict[str, int]:
     """value.upper() -> rank for every active ClassificationLevel, so a
     flagged/suggested classification can be rank-compared against the
     curator's final one the same way the worker itself does (lower rank =
-    less sensitive, per common/models.py's ClassificationLevel)."""
+    less sensitive, per common/models.py's ClassificationLevel).
+
+    Lazily imports `psycopg` -- see `fetch_decisions`."""
+    import psycopg
+
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT value, rank FROM classification_levels WHERE active = true")
         rows = cur.fetchall()
@@ -321,6 +334,8 @@ def main() -> None:
         "suggester was wrong; use this only if this deployment wants a hard floor)",
     )
     args = parser.parse_args()
+
+    import psycopg
 
     since = datetime.fromisoformat(args.since) if args.since else None
     dsn = args.dsn or default_dsn()
