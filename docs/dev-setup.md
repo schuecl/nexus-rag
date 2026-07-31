@@ -143,6 +143,49 @@ in-memory fixture documents); the enabled path is validated against a live
 environment (a real `docker compose up` with `VISION_MODEL=moondream`: a
 PPTX with an embedded chart ingested, captioned, curator-approved, and the
 caption chunk retrieved through `/debug/rag_search`).
+## LLM classification suggestion (optional, #308)
+
+Off by default. When enabled, `ingestion-worker` asks a text-generation model on the
+stack's existing Ollama to zero-shot classify a document -- a Classification value
+matched against the admin-configured `ClassificationLevel` list, plus a free-text
+doc_type/program_community guess, a confidence score, and a short rationale. Folded
+into the same `document.tagging_advisory` JSON column and `/curate` advisory box
+Phase 1/2 (#138, #307) use, only surfaced when it disagrees with the assigned tags --
+same "only speak up when something's off" gating.
+
+Enable by setting a generation-capable Ollama model in `.env`:
+
+```bash
+CLASSIFICATION_MODEL=qwen2.5:3b-instruct   # GENERATION_MODEL's value works -- already pulled
+```
+
+`ollama-model-init` pulls the model on the next `up` (needs internet once, NFR-1:
+mirror it internally like the other models). Leaving `CLASSIFICATION_MODEL` empty keeps
+ingestion byte-identical to today: no pull, no extra LLM calls.
+
+Failure semantics are degrade-not-fail, same posture as captioning: a down/missing
+model or a malformed/non-JSON response costs the suggestion, never the document -- the
+gap is visible in the `nexus_rag_ingestion_worker_llm_suggestions_total{outcome=...}`
+counter rather than a failed ingestion. A suggested Classification value outside the
+configured list is dropped, never invented (`app/classification_suggestion.py`); only
+an *under*-classification (suggested rank higher than assigned) is flagged, matching
+Phase 1/2's asymmetric semantics, while any doc_type difference is flagged regardless
+of direction since it carries no spillage-direction concern the way Classification
+does.
+
+Scope note: only Classification is an admin-configurable, DB-backed controlled list
+today (`ClassificationLevel`) -- `doc_type`/`program_community` have no equivalent
+table (Section 6.3 itself only ever calls program_community "free-form OR
+controlled"), so the model is asked to *match* Classification against the real
+configured list but only to *guess* doc_type/program_community in its own words.
+Adding real controlled lists for those two fields is a natural follow-up, not part of
+this phase.
+
+Status: **tested against mocks only** (`services/ingestion-worker/tests/
+test_classification_suggestion.py`, respx-mocked Ollama; `test_llm_suggestion_advisory.py`,
+worker glue against an in-memory SQLite session; `services/ingestion-api/tests/
+test_tagging_advisory_linkage.py`, curator-decision audit linkage) -- not yet exercised
+against a live Ollama, Postgres, or a browser.
 ## OCR for scanned and image content (#241)
 
 Always on -- OCR is parsing, not an optional enrichment, and it involves no
@@ -676,6 +719,20 @@ the docs, not a silent "it works" — flag it if you find one.
   mirroring `hybrid_query`'s existing fan-out tests) — not yet exercised against a live
   Qdrant or a browser. `MilvusStore.find_similar_approved` is implemented but has no
   dedicated unit test yet, matching the existing gap on `MilvusStore.hybrid_query`.
+- **LLM classification suggestion (issue #308, Phase 3 of #138)** — the ingestion
+  worker asks a text-generation model on the stack's Ollama (`CLASSIFICATION_MODEL`,
+  opt-in, empty by default) to zero-shot classify a document against the configured
+  `ClassificationLevel` list plus a free-text doc_type/program_community guess, with a
+  confidence score and rationale. Folded into the same `document.tagging_advisory`
+  column/advisory box as Phase 1/2, only surfaced on disagreement (asymmetric: only an
+  under-classification is flagged for Classification, same as Phase 1/2; any doc_type
+  difference is flagged regardless of direction). Advisory only (never mutates a tag),
+  fail-safe (any error, including an unreachable/misconfigured model, is swallowed and
+  logged), and a suggested Classification value outside the configured list is dropped
+  rather than invented. See "LLM classification suggestion (optional, #308)" above for
+  the full write-up. **Tested against mocks only** (respx-mocked Ollama client tests,
+  worker-glue tests against an in-memory SQLite session, curator-decision audit-linkage
+  tests) — not yet exercised against a live Ollama, Postgres, or a browser.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

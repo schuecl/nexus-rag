@@ -436,8 +436,9 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
 
 def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """Issue #306 gap 1: link the curator's decision back to the ingestion-time
-    marking-mismatch advisory (issue #138) and precedent advisory (issue #307
-    Phase 2), if either was flagged for this document. Without this,
+    marking-mismatch advisory (issue #138), precedent advisory (issue #307
+    Phase 2), and LLM classification suggestion (issue #308 Phase 3), if any
+    was flagged for this document. Without this,
     recovering "did the curator agree with the flag" means diffing the
     `document.tagging_advisory` and `document.approve`/`document.reject`
     audit rows by document ID after the fact -- embedding the flagged values
@@ -459,9 +460,11 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """
     advisory = doc.tagging_advisory or {}
     precedent = advisory.get("precedent") or {}
+    llm_suggestion = advisory.get("llm_suggestion") or {}
     flagged = advisory.get("under_classified") or advisory.get("unassigned_caveats")
     flagged_precedent = precedent.get("disagrees_with_assigned")
-    if not (flagged or flagged_precedent):
+    flagged_llm = llm_suggestion.get("disagrees_with_assigned")
+    if not (flagged or flagged_precedent or flagged_llm):
         return None
     outcome = {
         "flagged_classification": advisory.get("detected_classification"),
@@ -472,6 +475,10 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     if flagged_precedent:
         outcome["precedent_classification"] = precedent.get("top_classification")
         outcome["precedent_similar_count"] = precedent.get("similar_count")
+    if flagged_llm:
+        outcome["llm_suggested_classification"] = llm_suggestion.get("suggested_classification")
+        outcome["llm_suggested_doc_type"] = llm_suggestion.get("suggested_doc_type")
+        outcome["llm_confidence"] = llm_suggestion.get("confidence")
     return outcome
 
 

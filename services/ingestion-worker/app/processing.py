@@ -30,6 +30,7 @@ from sqlmodel import Session, select
 from app import metrics
 from app.captioning import caption_images, captioning_enabled
 from app.chunking import chunk_sections
+from app.classification_suggestion import suggest_classification, suggestion_enabled
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
 from common.db import get_engine
@@ -316,6 +317,104 @@ def _apply_precedent_advisory(
         )
 
 
+async def _apply_llm_suggestion_advisory(
+    session: Session,
+    doc: Document,
+    sections: list[ParsedSection],
+) -> None:
+    """Issue #308, Phase 3 of #138: ask the in-cluster LLM to zero-shot
+    classify this document against the configured Classification vocabulary,
+    plus a free-text doc_type/program_community guess. Merged into the same
+    `doc.tagging_advisory` column/UI surface Phase 1/2 use, under an
+    `llm_suggestion` key, rather than a third advisory surface.
+
+    A no-op (not even a model call) unless CLASSIFICATION_MODEL is set --
+    see app/classification_suggestion.py. Same posture as
+    `_apply_precedent_advisory`: advisory only, never mutates
+    doc.classification/doc_type/program_community, and fail-safe by
+    construction -- any error, including the model being unreachable, is
+    swallowed and logged, leaving whatever `tagging_advisory` already held
+    (e.g. Phase 1/2's findings) untouched.
+    """
+    if not suggestion_enabled():
+        return
+    try:
+        levels = session.exec(
+            select(ClassificationLevel).where(ClassificationLevel.active == True)  # noqa: E712
+        ).all()
+        configured = [lvl.value for lvl in levels]
+        # Truncation to CLASSIFICATION_SCAN_LIMIT happens inside
+        # suggest_classification -- much tighter than _ADVISORY_SCAN_LIMIT,
+        # since an LLM prompt costs context-window budget and latency per
+        # character where the marking-mismatch text scan above does not.
+        text = "\n".join(s.text for s in sections)
+        result = await suggest_classification(text, classifications=configured)
+        if result is None:
+            metrics.llm_suggestions_total.labels(outcome="unavailable").inc()
+            return
+
+        # Only an under-classification (suggested rank *higher* than
+        # assigned) is flagged -- same asymmetric semantics as Phase 1's
+        # under_classified and Phase 2's precedent disagreement, since a
+        # lower suggestion isn't the spillage risk this family of advisories
+        # exists to catch, and flagging it too would double the noise for no
+        # safety value.
+        rank_by_value = {lvl.value.casefold(): lvl.rank for lvl in levels}
+        assigned_rank = rank_by_value.get(doc.classification.casefold())
+        suggested_rank = (
+            rank_by_value.get(result.classification.casefold()) if result.classification else None
+        )
+        classification_disagrees = (
+            suggested_rank is not None
+            and assigned_rank is not None
+            and suggested_rank > assigned_rank
+        )
+        # doc_type has no security-relevant direction, so any difference is
+        # worth a curator's attention -- correctness support, not a spillage
+        # guardrail.
+        doc_type_disagrees = bool(
+            result.doc_type and result.doc_type.casefold() != (doc.doc_type or "").casefold()
+        )
+        disagrees = classification_disagrees or doc_type_disagrees
+
+        llm_suggestion = {
+            "suggested_classification": result.classification,
+            "suggested_doc_type": result.doc_type,
+            "suggested_program_community": result.program_community,
+            "confidence": result.confidence,
+            "rationale": result.rationale,
+            "disagrees_with_assigned": disagrees,
+        }
+        doc.tagging_advisory = {**(doc.tagging_advisory or {}), "llm_suggestion": llm_suggestion}
+        metrics.llm_suggestions_total.labels(outcome="disagrees" if disagrees else "agrees").inc()
+        if disagrees:
+            logger.info(
+                "document %s LLM suggestion: classification=%s (assigned %s) doc_type=%s "
+                "(assigned %s) confidence=%.2f",
+                doc.id,
+                result.classification,
+                doc.classification,
+                result.doc_type,
+                doc.doc_type,
+                result.confidence,
+            )
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.tagging_advisory",
+                    target_id=str(doc.id),
+                    detail={"llm_suggestion": llm_suggestion},
+                )
+            )
+    except Exception:
+        metrics.llm_suggestions_total.labels(outcome="error").inc()
+        logger.exception(
+            "LLM classification suggestion failed for document %s; continuing ingestion without it",
+            doc.id,
+        )
+
+
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
@@ -535,6 +634,23 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
             # `pending_review`, already excluded by the `approved`-only
             # filter) rather than load-bearing.
             _apply_precedent_advisory(session, doc, dense_vectors)
+
+            # Issue #308 Phase 3: same "outside PROCESSING_TIMEOUT_SECONDS"
+            # rationale as the precedent lookup above -- an LLM generate call
+            # is a slower, external-service-dependent op than the CPU-bound
+            # parse/chunk/embed work that budget exists to bound, and its own
+            # CLASSIFICATION_REQUEST_TIMEOUT_SECONDS already caps it. A no-op
+            # (no await, no model call) unless CLASSIFICATION_MODEL is set.
+            if suggestion_enabled():
+                with (
+                    metrics.stage_seconds.labels(stage="classify_suggest").time(),
+                    tracer.start_as_current_span("classify_suggest") as span,
+                ):
+                    await _apply_llm_suggestion_advisory(session, doc, sections)
+                    span.set_attribute(
+                        "document.llm_suggestion_present",
+                        bool((doc.tagging_advisory or {}).get("llm_suggestion")),
+                    )
 
             doc.status = "embedded"
             doc.chunk_count = len(chunks)

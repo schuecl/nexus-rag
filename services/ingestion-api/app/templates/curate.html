@@ -75,6 +75,33 @@ function advisoryNode(doc) {
     }
     findings.push(parts);
   }
+  // Issue #308 (Phase 3 of #138): the in-cluster LLM's zero-shot suggestion,
+  // computed by the worker from the document's own text -- a third,
+  // distinct signal folded into the same advisory box, same "only speak up
+  // when something's off" gating (disagrees_with_assigned) as the findings
+  // above. rationale/doc_type/program_community are model-generated text
+  // derived from uploaded document content, so they are exactly as
+  // attacker-controlled as the evidence excerpts below -- textContent only,
+  // never innerHTML.
+  const llm = adv.llm_suggestion;
+  if (llm && llm.disagrees_with_assigned) {
+    const parts = [document.createTextNode('LLM suggests ')];
+    const labelParts = [];
+    if (llm.suggested_classification) labelParts.push(llm.suggested_classification);
+    if (llm.suggested_doc_type) labelParts.push(llm.suggested_doc_type);
+    parts.push(el('strong', { text: labelParts.join(' / ') || '(no tag)' }));
+    if (llm.suggested_program_community) {
+      parts.push(
+        document.createTextNode(' ('),
+        el('strong', { text: llm.suggested_program_community }),
+        document.createTextNode(')'),
+      );
+    }
+    parts.push(
+      document.createTextNode(` — confidence ${Math.round((llm.confidence || 0) * 100)}%`),
+    );
+    findings.push(parts);
+  }
   // Issue #306 gap 3: distinct from `findings` above -- this means some of the
   // document's content (a scanned page OCR couldn't recover) was never
   // checked for markings at all, not that it was checked and found clean.
@@ -97,6 +124,9 @@ function advisoryNode(doc) {
         .map((e, i) => (offsets[i] !== undefined ? `${e} (offset ${offsets[i]})` : e))
         .join(' · ');
       box.append(el('br'), el('span', { className: 'hint', text: 'evidence: ' + evidenceText }));
+    }
+    if (llm && llm.disagrees_with_assigned && llm.rationale) {
+      box.append(el('br'), el('span', { className: 'hint', text: 'LLM rationale: ' + llm.rationale }));
     }
   }
   if (unscanned) {

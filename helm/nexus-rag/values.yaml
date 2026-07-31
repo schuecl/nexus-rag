@@ -490,6 +490,12 @@ ingestionWorker:
   # model must be provisioned on that Ollama instance separately -- this
   # chart's embedding-service init only pulls embeddingService.model.
   visionModel: ""
+  # Issue #308: model for LLM zero-shot classification suggestion at
+  # ingestion, served by the same Ollama instance as embeddings/captioning.
+  # Empty disables the feature entirely (no env var injected, no extra LLM
+  # calls). Must be provisioned on that Ollama instance separately, same
+  # caveat as visionModel above.
+  classificationModel: ""
   service:
     port: 8004
   resources:

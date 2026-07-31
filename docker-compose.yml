@@ -243,11 +243,16 @@ services:
       # #92: only pulled when set -- image captioning is opt-in, and a
       # multi-GB vision model must not become a side effect of `up`.
       VISION_MODEL: ${VISION_MODEL:-}
+      # #308: same opt-in reasoning as VISION_MODEL -- the LLM classification
+      # suggestion is an extra per-document model call, so pulling its model
+      # must be an explicit deployment decision, not a side effect of `up`.
+      CLASSIFICATION_MODEL: ${CLASSIFICATION_MODEL:-}
     entrypoint: ["sh", "-c"]
     command:
       - |
         ollama pull "$$EMBEDDING_MODEL" && ollama pull "$$GENERATION_MODEL" \
-          && { [ -z "$$VISION_MODEL" ] || ollama pull "$$VISION_MODEL"; }
+          && { [ -z "$$VISION_MODEL" ] || ollama pull "$$VISION_MODEL"; } \
+          && { [ -z "$$CLASSIFICATION_MODEL" ] || ollama pull "$$CLASSIFICATION_MODEL"; }
     restart: "no"
 
   reranker-service:
@@ -481,6 +486,10 @@ services:
       # #92: image/figure captioning, opt-in -- empty (the default) disables
       # it entirely. ollama-model-init pulls this model when set.
       VISION_MODEL: ${VISION_MODEL:-}
+      # #308: LLM zero-shot classification suggestion, opt-in -- same
+      # empty-disables convention as VISION_MODEL. ollama-model-init pulls
+      # this model when set.
+      CLASSIFICATION_MODEL: ${CLASSIFICATION_MODEL:-}
       CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       OBJECT_STORE_BACKEND: filesystem

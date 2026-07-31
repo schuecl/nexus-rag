@@ -115,6 +115,29 @@ def _precedent_flagged_advisory(top_classification: str = "SECRET") -> dict:
     }
 
 
+def _llm_flagged_advisory(suggested_classification: str = "SECRET") -> dict:
+    return {
+        "assigned_classification": "CUI",
+        "detected_classification": None,
+        "under_classified": False,
+        "detected_caveats": [],
+        "unassigned_caveats": [],
+        "evidence": [],
+        "evidence_offsets": [],
+        "notes": [],
+        "markings_not_scanned": False,
+        "unscanned_reasons": [],
+        "llm_suggestion": {
+            "suggested_classification": suggested_classification,
+            "suggested_doc_type": "briefing slide",
+            "suggested_program_community": None,
+            "confidence": 0.87,
+            "rationale": "Mentions troop movements and a classified banner.",
+            "disagrees_with_assigned": True,
+        },
+    }
+
+
 def _decision_entry(session: Session, action: str) -> AuditLogEntry:
     entries = session.exec(select(AuditLogEntry).where(AuditLogEntry.action == action)).all()
     assert len(entries) == 1
@@ -199,6 +222,39 @@ class TestApproveLinksFlaggedAdvisory:
         entry = _decision_entry(session, "document.approve")
         assert entry.detail["tagging_advisory"] is None
 
+    def test_approve_embeds_a_flagged_llm_suggestion(self, session: Session) -> None:
+        # Issue #308 Phase 3: an LLM classification-suggestion disagreement
+        # links into the decision's audit entry the same way Phase 1/2's
+        # findings do, even with no marking-mismatch or precedent finding of
+        # its own.
+        doc = _document(tagging_advisory=_llm_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["llm_suggested_classification"] == "SECRET"
+        assert outcome["llm_suggested_doc_type"] == "briefing slide"
+        assert outcome["llm_confidence"] == 0.87
+
+    def test_approve_of_llm_agreeing_document_has_no_tagging_advisory_link(
+        self, session: Session
+    ) -> None:
+        advisory = _llm_flagged_advisory()
+        advisory["llm_suggestion"]["disagrees_with_assigned"] = False
+        doc = _document(tagging_advisory=advisory)
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        assert entry.detail["tagging_advisory"] is None
+
 
 class TestRejectLinksFlaggedAdvisory:
     def test_reject_embeds_the_flagged_advisory(self, session: Session) -> None:
@@ -237,3 +293,21 @@ class TestRejectLinksFlaggedAdvisory:
 
         entry = _decision_entry(session, "document.reject")
         assert entry.detail["tagging_advisory"] is None
+
+    def test_reject_embeds_a_flagged_llm_suggestion(self, session: Session) -> None:
+        doc = _document(tagging_advisory=_llm_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.reject(
+            doc.id,
+            curate.Rejection(reason="spillage risk per LLM suggestion"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+
+        entry = _decision_entry(session, "document.reject")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["llm_suggested_classification"] == "SECRET"

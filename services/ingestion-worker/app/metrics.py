@@ -48,6 +48,14 @@ images_skipped_total = Counter(
     "Embedded images not captioned, by reason.",
     ["reason"],
 )
+# Issue #308: LLM classification suggestion is also degrade-on-failure
+# (app/classification_suggestion.py) -- this counter is the visibility that
+# replaces a hard error, same rationale as images_skipped_total above.
+llm_suggestions_total = Counter(
+    "nexus_rag_ingestion_worker_llm_suggestions_total",
+    "LLM zero-shot classification suggestion attempts, by outcome.",
+    ["outcome"],
+)
 delivery_attempts = Histogram(
     "nexus_rag_ingestion_worker_delivery_attempts",
     "JetStream delivery number observed by the worker.",
