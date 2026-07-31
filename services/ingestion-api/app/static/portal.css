@@ -2325,3 +2325,139 @@ label.checkbox-label {
   border: 1px solid rgba(0, 0, 0, 0.35);
   border-radius: 3px;
 }
+
+/* Issue #266: Curation queue/list -- the sub-nav pill row that switches
+   between the two pages, and the master-list dashboard (toolbar, rows, edit
+   panel, status pills). All keyed off the same tokens as the rest of the
+   portal so they follow whatever theme is active, unlike the queue page's
+   previous hardcoded advisory colours. */
+.subnav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.subnav a {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.subnav a:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.subnav a.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+/* Issue #138's advisory box, themed rather than hardcoded -- previously
+   `#fff3cd`/`#d4a017`, which read fine against a light default but ignored
+   every other portal theme (issue #266). */
+.advisory {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--text);
+}
+
+.doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.doc-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.doc-toolbar input[type="search"],
+.doc-toolbar select {
+  min-width: 180px;
+}
+
+.doc-count {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.doc-row {
+  margin-top: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.doc-row-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.doc-row-edit {
+  display: grid;
+  gap: 14px;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.doc-row-edit[hidden] {
+  display: none;
+}
+
+.doc-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-pill[data-status="approved"] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-pill[data-status="pending_review"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status-pill[data-status="rejected"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}

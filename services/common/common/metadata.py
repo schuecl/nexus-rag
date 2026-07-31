@@ -73,6 +73,29 @@ def releasability_authorized(values: list[str], held: list[str]) -> bool:
     return all(value == NO_RELEASABILITY_RESTRICTION or value in held for value in values)
 
 
+def access_scope_values(*, sub: str, groups: list[str], org: str | None) -> set[str]:
+    """The access_scope values this identity matches -- single source of
+    truth for "any element in common" scope matching, shared by the
+    retrieval filter (qdrant_filters.build_access_filter) and the curation
+    queue's scope-preference check (app/routes/curate.py, issue #277 gap
+    G1), so a document's need-to-know scope means the same thing at
+    query time and at curation time."""
+    values = {ALL_AUTHENTICATED_ACCESS_SCOPE, sub, *groups}
+    if org:
+        values.add(org)
+    return values
+
+
+def access_scope_authorized(
+    access_scope: list[str], *, sub: str, groups: list[str], org: str | None
+) -> bool:
+    """True iff `access_scope` shares at least one value with this identity's
+    own scope (org/groups/sub/ALL_AUTHENTICATED) -- the same "any element in
+    common" semantics as releasability_authorized above, just a different
+    vocabulary."""
+    return bool(access_scope_values(sub=sub, groups=groups, org=org) & set(access_scope))
+
+
 def validate_against_claims(
     metadata: DocumentMetadataIn,
     *,

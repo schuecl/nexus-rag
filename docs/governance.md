@@ -6,7 +6,9 @@ not controlled yet.
 
 Related: [REQUIREMENTS.md](../REQUIREMENTS.md) for the numbered requirements
 this cites, [ARCHITECTURE.md](../ARCHITECTURE.md) for component/flow diagrams,
-[testing.md](testing.md) for how the controls below are verified, and
+[testing.md](testing.md) for how the controls below are verified,
+[roles-and-permissions.md](roles-and-permissions.md) for the per-role
+authorization/privacy matrix and its least-privilege gap analysis, and
 [SECURITY.md](../SECURITY.md) for the vulnerability-reporting surface.
 
 ## Why this document exists

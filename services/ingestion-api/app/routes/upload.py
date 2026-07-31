@@ -45,8 +45,9 @@ from common.file_types import (
 from common.job_queue import publish_ingestion_job
 from common.metadata import DocumentMetadataIn, MetadataValidationError, validate_against_claims
 from common.models import AuditLogEntry, Document
+from common.models import PurgeRequest as PurgeRequestModel
 from common.object_store import document_object_key, get_object_store
-from common.purge import PurgeError, purge_document
+from common.purge import PurgeError, PurgeRequestError, confirm_purge, purge_document, request_purge
 from common.tracing import get_tracer
 from common.versioning import SupersedeValidationError, validate_supersede_target
 
@@ -70,6 +71,18 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))
 # matters as the overshoot allowance on the memory ceiling: peak usage is
 # MAX_UPLOAD_BYTES + this, not the size of whatever was sent.
 _READ_CHUNK_BYTES = 1024 * 1024
+
+# Issue #279 (gap G3): default true (the safe default -- mirrors COOKIE_SECURE
+# below) requires a *different* rag-purge holder to confirm a purge request
+# before purge_document ever runs; DELETE /documents/{id} refuses to run
+# single-call destruction while this is set. docker-compose.yml explicitly
+# sets this false for the dev loop and seed-sample-data, which only ever have
+# one purge-capable actor (dave-admin); the Helm chart's production default
+# leaves it true. See common/purge.py's request_purge/confirm_purge.
+PURGE_TWO_PERSON_REQUIRED = os.environ.get("PURGE_TWO_PERSON_REQUIRED", "true").lower() == "true"
+# How long an unconfirmed purge request stays confirmable before it must be
+# re-requested -- "so stale ones don't linger as loaded guns" (#279).
+PURGE_REQUEST_EXPIRY_HOURS = float(os.environ.get("PURGE_REQUEST_EXPIRY_HOURS", "24"))
 
 
 async def _read_bounded(file: UploadFile, limit: int) -> bytes:
@@ -295,14 +308,14 @@ def get_document(
     return doc
 
 
-class PurgeRequest(BaseModel):
+class PurgeReason(BaseModel):
     reason: str = Field(min_length=1)
 
 
 @router.delete("/{doc_id}")
 def purge(
     doc_id: uuid.UUID,
-    body: PurgeRequest,
+    body: PurgeReason,
     user: UserClaims = Depends(require_purge),
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
@@ -323,7 +336,20 @@ def purge(
 
     Returns the tombstone: the id and purged status survive so prior audit
     entries still resolve, but every content-bearing field is scrubbed.
+
+    Issue #279 (gap G3): this single-call path only runs when
+    PURGE_TWO_PERSON_REQUIRED is unset -- otherwise a lone rag-purge holder
+    could destroy a document alone, which is exactly the gap this issue
+    closes. When set, use POST {doc_id}/purge-request followed by a
+    *different* rag-purge holder's POST .../confirm instead.
     """
+    if PURGE_TWO_PERSON_REQUIRED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "two-person purge is required in this deployment: "
+            f"POST /documents/{doc_id}/purge-request, then a different rag-purge "
+            "holder must confirm it",
+        )
     try:
         return purge_document(
             session,
@@ -337,4 +363,62 @@ def purge(
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
         # A store failed mid-purge. The document is already non-retrievable and
         # the operation is idempotent, so the actionable answer is "retry".
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
+@router.post("/{doc_id}/purge-request")
+def create_purge_request(
+    doc_id: uuid.UUID,
+    body: PurgeReason,
+    user: UserClaims = Depends(require_purge),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> PurgeRequestModel:
+    """Issue #279 (gap G3): first half of the two-person destruction flow --
+    records a purge request row and destroys nothing. A second, different
+    rag-purge holder must confirm it (POST .../purge-request/{request_id}/
+    confirm) before purge_document ever runs. Available regardless of
+    PURGE_TWO_PERSON_REQUIRED, so a deployment can start using the flow
+    before flipping the DELETE route off.
+    """
+    try:
+        return request_purge(
+            session,
+            doc_id,
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            reason=body.reason,
+            expiry_hours=PURGE_REQUEST_EXPIRY_HOURS,
+        )
+    except PurgeRequestError as exc:
+        code = status.HTTP_404_NOT_FOUND if "not found" in str(exc) else status.HTTP_409_CONFLICT
+        raise HTTPException(code, str(exc)) from exc
+
+
+@router.post("/{doc_id}/purge-request/{request_id}/confirm")
+def confirm_purge_request(
+    doc_id: uuid.UUID,
+    request_id: uuid.UUID,
+    user: UserClaims = Depends(require_purge),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
+    """Second half: executes the purge, but only for a rag-purge holder whose
+    `sub` differs from the request's own requester -- same-person
+    confirmation is refused server-side (common.purge.
+    purge_confirmation_authorized), not just discouraged by the UI.
+    """
+    req = session.get(PurgeRequestModel, request_id)
+    if req is None or req.document_id != doc_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "purge request not found")
+    try:
+        return confirm_purge(
+            session,
+            request_id,
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+        )
+    except PurgeRequestError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except PurgeError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

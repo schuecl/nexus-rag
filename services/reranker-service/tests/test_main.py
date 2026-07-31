@@ -47,3 +47,23 @@ def test_rejects_empty_header_even_if_secret_is_falsy_like(monkeypatch):
 
     with pytest.raises(HTTPException):
         main._check_shared_secret(x_reranker_shared_secret="")
+
+
+def test_accepts_previous_secret_during_rotation(monkeypatch):
+    # Issue #281 gap G5 stage 2: orchestration-mcp restarted with the new
+    # secret before this service has -- the old value must still work until
+    # this service is restarted too (docs/credential-rotation.md).
+    monkeypatch.setattr(main, "RERANKER_SHARED_SECRET", "new-s3cr3t")
+    monkeypatch.setattr(main, "RERANKER_SHARED_SECRET_PREVIOUS", "old-s3cr3t")
+
+    main._check_shared_secret(x_reranker_shared_secret="old-s3cr3t")
+    main._check_shared_secret(x_reranker_shared_secret="new-s3cr3t")
+
+
+def test_rejects_stale_secret_once_previous_unset(monkeypatch):
+    monkeypatch.setattr(main, "RERANKER_SHARED_SECRET", "new-s3cr3t")
+    monkeypatch.setattr(main, "RERANKER_SHARED_SECRET_PREVIOUS", "")
+
+    with pytest.raises(HTTPException) as exc_info:
+        main._check_shared_secret(x_reranker_shared_secret="old-s3cr3t")
+    assert exc_info.value.status_code == 401

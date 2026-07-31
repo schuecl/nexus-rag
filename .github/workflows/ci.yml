@@ -79,6 +79,12 @@ jobs:
     # No module named 'app.parsing'` once `app` has bound elsewhere). Running
     # one service at a time is what keeps them isolated, and is why each
     # service has its own tests/conftest.py sys.path insert.
+    # Issue #256: the check name is pinned explicitly (below) rather than left
+    # to GitHub's matrix-derived default, so the `cov` list can change without
+    # renaming the check out from under the required-status-checks rulesets.
+    # See docs/testing.md's "Branch protection (merge gates)" section for the
+    # coordinated ruleset edit this required to land.
+    name: service-tests (${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -90,22 +96,10 @@ jobs:
           # ungated on purpose -- its FastAPI route layer needs the
           # containerized integration layer to be meaningfully covered (see
           # docs/testing.md's known-gaps list).
-          #
-          # These strings are load-bearing beyond the command line: with no
-          # explicit `name:` on this job, GitHub derives the check name from
-          # the matrix values, so `service-tests (ingestion-worker,
-          # --cov=app.chunking --cov=app.parsing)` is the literal context
-          # pinned in both `Protect-Main*` rulesets. Editing one renames the
-          # check, the pinned context then never reports, and every PR sits
-          # on "Expected -- waiting for status to be reported" until an admin
-          # re-pins it. Add newly gated modules via the service's own
-          # `[tool.pytest.ini_options] addopts` instead (see ingestion-worker's
-          # pyproject.toml). Making the check names independent of the flags
-          # needs a coordinated ruleset edit, tracked as #256.
           - service: ingestion-api
             cov: ""
           - service: ingestion-worker
-            cov: "--cov=app.chunking --cov=app.parsing"
+            cov: "--cov=app.chunking --cov=app.parsing --cov=app.ocr"
           - service: orchestration-mcp
             cov: "--cov=app.reranking"
           - service: reranker-service
