@@ -751,6 +751,31 @@ the docs, not a silent "it works" — flag it if you find one.
   mocks (respx-mocked Ollama client tests, worker-glue tests against an in-memory SQLite
   session, curator-decision audit-linkage tests); the enabled path is **validated
   against a live environment**.
+- **Adaptive calibration loop over curator corrections (issue #309, Phase 4 of #138)** —
+  `scripts/calibrate_tagging_advisory.py` mines every `document.approve`/`document.reject`
+  audit entry's `tagging_advisory` outcome (already written by `curate.py` for #306/#307/
+  #308) and reports, per suggester (Phase 1 marking-mismatch, Phase 2 precedent, Phase 3
+  LLM classification, plus Phase 1's releasability-caveat flag), how often the curator's
+  final decision agreed with what was flagged vs. overrode it — the "measure suggester
+  accuracy over time" half of #309 (FR-30/FR-32 posture). Run on demand or on a schedule
+  with `docker compose --profile calibration run --rm calibrate-tagging-advisory`; pass
+  `--history-dir` to persist each run and print an informational trend line against the
+  prior one. It is reporting only by default (no CI gate — a curator override is not, by
+  itself, proof a suggester was wrong); `--min-agreement` is an opt-in floor for a
+  deployment that wants one. Connects to Postgres as a new, dedicated,
+  **SELECT-only-on-audit_log** role (`nexus_rag_audit_reporting`,
+  `infra/postgres/ensure-roles.sh`/`apply-service-grants.sh`) rather than through any of
+  the four services — NFR-2 keeps every application role's own credentials INSERT-only on
+  `audit_log`, so reading the curation trail has to be a distinct, attributable identity.
+  The issue's other clause, "refresh Phase 2's precedent index from the corrected/approved
+  set," needed no code: `find_similar_approved` already queries `status == "approved"`
+  live against Qdrant on every ingestion, so there is no index to refresh — it already
+  reflects the current corrected/approved corpus. **Tested against mocks only** (the pure
+  aggregation logic — `tests/unit/test_calibrate_tagging_advisory.py` — against
+  constructed audit rows, plus extended curator-decision audit-linkage tests for the two
+  new outcome fields `assigned_classification`/`marking_mismatch_flagged` this needed) —
+  the DB fetch itself, the new `nexus_rag_audit_reporting` role/grants, and the
+  `calibration` compose profile have not been exercised against a live Postgres.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

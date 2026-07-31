@@ -158,6 +158,12 @@ class TestApproveLinksFlaggedAdvisory:
         assert outcome["flagged_classification"] == "SECRET"
         # No correction was applied -- final tags are still what was flagged.
         assert outcome["final_classification"] == "CUI"
+        # Issue #309 (Phase 4): the pre-decision assigned tag and an explicit
+        # per-suggester flag, so an offline reader can rank-compare without a
+        # second query and can tell this flag apart from a mere marking
+        # *detection* that wasn't actually under-classified.
+        assert outcome["assigned_classification"] == "CUI"
+        assert outcome["marking_mismatch_flagged"] is True
 
     def test_approve_records_the_correction_when_curator_agrees(self, session: Session) -> None:
         doc = _document(tagging_advisory=_flagged_advisory())
@@ -206,6 +212,9 @@ class TestApproveLinksFlaggedAdvisory:
         outcome = entry.detail["tagging_advisory"]
         assert outcome["precedent_classification"] == "SECRET"
         assert outcome["precedent_similar_count"] == 5
+        # Precedent flagged on its own -- Phase 1's own boolean stays False,
+        # distinguishing it from a marking-mismatch flag (issue #309).
+        assert outcome["marking_mismatch_flagged"] is False
 
     def test_approve_of_precedent_agreeing_document_has_no_tagging_advisory_link(
         self, session: Session

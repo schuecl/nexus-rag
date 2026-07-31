@@ -14,6 +14,7 @@ golden-query harness the e2e workflow reuses.
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
 | Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
+| Tagging-advisory calibration | `scripts/calibrate_tagging_advisory.py` | Manual or scheduled (`docker compose --profile calibration run`), not in any CI workflow | Suggester-vs-curator agreement over time for Phase 1-3's advisories (FR-13/FR-16/FR-30/FR-32) — reporting only, no pass/fail gate by default |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **advisory**) | Test-suite strength on claims/access-filter/metadata/versioning |
 
 Design notes:
@@ -303,6 +304,40 @@ baseline, on any of:
 - **A change to chunking or retrieval logic** (`ingestion-worker` chunking,
   `orchestration-mcp` fusion/rerank).
 - **The nightly `e2e.yml` schedule**, which covers the "periodic" cadence.
+
+## Tagging-advisory calibration (FR-13/FR-16/FR-30/FR-32, issue #309)
+
+Phase 1-3 of #138 (`marking_detection.py`, `find_similar_approved` precedent
+lookup, `classification_suggestion.py`'s LLM zero-shot suggester) each flag a
+possible under-classification to the curator, and `curate.py` embeds the
+flag plus the curator's final decision in that document's `document.approve`/
+`document.reject` audit entry. `scripts/calibrate_tagging_advisory.py` mines
+that trail and reports, per suggester, how often the curator's final decision
+agreed with the flag vs. overrode it:
+
+```bash
+# Persist each run under a timestamped filename and print a trend line
+# against the previous one.
+python scripts/calibrate_tagging_advisory.py --history-dir calibration-history
+
+# Or via the compose one-shot, against the dev stack's own Postgres.
+docker compose --profile calibration run --rm calibrate-tagging-advisory
+```
+
+Deliberately **not** a pass/fail CI gate the way `evaluate_retrieval.py` is:
+a curator overriding a flag is not, by itself, evidence the suggester was
+wrong (that's the point of keeping a human in the loop, FR-11). It's
+reporting only unless a deployment opts into `--min-agreement` as its own
+floor. The pure aggregation logic is unit tested in
+`tests/unit/test_calibrate_tagging_advisory.py` against constructed audit
+rows; the DB fetch itself needs a live Postgres seeded with real curator
+decisions and has not been exercised end to end (see
+`docs/dev-setup.md`'s "What's stubbed vs working").
+
+Connects to Postgres as its own dedicated, SELECT-only-on-`audit_log` role
+(`nexus_rag_audit_reporting`) rather than through any of the four services —
+see that script's module docstring for why (NFR-2 keeps every application
+role's own credentials INSERT-only on `audit_log`).
 
 ## Access-control corpus (classification matrix)
 

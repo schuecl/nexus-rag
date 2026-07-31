@@ -457,16 +457,28 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     Returns None when nothing was flagged by either advisory (the common
     case), so approve/reject audit entries stay unchanged for documents
     neither one had a finding for.
+
+    Issue #309 (Phase 4): also embeds `assigned_classification` (the tag in
+    place *before* this decision, per Phase 1's own to_dict()) and an
+    explicit `marking_mismatch_flagged` boolean. Neither is used by anything
+    in this module -- they exist so an offline reader of these audit entries
+    (scripts/calibrate_tagging_advisory.py) can tell a genuine Phase 1
+    under-classification flag apart from Phase 1 having merely *detected* a
+    marking at or below the assigned level (which also leaves
+    `flagged_classification` non-None), and can rank-compare the curator's
+    final decision against what was flagged without needing a second query.
     """
     advisory = doc.tagging_advisory or {}
     precedent = advisory.get("precedent") or {}
     llm_suggestion = advisory.get("llm_suggestion") or {}
-    flagged = advisory.get("under_classified") or advisory.get("unassigned_caveats")
+    flagged = bool(advisory.get("under_classified") or advisory.get("unassigned_caveats"))
     flagged_precedent = precedent.get("disagrees_with_assigned")
     flagged_llm = llm_suggestion.get("disagrees_with_assigned")
     if not (flagged or flagged_precedent or flagged_llm):
         return None
     outcome = {
+        "assigned_classification": advisory.get("assigned_classification"),
+        "marking_mismatch_flagged": flagged,
         "flagged_classification": advisory.get("detected_classification"),
         "flagged_caveats": advisory.get("unassigned_caveats"),
         "final_classification": doc.classification,

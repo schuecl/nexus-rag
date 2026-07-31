@@ -1043,6 +1043,8 @@ services:
       MONITORING_DB_USER: ${MONITORING_DB_USER:-nexus_rag_monitor}
       MONITORING_DB_PASSWORD: ${MONITORING_DB_PASSWORD:-nexus_rag_monitor}
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana_ro}
+      AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
+      AUDIT_REPORTING_DB_PASSWORD: ${AUDIT_REPORTING_DB_PASSWORD:-nexus_rag_audit_reporting}
     volumes:
       - ./infra/postgres/ensure-roles.sh:/ensure-roles.sh:ro
     entrypoint: ["/bin/bash", "/ensure-roles.sh"]
@@ -1081,6 +1083,7 @@ services:
       INGESTION_API_DB_USER: ${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}
       INGESTION_WORKER_DB_USER: ${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}
       ORCHESTRATION_MCP_DB_USER: ${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}
+      AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
     volumes:
       - ./infra/postgres/apply-service-grants.sh:/apply-service-grants.sh:ro
     entrypoint: ["/bin/bash", "/apply-service-grants.sh"]
@@ -1160,6 +1163,34 @@ services:
       orchestration-mcp:
         condition: service_healthy
       seed-sample-data:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # Issue #309 (Phase 4 of #138): not started by a plain `docker compose up`
+  # either -- run on demand or on a schedule with `docker compose --profile
+  # calibration run --rm calibrate-tagging-advisory`, per FR-32's
+  # "periodically re-evaluate". Connects directly to Postgres as the
+  # dedicated, SELECT-only nexus_rag_audit_reporting role rather than
+  # through any service, so it waits on both one-shots that provision that
+  # role and its grant (see calibrate_tagging_advisory.py's module docstring
+  # for why no service does this on its behalf).
+  calibrate-tagging-advisory:
+    profiles: ["calibration"]
+    security_opt: ["no-new-privileges:true"]
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["python3", "calibrate_tagging_advisory.py"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
+      AUDIT_REPORTING_DB_PASSWORD: ${AUDIT_REPORTING_DB_PASSWORD:-nexus_rag_audit_reporting}
+    depends_on:
+      ensure-db-roles:
+        condition: service_completed_successfully
+      lock-down-db-grants:
         condition: service_completed_successfully
     restart: "no"
 

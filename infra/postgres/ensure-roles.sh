@@ -91,6 +91,16 @@ ensure_role "${MONITORING_DB_USER:-nexus_rag_monitor}" "${MONITORING_DB_PASSWORD
 # document_metrics view it reads is created later by provision-metrics-view --
 # the `documents` table does not exist at initdb time.
 ensure_role grafana_ro "${GRAFANA_DB_PASSWORD:-grafana_ro}"
+# Issue #309 (Phase 4 of #138): the one and only role with SELECT on
+# audit_log (apply-service-grants.sh grants it, since audit_log doesn't
+# exist at initdb time). Deliberately not one of the four service roles --
+# NFR-2 requires every application role's own credentials stay INSERT-only
+# on that table, so reading the curator-decision trail to mine it for
+# suggester-vs-curator agreement (scripts/calibrate_tagging_advisory.py) has
+# to be a distinct, attributable identity, not something a compromised
+# service could already do.
+ensure_role "${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}" \
+  "${AUDIT_REPORTING_DB_PASSWORD:-nexus_rag_audit_reporting}"
 
 # Privileges. Each of these is idempotent on its own.
 #
@@ -104,6 +114,7 @@ $PSQL --dbname postgres <<-EOSQL
 	GRANT pg_monitor TO "${MONITORING_DB_USER:-nexus_rag_monitor}";
 	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${MONITORING_DB_USER:-nexus_rag_monitor}";
 	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO grafana_ro;
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}";
 EOSQL
 
 # Postgres 15+ restricts CREATE on the public schema to the database owner, and
@@ -123,6 +134,7 @@ $PSQL --dbname "$POSTGRES_DB" <<-EOSQL
 	GRANT USAGE ON SCHEMA public TO "${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}";
 	GRANT USAGE ON SCHEMA public TO "${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}";
 	GRANT USAGE ON SCHEMA public TO grafana_ro;
+	GRANT USAGE ON SCHEMA public TO "${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}";
 EOSQL
 
 echo "ensure-roles: all roles present and privileges applied"

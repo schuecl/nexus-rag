@@ -18,28 +18,31 @@
 # The grant matrix below is derived from what the code actually does, not from
 # what seemed reasonable. Anything a service does not do is not granted:
 #
-#   table                  ingestion-api          worker          orchestration-mcp
-#   ---------------------  ---------------------  --------------  -----------------
-#   documents              SELECT,INSERT,UPDATE   SELECT,UPDATE   --
-#   classification_levels  SELECT,INSERT,UPDATE   SELECT          SELECT
-#   releasability_values   SELECT,INSERT,UPDATE   SELECT          --
-#   portal_settings        SELECT,INSERT,UPDATE   --              --
-#   notifications          SELECT,INSERT,UPDATE   --              --
-#   oauth_states           SELECT,INSERT,DELETE   --              --
-#   user_sessions          SELECT,INSERT,UPDATE,DELETE  --        --
-#   audit_log              INSERT                 INSERT          INSERT
+#   table                  ingestion-api          worker          orchestration-mcp   audit-reporting
+#   ---------------------  ---------------------  --------------  -----------------   ---------------
+#   documents              SELECT,INSERT,UPDATE   SELECT,UPDATE   --                  --
+#   classification_levels  SELECT,INSERT,UPDATE   SELECT          SELECT              SELECT
+#   releasability_values   SELECT,INSERT,UPDATE   SELECT          --                  --
+#   portal_settings        SELECT,INSERT,UPDATE   --              --                  --
+#   notifications          SELECT,INSERT,UPDATE   --              --                  --
+#   oauth_states           SELECT,INSERT,DELETE   --              --                  --
+#   user_sessions          SELECT,INSERT,UPDATE,DELETE  --        --                  --
+#   audit_log              INSERT                 INSERT          INSERT              SELECT
 #
 # Three things in that table are worth stating explicitly, because each one is
 # a deliberate decision rather than an omission:
 #
-# 1. NOBODY GETS SELECT ON audit_log. Not even ingestion-api. `select(
-#    AuditLogEntry` appears nowhere outside the test suite -- every one of the
-#    17 references across the three services constructs a row to insert. So
-#    "no route exposes the audit log" (roles-and-permissions.md §2) is now true
-#    at the database layer too, not just the HTTP layer. Reading the trail
-#    becomes a deliberate DBA or SIEM act (NFR-2's export path), which is the
-#    same boundary rag-admin already enforces above. harden-audit-log used to
-#    grant SELECT here; that grant had no caller and is gone.
+# 1. NO APPLICATION ROLE GETS SELECT ON audit_log -- only the standalone
+#    audit-reporting role does (issue #309, Phase 4 of #138). `select(
+#    AuditLogEntry` appears nowhere in any of the three services outside the
+#    test suite -- every one of their references constructs a row to insert.
+#    So "no route exposes the audit log" (roles-and-permissions.md §2) is
+#    still true at the database layer, not just the HTTP layer: reading the
+#    trail is only possible as this dedicated identity, run offline via
+#    scripts/calibrate_tagging_advisory.py (or an equivalent DBA/SIEM query,
+#    NFR-2's export path) -- never as a side effect of a request any of the
+#    four services handles. harden-audit-log used to grant SELECT to
+#    ingestion-api; that grant had no caller and is gone.
 #
 # 2. No DELETE on documents, for anyone. common/purge.py tombstones the row
 #    (scrubs every content-bearing field, keeps the id so prior audit entries
@@ -62,6 +65,11 @@ API_ROLE="${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}"
 WORKER_ROLE="${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}"
 MCP_ROLE="${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}"
 LEGACY_ROLE="${APP_DB_USER:-nexus_rag_app}"
+# Issue #309: not one of the four service roles above, and deliberately not
+# put through the REVOKE-ALL-then-regrant loop below -- it never held
+# anything to be reassigned or stripped, so it doesn't need the ownership
+# dance those roles do. It just needs its one SELECT grant (re)applied.
+REPORTING_ROLE="${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}"
 
 PSQL="psql -v ON_ERROR_STOP=1 --username $POSTGRES_USER --dbname $POSTGRES_DB"
 
@@ -151,6 +159,7 @@ $PSQL <<-EOSQL
 	GRANT USAGE ON SCHEMA public TO "${API_ROLE}";
 	GRANT USAGE ON SCHEMA public TO "${WORKER_ROLE}";
 	GRANT USAGE ON SCHEMA public TO "${MCP_ROLE}";
+	GRANT USAGE ON SCHEMA public TO "${REPORTING_ROLE}";
 EOSQL
 
 # The matrix.
@@ -179,6 +188,16 @@ $PSQL <<-EOSQL
 	-- cannot read documents at all, because chunk payloads come from Qdrant.
 	GRANT SELECT                 ON classification_levels TO "${MCP_ROLE}";
 	GRANT INSERT                 ON audit_log             TO "${MCP_ROLE}";
+
+	-- audit-reporting (issue #309): the sole SELECT grantee on audit_log,
+	-- and nothing else -- an offline reader that mines curator-decision
+	-- audit entries to measure suggester-vs-curator agreement
+	-- (scripts/calibrate_tagging_advisory.py). classification_levels is
+	-- also readable so the script can rank-compare a flagged/suggested
+	-- classification against the curator's final one; that vocabulary
+	-- carries no access-control-sensitive data, unlike documents/audit_log.
+	GRANT SELECT                 ON classification_levels TO "${REPORTING_ROLE}";
+	GRANT SELECT                 ON audit_log             TO "${REPORTING_ROLE}";
 EOSQL
 
 # Sequences. audit_log/documents use application-generated ids, but any table
@@ -191,4 +210,4 @@ $PSQL <<-EOSQL
 	GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${MCP_ROLE}";
 EOSQL
 
-echo "apply-service-grants: per-service privileges applied (#278); audit_log is INSERT-only for every application role"
+echo "apply-service-grants: per-service privileges applied (#278); audit_log is INSERT-only for every application role, SELECT-only for the dedicated audit-reporting role (#309)"
