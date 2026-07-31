@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from cryptography.fernet import Fernet, InvalidToken
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from common.models import UserSession
@@ -111,7 +113,73 @@ class TestUserSessionPersistsEncrypted:
 
 class TestFernetKeyIsCached:
     def test_repeated_calls_return_the_same_instance(self):
-        """Just documents the @lru_cache -- a Fernet instance is
+        """Just documents the @lru_cache -- a MultiFernet instance is
         stateless/thread-safe, so re-instantiating per call would be pure
         waste with no correctness benefit."""
         assert _fernet() is _fernet()
+
+
+class TestKeyRotationAcceptsThePreviousKey:
+    """Issue #281 gap G5 stage 2: SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS lets a
+    row encrypted under the old key keep decrypting after
+    SESSION_TOKEN_ENCRYPTION_KEY changes, via MultiFernet -- the no-downtime
+    half of rotation docs/credential-rotation.md's Fernet section describes.
+    _fernet() is process-wide @lru_cache'd, so every test here must clear it
+    both after changing the env and again on teardown, or it leaks the
+    rotation-specific key into unrelated tests that run after it."""
+
+    def test_a_value_encrypted_under_the_old_key_still_decrypts_after_rotation(self, monkeypatch):
+        old_key = Fernet.generate_key().decode()
+        new_key = Fernet.generate_key().decode()
+        column = EncryptedString()
+
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY", old_key)
+        _fernet.cache_clear()
+        ciphertext = column.process_bind_param("still-live-session-token", None)
+
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY", new_key)
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS", old_key)
+        _fernet.cache_clear()
+        try:
+            assert column.process_result_value(ciphertext, None) == "still-live-session-token"
+        finally:
+            _fernet.cache_clear()
+
+    def test_new_writes_use_the_new_key_alone_not_the_previous_one(self, monkeypatch):
+        old_key = Fernet.generate_key().decode()
+        new_key = Fernet.generate_key().decode()
+        column = EncryptedString()
+
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY", new_key)
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS", old_key)
+        _fernet.cache_clear()
+        try:
+            ciphertext = column.process_bind_param("freshly-written-token", None)
+
+            # Decryptable with the new key alone -- proves this ciphertext
+            # was never encrypted under the old key in the first place.
+            monkeypatch.delenv("SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS", raising=False)
+            _fernet.cache_clear()
+            assert column.process_result_value(ciphertext, None) == "freshly-written-token"
+        finally:
+            _fernet.cache_clear()
+
+    def test_the_old_key_stops_working_once_retired(self, monkeypatch):
+        old_key = Fernet.generate_key().decode()
+        new_key = Fernet.generate_key().decode()
+        column = EncryptedString()
+
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY", old_key)
+        _fernet.cache_clear()
+        ciphertext = column.process_bind_param("about-to-be-orphaned", None)
+
+        # Rotation complete: previous key unset, same as after the
+        # SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS runbook step is undone.
+        monkeypatch.setenv("SESSION_TOKEN_ENCRYPTION_KEY", new_key)
+        monkeypatch.delenv("SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS", raising=False)
+        _fernet.cache_clear()
+        try:
+            with pytest.raises(InvalidToken):
+                column.process_result_value(ciphertext, None)
+        finally:
+            _fernet.cache_clear()

@@ -203,10 +203,23 @@ def upsert_chunks(client: QdrantClient, points: list[PointStruct]) -> None:
     In practice every point in one call belongs to a single document and
     therefore a single classification (ingestion-worker calls `ensure_ready`
     for that one classification immediately before this), but grouping
-    defensively costs nothing and keeps this correct if that ever changes."""
+    defensively costs nothing and keeps this correct if that ever changes.
+
+    Issue #271: a point without a non-empty `classification` payload used to
+    default to `""`, which `classification_collection_name` slugs to the
+    `__unspecified` collection -- one no retrieval path ever queries. That's
+    fail-closed (nothing leaks) but silent: the chunk would simply never
+    become retrievable, with no error, log, or metric. Every current writer
+    stamps this field, so this is a defensive check against a future bug,
+    not a live one -- consistent with this repo's fail-loud convention for a
+    missing mandatory access-control field (cf. the embedding-provenance
+    mismatch check, issue #122).
+    """
     by_classification: dict[str, list[PointStruct]] = {}
     for point in points:
         classification = (point.payload or {}).get("classification", "")
+        if not classification:
+            raise ValueError(f"point {point.id!r} missing non-empty 'classification' payload field")
         by_classification.setdefault(classification, []).append(point)
     for classification, group in by_classification.items():
         client.upsert(collection_name=classification_collection_name(classification), points=group)

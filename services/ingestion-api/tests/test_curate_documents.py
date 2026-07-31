@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app import deps
 from app.routes import curate
 from common.claims import UserClaims
 from common.models import AuditLogEntry, ClassificationLevel, Document
@@ -24,6 +25,29 @@ CURATOR = UserClaims(
     sub="curator-sub",
     preferred_username="carol-curator",
     org="USAREUR-AF",
+    rag_roles=["rag-curate:USAREUR-AF", "rag-clearance:SECRET", "rag-releasability:NONE"],
+)
+
+# Issue #279 (gap G3): holds rag-purge and nothing else -- no
+# rag-curate:<org> role at all, so list_documents' unscoped branch (as
+# opposed to CURATOR's org/clearance/releasability-scoped one) is what
+# should run for this identity.
+PURGE_ONLY = UserClaims(
+    sub="purge-only-sub", preferred_username="eve-purge", rag_roles=["rag-purge"]
+)
+
+NEITHER_CURATOR_NOR_PURGE = UserClaims(
+    sub="bob-sub", preferred_username="bob-query", rag_roles=["rag-query"]
+)
+
+# Issue #277: a same-org curator who additionally holds the Signal-Corps
+# group -- CURATOR above deliberately holds neither that group nor sub, so
+# it stands in for an org-authorized-but-out-of-scope curator.
+SIGNAL_CORPS_CURATOR = UserClaims(
+    sub="signal-corps-curator-sub",
+    preferred_username="sam-curator",
+    org="USAREUR-AF",
+    groups=["Signal-Corps"],
     rag_roles=["rag-curate:USAREUR-AF", "rag-clearance:SECRET", "rag-releasability:NONE"],
 )
 
@@ -137,6 +161,91 @@ class TestListQueue:
         assert [d.id for d in docs] == [mine.id]
 
 
+class TestScopeGating:
+    """Issue #277 (gap G1): access_scope is a hard requirement for seeing a
+    *pending* document, on par with clearance/releasability -- no grace
+    period, no fallback. A curator outside a document's access_scope simply
+    never sees it in the queue; there is no time after which visibility
+    opens up to them regardless."""
+
+    def test_out_of_scope_curator_never_sees_it(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert docs == []
+
+    def test_in_scope_curator_sees_it(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=SIGNAL_CORPS_CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_all_authenticated_scope_is_never_gated(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["ALL_AUTHENTICATED"])
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_queue(user=CURATOR, session=session)
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_approved_documents_are_never_scope_gated(self, session: Session) -> None:
+        # _visible_to_curator only applies the access_scope check to
+        # pending_review rows -- list_documents (the "any status" master
+        # list) must not start hiding already-decided documents.
+        doc = _document(status="approved", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None, classification=None, q=None, user=CURATOR, session=session
+        )
+
+        assert [d.id for d in docs] == [doc.id]
+
+    def test_out_of_scope_curator_cannot_approve_directly(self, session: Session) -> None:
+        # Not just hidden from the queue -- the actual access-control point
+        # (approve/reject) has to refuse it too, or hiding it from the list
+        # would be security theater against a curator who already has the id.
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        with pytest.raises(Exception) as excinfo:
+            curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        assert excinfo.value.status_code == 403  # type: ignore[attr-defined]
+
+    def test_out_of_scope_curator_cannot_reject_directly(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        with pytest.raises(Exception) as excinfo:
+            curate.reject(
+                doc.id, curate.Rejection(reason="no"), user=CURATOR, session=session, _csrf=None
+            )
+
+        assert excinfo.value.status_code == 403  # type: ignore[attr-defined]
+
+    def test_in_scope_curator_can_approve(self, session: Session) -> None:
+        doc = _document(status="pending_review", access_scope=["Signal-Corps"])
+        session.add(doc)
+        session.commit()
+
+        approved = curate.approve(
+            doc.id, corrections=None, user=SIGNAL_CORPS_CURATOR, session=session, _csrf=None
+        )
+
+        assert approved.status == "approved"
+
+
 class TestListDocuments:
     def test_scoped_to_curatable_orgs_across_every_status(self, session: Session) -> None:
         mine_approved = _document(status="approved")
@@ -237,6 +346,86 @@ class TestListDocuments:
         )
 
         assert docs == []
+
+
+class TestListDocumentsPurgeOnly:
+    """Issue #279 (gap G3): a rag-purge holder with no rag-curate:<org> role
+    needs to find the document they mean to delete -- require_purge's own
+    authority is already unscoped (app/routes/upload.py), so this list is
+    too, unlike CURATOR's org/clearance/releasability-scoped view above."""
+
+    def test_sees_every_document_regardless_of_org_clearance_or_releasability(
+        self, session: Session
+    ) -> None:
+        other_org = _document(owner_org="Signal-Corps", filename="other-org.pdf")
+        above_clearance = _document(classification="TOP SECRET", filename="ts.pdf")
+        unheld_releasability = _document(releasability=["FVEY"], filename="fvey.pdf")
+        for doc in (other_org, above_clearance, unheld_releasability):
+            session.add(doc)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None, classification=None, q=None, user=PURGE_ONLY, session=session
+        )
+
+        assert {d.id for d in docs} == {other_org.id, above_clearance.id, unheld_releasability.id}
+
+    def test_status_filter_still_narrows_the_unscoped_set(self, session: Session) -> None:
+        approved = _document(status="approved")
+        rejected = _document(status="rejected", filename="bad.pdf", owner_org="Signal-Corps")
+        session.add(approved)
+        session.add(rejected)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter="rejected",
+            classification=None,
+            q=None,
+            user=PURGE_ONLY,
+            session=session,
+        )
+
+        assert [d.id for d in docs] == [rejected.id]
+
+    def test_a_curator_who_also_holds_rag_purge_still_gets_the_curator_scoped_view(
+        self, session: Session
+    ) -> None:
+        """Least-surprise: holding rag-purge on top of rag-curate:<org> must
+        not widen what an existing curator already sees."""
+        curator_and_purge = UserClaims(
+            sub="dave-sub",
+            preferred_username="dave-admin",
+            org="USAREUR-AF",
+            rag_roles=["rag-curate:USAREUR-AF", "rag-clearance:SECRET", "rag-purge"],
+        )
+        mine = _document(owner_org="USAREUR-AF")
+        other_org = _document(owner_org="Signal-Corps", filename="other-org.pdf")
+        session.add(mine)
+        session.add(other_org)
+        session.commit()
+
+        docs = curate.list_documents(
+            status_filter=None,
+            classification=None,
+            q=None,
+            user=curator_and_purge,
+            session=session,
+        )
+
+        assert [d.id for d in docs] == [mine.id]
+
+
+class TestRequireCuratorOrPurge:
+    def test_curator_is_authorized(self) -> None:
+        assert deps.require_curator_or_purge(user=CURATOR) is CURATOR
+
+    def test_purge_only_holder_is_authorized(self) -> None:
+        assert deps.require_curator_or_purge(user=PURGE_ONLY) is PURGE_ONLY
+
+    def test_neither_role_is_refused(self) -> None:
+        with pytest.raises(Exception) as exc_info:
+            deps.require_curator_or_purge(user=NEITHER_CURATOR_NOR_PURGE)
+        assert exc_info.value.status_code == 403  # type: ignore[attr-defined]
 
 
 class TestDocumentEditRejectsEmptyLists:

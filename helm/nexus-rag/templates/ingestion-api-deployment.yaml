@@ -130,6 +130,15 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.ingestionApi.sessionTokenEncryption.existingSecret }}
                   key: {{ .Values.ingestionApi.sessionTokenEncryption.secretKey }}
+            {{- if .Values.ingestionApi.sessionTokenEncryption.previousExistingSecret }}
+            # Issue #281 gap G5 stage 2: tried via MultiFernet if the key
+            # above fails to decrypt a row -- set only while rotating.
+            - name: SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ingestionApi.sessionTokenEncryption.previousExistingSecret }}
+                  key: {{ .Values.ingestionApi.sessionTokenEncryption.previousSecretKey }}
+            {{- end }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
             # NFR-15: full read/write key -- this service creates the
@@ -141,6 +150,11 @@ spec:
                   key: {{ .Values.qdrant.apiKey.secretKey }}
             - name: MAX_UPLOAD_BYTES
               value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
+            # Issue #279 (gap G3): see values.yaml's purgeTwoPersonRequired comment.
+            - name: PURGE_TWO_PERSON_REQUIRED
+              value: {{ .Values.ingestionApi.purgeTwoPersonRequired | quote }}
+            - name: PURGE_REQUEST_EXPIRY_HOURS
+              value: {{ .Values.ingestionApi.purgeRequestExpiryHours | quote }}
             # app/routes/search.py's query-testing page proxies here (ARCHITECTURE.md
             # Section 4.3's /debug/rag_search, same as docker-compose.yml's dev wiring).
             - name: ORCHESTRATION_MCP_URL

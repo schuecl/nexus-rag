@@ -494,6 +494,32 @@
           "rag-purge"
         ]
       }
+    },
+    {
+      "username": "eve-purge",
+      "email": "eve-purge@example.mil",
+      "firstName": "Eve",
+      "lastName": "Purge",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass123",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "groups": [],
+        "org": [
+          "USAREUR-AF"
+        ]
+      },
+      "clientRoles": {
+        "rag-app": [
+          "rag-purge"
+        ]
+      }
     }
   ],
   "eventsEnabled": true,

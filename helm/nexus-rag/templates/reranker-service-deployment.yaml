@@ -54,6 +54,13 @@ spec:
                   name: {{ .Values.rerankerService.sharedSecret.existingSecret }}
                   key: {{ .Values.rerankerService.sharedSecret.secretKey }}
             {{- end }}
+            {{- if .Values.rerankerService.sharedSecret.previousExistingSecret }}
+            - name: RERANKER_SHARED_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rerankerService.sharedSecret.previousExistingSecret }}
+                  key: {{ .Values.rerankerService.sharedSecret.previousSecretKey }}
+            {{- end }}
           volumeMounts:
             - name: hf-cache
               mountPath: /srv/.cache/huggingface

@@ -280,6 +280,10 @@ services:
       # dev default matches the QDRANT_API_KEY pattern (a real deployment
       # sets its own via .env, same as that one).
       RERANKER_SHARED_SECRET: ${RERANKER_SHARED_SECRET:-dev-reranker-shared-secret}
+      # Issue #281 gap G5 stage 2: optional second value accepted alongside
+      # the one above during a no-downtime rotation -- unset (the default)
+      # outside a rotation window. See docs/credential-rotation.md.
+      RERANKER_SHARED_SECRET_PREVIOUS: ${RERANKER_SHARED_SECRET_PREVIOUS:-}
     volumes:
       - reranker-cache:/srv/.cache/huggingface
     ports:
@@ -334,6 +338,12 @@ services:
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       QUEUE_RECONCILE_INTERVAL_SECONDS: ${QUEUE_RECONCILE_INTERVAL_SECONDS:-15}
       QUEUE_RECONCILE_BATCH_SIZE: ${QUEUE_RECONCILE_BATCH_SIZE:-100}
+      # Issue #279 (gap G3): code defaults this true (production-safe); the
+      # dev stack sets it false because dave-admin is the only seeded
+      # rag-purge holder -- a second confirming identity would never be
+      # available, and seed-sample-data never purges anyway. See
+      # app/routes/upload.py.
+      PURGE_TWO_PERSON_REQUIRED: "false"
       # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
       # postgres service's init-app-roles.sh.
       DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
@@ -357,6 +367,10 @@ services:
       COOKIE_SECURE: "false"
       # Issue #213: encrypts the UserSession rows this service writes below.
       SESSION_TOKEN_ENCRYPTION_KEY: ${SESSION_TOKEN_ENCRYPTION_KEY:-VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=}
+      # Issue #281 gap G5 stage 2: optional previous key, tried via
+      # MultiFernet if the current key fails to decrypt -- unset (the
+      # default) outside a rotation window. See docs/credential-rotation.md.
+      SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS: ${SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS:-}
       QDRANT_URL: http://qdrant:6333
       # NFR-15: full read/write key -- app/routes/curate.py updates/deletes
       # points directly (approve/reject/supersede); ingestion-worker (below)
