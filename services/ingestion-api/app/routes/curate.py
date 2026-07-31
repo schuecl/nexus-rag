@@ -436,12 +436,13 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
 
 def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """Issue #306 gap 1: link the curator's decision back to the ingestion-time
-    marking-mismatch advisory (issue #138), if one was flagged for this
-    document. Without this, recovering "did the curator agree with the flag"
-    means diffing the `document.tagging_advisory` and `document.approve`/
-    `document.reject` audit rows by document ID after the fact -- embedding the
-    flagged values and the curator's final tags directly in the decision's own
-    audit entry makes that row self-contained instead.
+    marking-mismatch advisory (issue #138) and precedent advisory (issue #307
+    Phase 2), if either was flagged for this document. Without this,
+    recovering "did the curator agree with the flag" means diffing the
+    `document.tagging_advisory` and `document.approve`/`document.reject`
+    audit rows by document ID after the fact -- embedding the flagged values
+    and the curator's final tags directly in the decision's own audit entry
+    makes that row self-contained instead.
 
     Deliberately reads only `doc.tagging_advisory` (a Document column
     ingestion-api already has SELECT on), not the audit_log table itself --
@@ -452,19 +453,26 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     violate that boundary and fail against the real grant (caught live: it
     raised `psycopg.errors.InsufficientPrivilege` against the dev stack).
 
-    Returns None when nothing was flagged (the common case), so approve/reject
-    audit entries stay unchanged for documents the advisory had no findings
-    for.
+    Returns None when nothing was flagged by either advisory (the common
+    case), so approve/reject audit entries stay unchanged for documents
+    neither one had a finding for.
     """
     advisory = doc.tagging_advisory or {}
-    if not (advisory.get("under_classified") or advisory.get("unassigned_caveats")):
+    precedent = advisory.get("precedent") or {}
+    flagged = advisory.get("under_classified") or advisory.get("unassigned_caveats")
+    flagged_precedent = precedent.get("disagrees_with_assigned")
+    if not (flagged or flagged_precedent):
         return None
-    return {
+    outcome = {
         "flagged_classification": advisory.get("detected_classification"),
         "flagged_caveats": advisory.get("unassigned_caveats"),
         "final_classification": doc.classification,
         "final_releasability": doc.releasability,
     }
+    if flagged_precedent:
+        outcome["precedent_classification"] = precedent.get("top_classification")
+        outcome["precedent_similar_count"] = precedent.get("similar_count")
+    return outcome
 
 
 def _execute_supersede(

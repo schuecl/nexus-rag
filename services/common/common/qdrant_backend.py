@@ -19,7 +19,15 @@ from typing import TYPE_CHECKING
 
 import httpx
 from qdrant_client.http.exceptions import UnexpectedResponse
-from qdrant_client.models import Fusion, FusionQuery, PointStruct, Prefetch
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    Fusion,
+    FusionQuery,
+    MatchValue,
+    PointStruct,
+    Prefetch,
+)
 
 from common.qdrant_filters import build_access_filter
 from common.qdrant_store import (
@@ -30,6 +38,7 @@ from common.qdrant_store import (
     classification_collection_name,
     delete_document_chunks,
     ensure_collection,
+    existing_classification_collections,
     get_qdrant_client,
     update_document_payload,
     upsert_chunks,
@@ -99,6 +108,41 @@ class QdrantStore:
                         ),
                     ],
                     query=FusionQuery(fusion=Fusion.RRF),
+                    limit=limit,
+                ).points
+                per_collection.append(
+                    [Hit(id=str(h.id), score=h.score, payload=h.payload or {}) for h in hits]
+                )
+        except (UnexpectedResponse, httpx.HTTPError) as exc:
+            raise VectorStoreUnavailable(str(exc)) from exc
+        return fuse_ranked(per_collection, limit=limit)
+
+    def find_similar_approved(
+        self, *, dense: list[float], limit: int, exclude_document_id: str | None = None
+    ) -> list[Hit]:
+        # No claims/allowed_classifications here (see the Protocol docstring)
+        # -- every existing per-classification collection is searched, not
+        # just ones some caller is cleared for, so this must not be
+        # implemented by handing it a synthetic "sees everything" claims
+        # object through the FR-26 filter path.
+        query_filter = Filter(
+            must=[FieldCondition(key="status", match=MatchValue(value="approved"))],
+            must_not=(
+                [FieldCondition(key="document_id", match=MatchValue(value=exclude_document_id))]
+                if exclude_document_id is not None
+                else None
+            ),
+        )
+
+        client = get_qdrant_client()
+        per_collection: list[list[Hit]] = []
+        try:
+            for name in existing_classification_collections(client):
+                hits = client.query_points(
+                    collection_name=name,
+                    query=dense,
+                    using=DENSE_VECTOR,
+                    query_filter=query_filter,
                     limit=limit,
                 ).points
                 per_collection.append(

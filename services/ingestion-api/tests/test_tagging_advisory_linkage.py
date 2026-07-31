@@ -93,6 +93,28 @@ def _flagged_advisory(detected_classification: str = "SECRET") -> dict:
     }
 
 
+def _precedent_flagged_advisory(top_classification: str = "SECRET") -> dict:
+    return {
+        "assigned_classification": "CUI",
+        "detected_classification": None,
+        "under_classified": False,
+        "detected_caveats": [],
+        "unassigned_caveats": [],
+        "evidence": [],
+        "evidence_offsets": [],
+        "notes": [],
+        "markings_not_scanned": False,
+        "unscanned_reasons": [],
+        "precedent": {
+            "similar_count": 5,
+            "top_classification": top_classification,
+            "top_classification_count": 4,
+            "top_releasability": ["NATO"],
+            "disagrees_with_assigned": True,
+        },
+    }
+
+
 def _decision_entry(session: Session, action: str) -> AuditLogEntry:
     entries = session.exec(select(AuditLogEntry).where(AuditLogEntry.action == action)).all()
     assert len(entries) == 1
@@ -137,6 +159,37 @@ class TestApproveLinksFlaggedAdvisory:
         self, session: Session
     ) -> None:
         doc = _document()  # tagging_advisory left unset -- nothing was flagged
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        assert entry.detail["tagging_advisory"] is None
+
+    def test_approve_embeds_a_flagged_precedent_advisory(self, session: Session) -> None:
+        # Issue #307 Phase 2: a precedent disagreement links into the
+        # decision's audit entry the same way a Phase 1 marking-mismatch
+        # finding does, even with no marking-mismatch finding of its own.
+        doc = _document(tagging_advisory=_precedent_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["precedent_classification"] == "SECRET"
+        assert outcome["precedent_similar_count"] == 5
+
+    def test_approve_of_precedent_agreeing_document_has_no_tagging_advisory_link(
+        self, session: Session
+    ) -> None:
+        advisory = _precedent_flagged_advisory()
+        advisory["precedent"]["disagrees_with_assigned"] = False
+        doc = _document(tagging_advisory=advisory)
         session.add(doc)
         session.commit()
         session.refresh(doc)

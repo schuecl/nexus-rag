@@ -119,6 +119,25 @@ class VectorStore(Protocol):
         """The applied-filter description rag_search returns to callers and
         writes to the FR-31 audit detail."""
 
+    def find_similar_approved(
+        self, *, dense: list[float], limit: int, exclude_document_id: str | None = None
+    ) -> list[Hit]:
+        """Issue #307 Phase 2: dense-only kNN over every `approved` chunk,
+        across every classification collection -- the precedent-tag signal
+        ingestion-worker surfaces alongside Phase 1's marking-mismatch
+        advisory. Unlike `hybrid_query`, this takes no `claims`/
+        `allowed_classifications`: it runs at ingestion time, before any
+        curator has reviewed the document, on behalf of the pipeline itself
+        rather than a specific authenticated caller, so there is no user
+        identity to scope a mandatory access filter from. `status=approved`
+        is still hardcoded (never `pending_review`/`rejected`, consistent
+        with FR-26) -- that part isn't optional just because there's no
+        caller-supplied filter. `exclude_document_id` keeps a document's own
+        (not-yet-approved) points from matching themselves on redelivery.
+        Raises VectorStoreUnavailable when the engine can't be queried; the
+        caller (ingestion-worker) treats this as fail-safe/advisory-only, the
+        same posture as Phase 1."""
+
     def update_document_payload(self, document_id: str, classification: str, fields: dict) -> None:
         """FR-13: propagate curation decisions (status, corrected tags) to
         every chunk of a document. `classification` is the value the chunks

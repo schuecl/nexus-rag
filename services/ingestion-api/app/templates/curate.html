@@ -53,6 +53,28 @@ function advisoryNode(doc) {
       document.createTextNode(' not in the assigned releasability'),
     ]);
   }
+  // Issue #307 Phase 2: precedent kNN over the approved corpus, computed by
+  // the worker from embeddings it already had -- a document-content-based
+  // finding, distinct from #138's in-text marking scan above but folded into
+  // the same advisory box (no second surface). Only shown when it disagrees
+  // with the assigned tag, same "only speak up when something's off" gating
+  // as the findings above -- consistent precedent isn't worth a curator's
+  // attention.
+  const precedent = adv.precedent;
+  if (precedent && precedent.disagrees_with_assigned) {
+    const parts = [
+      document.createTextNode(`${precedent.top_classification_count}/${precedent.similar_count} `),
+      document.createTextNode('nearest approved document(s) are tagged '),
+      el('strong', { text: precedent.top_classification }),
+    ];
+    if ((precedent.top_releasability || []).length) {
+      parts.push(
+        document.createTextNode(' // REL TO '),
+        el('strong', { text: precedent.top_releasability.join(', ') }),
+      );
+    }
+    findings.push(parts);
+  }
   // Issue #306 gap 3: distinct from `findings` above -- this means some of the
   // document's content (a scanned page OCR couldn't recover) was never
   // checked for markings at all, not that it was checked and found clean.

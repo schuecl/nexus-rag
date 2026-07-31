@@ -145,6 +145,11 @@ STATUS = ConsumerStatus()
 # of a very large document would add latency for no real recall gain.
 _ADVISORY_SCAN_LIMIT = 1_000_000
 
+# Issue #307 Phase 2: how many nearest approved documents' tags to surface as
+# precedent. Small and fixed -- this is a decision-support hint, not a
+# ranked-results page, so there's no reason to make it caller-configurable.
+_PRECEDENT_LIMIT = 5
+
 
 def _apply_tagging_advisory(
     session: Session,
@@ -216,6 +221,97 @@ def _apply_tagging_advisory(
     except Exception:
         logger.exception(
             "tagging advisory failed for document %s; continuing ingestion without it",
+            doc.id,
+        )
+
+
+def _apply_precedent_advisory(
+    session: Session,
+    doc: Document,
+    dense_vectors: list[list[float]],
+) -> None:
+    """Issue #307 Phase 2: kNN precedent lookup over the approved corpus,
+    using the chunk embeddings already computed for this document -- no new
+    model call, no training data, per the issue's whole premise. Reports
+    what the nearest already-approved documents were tagged, merged into the
+    same `doc.tagging_advisory` column/UI surface Phase 1's marking-mismatch
+    finding uses, rather than a second advisory surface.
+
+    Same posture as `_apply_tagging_advisory`: advisory only -- never
+    mutates doc.classification/releasability, a curator still decides -- and
+    fail-safe by construction. Any error here, including Qdrant being
+    unreachable, is swallowed and logged, leaving whatever `tagging_advisory`
+    already held (e.g. Phase 1's finding) untouched. Ingestion must never
+    block or fail because a precedent lookup didn't work.
+
+    The query vector is the centroid of this document's own chunk
+    embeddings -- a cheap document-level stand-in that needs no extra
+    embedding call. The search spans every classification collection, not
+    just the one this document was tagged into: the entire value of the
+    signal is catching a document whose nearest approved precedent sits at a
+    *different* (often higher) classification than the one a human assigned,
+    which a same-collection-only search could never surface. Only `approved`
+    chunks are ever candidates (never `pending_review`/`rejected`),
+    consistent with FR-26.
+    """
+    try:
+        centroid = [sum(dim) / len(dim) for dim in zip(*dense_vectors, strict=True)]
+        hits = get_store().find_similar_approved(
+            dense=centroid, limit=_PRECEDENT_LIMIT, exclude_document_id=str(doc.id)
+        )
+        if not hits:
+            return
+        counts: dict[str, int] = {}
+        for hit in hits:
+            classification = hit.payload.get("classification")
+            if classification:
+                counts[classification] = counts.get(classification, 0) + 1
+        if not counts:
+            return
+        top_classification = max(counts, key=lambda c: counts[c])
+        top_releasability: set[str] = set()
+        for hit in hits:
+            if hit.payload.get("classification") == top_classification:
+                top_releasability.update(hit.payload.get("releasability") or [])
+
+        levels = session.exec(
+            select(ClassificationLevel).where(ClassificationLevel.active == True)  # noqa: E712
+        ).all()
+        rank_by_value = {lvl.value.upper(): lvl.rank for lvl in levels}
+        assigned_rank = rank_by_value.get(doc.classification.upper())
+        top_rank = rank_by_value.get(top_classification.upper())
+        disagrees = assigned_rank is not None and top_rank is not None and top_rank > assigned_rank
+
+        precedent = {
+            "similar_count": len(hits),
+            "top_classification": top_classification,
+            "top_classification_count": counts[top_classification],
+            "top_releasability": sorted(top_releasability),
+            "disagrees_with_assigned": disagrees,
+        }
+        doc.tagging_advisory = {**(doc.tagging_advisory or {}), "precedent": precedent}
+        if disagrees:
+            logger.info(
+                "document %s precedent advisory: %d/%d nearest approved documents are "
+                "tagged %s, assigned is %s",
+                doc.id,
+                counts[top_classification],
+                len(hits),
+                top_classification,
+                doc.classification,
+            )
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.tagging_advisory",
+                    target_id=str(doc.id),
+                    detail={"precedent": precedent},
+                )
+            )
+    except Exception:
+        logger.exception(
+            "precedent advisory failed for document %s; continuing ingestion without it",
             doc.id,
         )
 
@@ -429,6 +525,16 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     dense_size=len(dense_vectors[0]), classification=doc.classification
                 )
                 store.upsert(points)
+
+            # Issue #307 Phase 2: same rationale as leaving the upsert above
+            # outside PROCESSING_TIMEOUT_SECONDS -- a slow/unreachable Qdrant
+            # read is transient infrastructure latency, not a pathological
+            # document, so it shouldn't compete with that CPU-bound budget
+            # either. Runs after the upsert so `exclude_document_id` is
+            # belt-and-suspenders only (this document's own points are
+            # `pending_review`, already excluded by the `approved`-only
+            # filter) rather than load-bearing.
+            _apply_precedent_advisory(session, doc, dense_vectors)
 
             doc.status = "embedded"
             doc.chunk_count = len(chunks)

@@ -244,6 +244,40 @@ class MilvusStore:
             for r in (results[0] if results else [])
         ]
 
+    def find_similar_approved(
+        self, *, dense: list[float], limit: int, exclude_document_id: str | None = None
+    ) -> list[Hit]:
+        # Issue #229 not implemented here (see module docstring): one
+        # collection, so unlike QdrantStore's per-collection fan-out this is
+        # a single search. No claims-derived expr -- see the Protocol
+        # docstring for why this path has no caller identity to scope one
+        # from; `status == "approved"` is still hardcoded.
+        from pymilvus import MilvusException
+
+        expr = 'status == "approved"'
+        if exclude_document_id is not None:
+            expr += f" and document_id != {_quote(exclude_document_id)}"
+        try:
+            results = _client().search(
+                collection_name=MILVUS_COLLECTION,
+                data=[dense],
+                anns_field="dense",
+                search_params={"metric_type": "COSINE"},
+                limit=limit,
+                filter=expr,
+                output_fields=["payload"],
+            )
+        except MilvusException as exc:
+            raise VectorStoreUnavailable(str(exc)) from exc
+        return [
+            Hit(
+                id=str(r["id"]),
+                score=float(r["distance"]),
+                payload=(r.get("entity") or {}).get("payload") or {},
+            )
+            for r in (results[0] if results else [])
+        ]
+
     def access_filter_summary(self, claims: UserClaims, allowed_classifications: list[str]) -> dict:
         return {
             "backend": "milvus",

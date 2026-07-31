@@ -41,16 +41,31 @@ class _QueryResult:
         self.points = points
 
 
+class _Collection:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Collections:
+    def __init__(self, names):
+        self.collections = [_Collection(n) for n in names]
+
+
 class FakeClient:
     def __init__(self, *, hits_by_collection=None, existing=None, raises_for=None):
         self._hits_by_collection = hits_by_collection or {}
         self._existing = existing if existing is not None else set(self._hits_by_collection)
         self._raises_for = raises_for or set()
+        self._queries = []
 
     def collection_exists(self, name):
         return name in self._existing
 
-    def query_points(self, *, collection_name, **_kwargs):
+    def get_collections(self):
+        return _Collections(sorted(self._existing))
+
+    def query_points(self, *, collection_name, **kwargs):
+        self._queries.append((collection_name, kwargs))
         if collection_name in self._raises_for:
             raise UnexpectedResponse(
                 status_code=503, reason_phrase="down", content=b"", headers=None
@@ -141,6 +156,76 @@ class TestHybridQueryFanOut:
                 allowed_classifications=["CUI"],
                 limit=10,
             )
+
+
+class TestFindSimilarApproved:
+    """Issue #307 Phase 2: unlike hybrid_query, this fans out over *every*
+    existing classification collection -- there's no caller claims/allowed
+    list to scope it to (see the Protocol docstring)."""
+
+    def test_searches_every_existing_collection(self, _client):
+        cui = classification_collection_name("CUI")
+        secret = classification_collection_name("SECRET")
+        client = _client(
+            hits_by_collection={
+                cui: [_Hit("cui-1", 0.9, {"classification": "CUI"})],
+                secret: [_Hit("secret-1", 0.8, {"classification": "SECRET"})],
+            },
+            existing={cui, secret},
+        )
+        store = qdrant_backend.QdrantStore()
+
+        hits = store.find_similar_approved(dense=[0.1], limit=10)
+
+        assert {h.id for h in hits} == {"cui-1", "secret-1"}
+        assert {name for name, _ in client._queries} == {cui, secret}
+
+    def test_status_approved_filter_is_applied(self, _client):
+        cui = classification_collection_name("CUI")
+        client = _client(hits_by_collection={cui: []}, existing={cui})
+        store = qdrant_backend.QdrantStore()
+
+        store.find_similar_approved(dense=[0.1], limit=10)
+
+        _, kwargs = client._queries[0]
+        query_filter = kwargs["query_filter"]
+        assert any(c.key == "status" and c.match.value == "approved" for c in query_filter.must)
+
+    def test_exclude_document_id_is_applied_as_must_not(self, _client):
+        cui = classification_collection_name("CUI")
+        client = _client(hits_by_collection={cui: []}, existing={cui})
+        store = qdrant_backend.QdrantStore()
+
+        store.find_similar_approved(dense=[0.1], limit=10, exclude_document_id="doc-1")
+
+        _, kwargs = client._queries[0]
+        query_filter = kwargs["query_filter"]
+        assert query_filter.must_not[0].key == "document_id"
+        assert query_filter.must_not[0].match.value == "doc-1"
+
+    def test_no_exclude_document_id_omits_must_not(self, _client):
+        cui = classification_collection_name("CUI")
+        client = _client(hits_by_collection={cui: []}, existing={cui})
+        store = qdrant_backend.QdrantStore()
+
+        store.find_similar_approved(dense=[0.1], limit=10)
+
+        _, kwargs = client._queries[0]
+        assert not kwargs["query_filter"].must_not
+
+    def test_no_collections_returns_nothing(self, _client):
+        _client()
+        store = qdrant_backend.QdrantStore()
+
+        assert store.find_similar_approved(dense=[0.1], limit=10) == []
+
+    def test_backend_failure_raises_unavailable(self, _client):
+        cui = classification_collection_name("CUI")
+        _client(existing={cui}, raises_for={cui})
+        store = qdrant_backend.QdrantStore()
+
+        with pytest.raises(VectorStoreUnavailable):
+            store.find_similar_approved(dense=[0.1], limit=10)
 
 
 class TestAccessFilterSummary:

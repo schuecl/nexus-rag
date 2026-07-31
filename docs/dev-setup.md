@@ -660,6 +660,22 @@ the docs, not a silent "it works" — flag it if you find one.
   against the shared `access_scope_authorized` predicate, plus service-level tests
   covering queue visibility and the approve/reject hard block against an in-memory
   SQLite session) — not yet exercised against a live Postgres pair or a browser.
+- **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
+  the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
+  against every `approved` chunk, using the centroid of the document's own chunk
+  embeddings it already computed for storage (no extra model call). The classification/
+  releasability of the nearest matches are folded into the same `document.tagging_advisory`
+  JSON column and `/curate` advisory box Phase 1's marking-mismatch finding uses, only
+  surfaced when the nearest precedent disagrees with the assigned classification —
+  e.g. "4/5 nearest approved documents are tagged SECRET // REL TO NATO." Same posture
+  as Phase 1: advisory only (never mutates a tag), fail-safe (any error, including an
+  unreachable Qdrant, is swallowed and logged, leaving ingestion unaffected), and scoped
+  to `approved` chunks only, never `pending_review`/`rejected` (FR-26). **Tested against
+  mocks only** (worker-side unit tests against a fake vector-store client, plus
+  `qdrant_backend.QdrantStore.find_similar_approved` tests against a fake Qdrant client
+  mirroring `hybrid_query`'s existing fan-out tests) — not yet exercised against a live
+  Qdrant or a browser. `MilvusStore.find_similar_approved` is implemented but has no
+  dedicated unit test yet, matching the existing gap on `MilvusStore.hybrid_query`.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
