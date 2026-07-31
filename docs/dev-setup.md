@@ -342,6 +342,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
+(This builds from source, which is what dev wants. Deploying a specific
+*released* version — versioned images, the packaged chart, the air-gapped
+import flow — is a different path: see [`releasing.md`](releasing.md), #295.)
+
 First boot takes a while: Keycloak imports the realm, `ollama-model-init` pulls
 `nomic-embed-text` and `llama3.2:1b`, `reranker-service` downloads
 `cross-encoder/ms-marco-MiniLM-L6-v2`, `ingestion-api`/`orchestration-mcp` each download

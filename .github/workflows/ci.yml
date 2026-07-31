@@ -231,6 +231,13 @@ jobs:
       # copy and nothing reports it.
       - name: Issue #257 -- observability assets match across compose and chart
         run: python scripts/check_observability_assets_sync.py
+      # Issue #295: the stack versions in lockstep (docs/releasing.md) --
+      # Chart.yaml version/appVersion, all five pyprojects, and the chart's
+      # four first-party image tags must agree, or the next `vX.Y.Z` tag
+      # will refuse to release (release.yml checks the tag against these
+      # same files).
+      - name: Issue #295 -- stack version consistent everywhere
+        run: python scripts/check_version_consistency.py
 
   build:
     runs-on: ubuntu-latest

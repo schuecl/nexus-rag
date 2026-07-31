@@ -1,0 +1,132 @@
+# Issue #295: the tag-triggered release pipeline. Pushing vX.Y.Z to this repo
+# builds the four first-party images, publishes them to GHCR under immutable
+# version tags (never :latest -- the same NFR-16 discipline check_pinned_images.py
+# enforces on the images we consume), packages and publishes the Helm chart as
+# an OCI artifact, and cuts a GitHub Release carrying the CHANGELOG section,
+# per-image SBOMs, the chart tarball, image digests, and checksums.
+#
+# The tag is the trigger, not the source of truth: the release PR bumps every
+# versioned file first (see docs/releasing.md), ci.yml's version-consistency
+# check keeps them agreeing on main, and the first step here refuses to release
+# a tag that disagrees with the files at the tagged commit.
+#
+# Hardening per #112: explicit least-privilege permissions, job timeout, only
+# already-SHA-pinned actions (no new third-party actions -- GHCR login, helm,
+# and gh are plain run steps with the job's GITHUB_TOKEN).
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # gh release create
+      packages: write # GHCR image + chart push
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Refuse a tag that disagrees with the repo's versioned files
+        run: |
+          pip install "pyyaml==6.0.3"
+          python scripts/check_version_consistency.py "${VERSION#v}"
+
+      - name: Release notes = this version's CHANGELOG section (must exist)
+        run: |
+          awk -v ver="${VERSION#v}" '
+            $0 ~ "^## \\[" ver "\\]" { on=1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no '## [${VERSION#v}]' section --" \
+                 "the release PR must add one before tagging (docs/releasing.md)"
+            exit 1
+          fi
+
+      - name: Build all four service images
+        run: >
+          docker compose build
+          ingestion-api ingestion-worker orchestration-mcp reranker-service
+
+      - name: Push images to GHCR under immutable version tags
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          : > image-digests.txt
+          for svc in ingestion-api ingestion-worker orchestration-mcp reranker-service; do
+            docker tag "nexus-rag-${svc}" "${registry}/${svc}:${VERSION#v}"
+            docker push "${registry}/${svc}:${VERSION#v}"
+            # RepoDigests is populated by the push above; recording it lets
+            # air-gapped consumers digest-pin what this run actually produced.
+            docker inspect --format '{{index .RepoDigests 0}}' \
+              "${registry}/${svc}:${VERSION#v}" >> image-digests.txt
+          done
+          cat image-digests.txt
+
+      - run: mkdir -p sbom dist
+      - name: SBOM for ingestion-api
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-ingestion-api
+          format: cyclonedx-json
+          output-file: sbom/ingestion-api.cdx.json
+          upload-artifact: false
+      - name: SBOM for ingestion-worker
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-ingestion-worker
+          format: cyclonedx-json
+          output-file: sbom/ingestion-worker.cdx.json
+          upload-artifact: false
+      - name: SBOM for orchestration-mcp
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-orchestration-mcp
+          format: cyclonedx-json
+          output-file: sbom/orchestration-mcp.cdx.json
+          upload-artifact: false
+      - name: SBOM for reranker-service
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: nexus-rag-reranker-service
+          format: cyclonedx-json
+          output-file: sbom/reranker-service.cdx.json
+          upload-artifact: false
+
+      - name: Package and publish the Helm chart (OCI)
+        run: |
+          helm lint helm/nexus-rag
+          helm package helm/nexus-rag -d dist
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "dist/nexus-rag-${VERSION#v}.tgz" \
+            "oci://ghcr.io/${GITHUB_REPOSITORY,,}/charts"
+
+      - name: Checksums over everything the release ships
+        run: sha256sum dist/*.tgz sbom/*.cdx.json image-digests.txt > sha256sums.txt
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            dist/*.tgz sbom/*.cdx.json image-digests.txt sha256sums.txt

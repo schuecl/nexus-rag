@@ -292,12 +292,10 @@ rerankerService:
   enabled: true
   image:
     repository: reranker-service
-    # NFR-16: matches Chart.yaml's appVersion, not :latest -- there's no CI
-    # pipeline yet that builds/pushes a version-tagged image for this
-    # first-party service, so this is a placeholder for the convention
-    # ("build and push something tagged to match this") rather than a
-    # value already backed by an existing tagged image. Bump alongside
-    # Chart.yaml's appVersion when that pipeline exists.
+    # NFR-16: matches Chart.yaml's appVersion, not :latest. Since #295 this
+    # is backed by a real image: release.yml publishes it on every vX.Y.Z
+    # tag, and the release PR bumps this together with appVersion --
+    # scripts/check_version_consistency.py fails CI if they disagree.
     tag: "0.1.0"
   model: "cross-encoder/ms-marco-MiniLM-L6-v2"
   replicas: 1
@@ -344,8 +342,8 @@ ingestionApi:
   enabled: true
   image:
     repository: ingestion-api
-    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
-    # for the convention, no versioned-image CI pipeline yet" caveat.
+    # NFR-16: see rerankerService.image.tag's comment -- published by
+    # release.yml, kept in lockstep by check_version_consistency.py (#295).
     tag: "0.1.0"
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
@@ -425,8 +423,8 @@ orchestrationMcp:
   enabled: true
   image:
     repository: orchestration-mcp
-    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
-    # for the convention, no versioned-image CI pipeline yet" caveat.
+    # NFR-16: see rerankerService.image.tag's comment -- published by
+    # release.yml, kept in lockstep by check_version_consistency.py (#295).
     tag: "0.1.0"
   replicas: 2
   service:
@@ -454,8 +452,8 @@ ingestionWorker:
   enabled: true
   image:
     repository: ingestion-worker
-    # NFR-16: see rerankerService.image.tag's comment -- same "placeholder
-    # for the convention, no versioned-image CI pipeline yet" caveat.
+    # NFR-16: see rerankerService.image.tag's comment -- published by
+    # release.yml, kept in lockstep by check_version_consistency.py (#295).
     tag: "0.1.0"
   replicas: 2
   # FR-4: chunking target size (words) and overlap ratio -- Section 2's
