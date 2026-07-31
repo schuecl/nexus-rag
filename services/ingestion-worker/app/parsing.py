@@ -27,7 +27,7 @@ import logging
 import os
 import zipfile
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -94,6 +94,28 @@ def _check_zip_bomb(content: bytes) -> None:
 
 
 @dataclass
+class OcrStatus:
+    """Issue #306 gap 3: per-document signal for content that could not be
+    scanned for classification markings at all -- OCR unavailable, the
+    per-document OCR budget exhausted, or a page's OCR pass recognized no
+    text. Without this, those cases and a page with genuinely no markings
+    both leave the marking detector with zero findings, and a curator can't
+    tell "checked, clean" from "never checked" (see _apply_tagging_advisory
+    in app/processing.py, which reads this after parse_document returns)."""
+
+    skipped_pages: int = 0
+    reasons: set[str] = field(default_factory=set)
+
+    def record(self, reason: str) -> None:
+        self.skipped_pages += 1
+        self.reasons.add(reason)
+
+    @property
+    def any_skipped(self) -> bool:
+        return self.skipped_pages > 0
+
+
+@dataclass
 class ParsedSection:
     """One structural unit of a document -- a heading's worth of text, a PDF
     page, a slide, a spreadsheet sheet. Chunking (FR-4) never splits across
@@ -115,7 +137,13 @@ class ParsedSection:
     content_type: str = "text"
 
 
-def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
+def parse_document(
+    filename: str, content: bytes, ocr_status: OcrStatus | None = None
+) -> list[ParsedSection]:
+    """`ocr_status`, when passed, is mutated in place with any scanned-page
+    OCR fallback (issue #241) content that could not be recovered (issue
+    #306 gap 3) -- see OcrStatus above. Callers that don't care (most tests,
+    every non-PDF format) can omit it."""
     if not content:
         raise ParsingError("empty file")
 
@@ -128,7 +156,7 @@ def parse_document(filename: str, content: bytes) -> list[ParsedSection]:
         if ext in (".html", ".htm"):
             return _parse_html(content)
         if ext == ".pdf":
-            return _parse_pdf(content)
+            return _parse_pdf(content, ocr_status)
         if ext == ".docx":
             _check_zip_bomb(content)
             return _parse_docx(content)
@@ -268,7 +296,7 @@ def _table_to_markdown(grid: list[list[str | None]]) -> str:
     return "\n".join(lines)
 
 
-def _parse_pdf(content: bytes) -> list[ParsedSection]:
+def _parse_pdf(content: bytes, ocr_status: OcrStatus | None = None) -> list[ParsedSection]:
     from pypdf import PdfReader
     from pypdf.errors import PdfReadError
 
@@ -329,7 +357,7 @@ def _parse_pdf(content: bytes) -> list[ParsedSection]:
             # that *has* text plus a figure is #92 captioning's territory,
             # not OCR's.
             if not prose and not tables:
-                ocr_sections, ocr_budget = _ocr_pdf_page(reader, i, ocr_budget)
+                ocr_sections, ocr_budget = _ocr_pdf_page(reader, i, ocr_budget, ocr_status)
                 sections.extend(ocr_sections)
 
     return sections
@@ -347,11 +375,16 @@ _MAX_OCR_IMAGES = _default_ocr_budget()
 
 
 def _ocr_pdf_page(
-    reader: PdfReader, page_index: int, budget: int
+    reader: PdfReader, page_index: int, budget: int, ocr_status: OcrStatus | None = None
 ) -> tuple[list[ParsedSection], int]:
     """OCR the embedded images of one text-less PDF page. Degrade-only: a
     missing tesseract, an undecodable image, or an exhausted budget costs
-    text that today contributes nothing anyway -- logged, never raised."""
+    text that today contributes nothing anyway -- logged, never raised.
+
+    `ocr_status`, when passed, records *why* a page ended up contributing no
+    text (issue #306 gap 3) -- the marking-mismatch advisory reads this to
+    tell a curator "this content was never scanned" apart from "it was
+    scanned and carries no markings"."""
     from app import ocr
 
     if not ocr.ocr_available():
@@ -362,6 +395,8 @@ def _ocr_pdf_page(
             "PDF page %d has no text layer and OCR is unavailable; its content is skipped",
             page_index + 1,
         )
+        if ocr_status is not None:
+            ocr_status.record("ocr_unavailable")
         return [], budget
     try:
         page_images = list(reader.pages[page_index].images)
@@ -372,15 +407,19 @@ def _ocr_pdf_page(
             type(exc).__name__,
             log_safe(exc),
         )
+        if ocr_status is not None:
+            ocr_status.record("unreadable_images")
         return [], budget
 
     texts: list[str] = []
+    budget_exhausted = False
     for image_file in page_images:
         if budget <= 0:
             logger.warning(
                 "OCR image budget exhausted at PDF page %d; remaining scanned pages are skipped",
                 page_index + 1,
             )
+            budget_exhausted = True
             break
         budget -= 1
         try:
@@ -396,6 +435,8 @@ def _ocr_pdf_page(
         if text:
             texts.append(text)
     if not texts:
+        if ocr_status is not None:
+            ocr_status.record("budget_exhausted" if budget_exhausted else "no_text_recognized")
         return [], budget
     return [
         ParsedSection(text="\n".join(texts), page_or_slide=page_index + 1, content_type="ocr")

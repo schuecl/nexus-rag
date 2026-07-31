@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.parsing import OcrStatus
 from app.processing import _apply_tagging_advisory
 from common.models import AuditLogEntry, ClassificationLevel, Document, ReleasabilityValue
 
@@ -112,6 +113,51 @@ def test_unknown_marking_segment_not_flagged_but_configured_caveat_is():
     assert doc.tagging_advisory["unassigned_caveats"] == ["NOFORN"]
     assert set(doc.tagging_advisory["detected_caveats"]) == {"SP-CTI", "NOFORN"}
     assert _audit_count(session) == 1
+
+
+def test_ocr_skip_flags_markings_not_scanned_and_is_audited():
+    # Issue #306 gap 3: a document whose scanned pages couldn't be OCR'd must
+    # not look identical to a clean document -- even with zero marking
+    # findings, the curator needs to know coverage was incomplete.
+    session = _make_session()
+    doc = _make_doc("CUI", ["NONE"])
+    sections = [_Section("Ordinary prose with no classification markings at all.")]
+    ocr_status = OcrStatus()
+    ocr_status.record("ocr_unavailable")
+
+    _apply_tagging_advisory(session, doc, sections, ocr_status)
+
+    assert doc.tagging_advisory["under_classified"] is False
+    assert doc.tagging_advisory["markings_not_scanned"] is True
+    assert doc.tagging_advisory["unscanned_reasons"] == ["ocr_unavailable"]
+    # Unlike a plain clean document, this is still audited -- a curator
+    # reviewing the queue must be able to see the coverage gap.
+    assert _audit_count(session) == 1
+
+
+def test_no_ocr_skip_leaves_markings_not_scanned_false():
+    session = _make_session()
+    doc = _make_doc("CUI", ["NONE"])
+    sections = [_Section("Ordinary prose with no classification markings at all.")]
+    ocr_status = OcrStatus()
+
+    _apply_tagging_advisory(session, doc, sections, ocr_status)
+
+    assert doc.tagging_advisory["markings_not_scanned"] is False
+    assert doc.tagging_advisory["unscanned_reasons"] == []
+    assert _audit_count(session) == 0
+
+
+def test_ocr_status_defaults_to_none_without_breaking_advisory():
+    # Callers that don't track OCR coverage (none today besides the worker's
+    # own process_document) can omit ocr_status entirely.
+    session = _make_session()
+    doc = _make_doc("CUI", ["NONE"])
+    sections = [_Section("Ordinary prose with no classification markings at all.")]
+
+    _apply_tagging_advisory(session, doc, sections)
+
+    assert doc.tagging_advisory["markings_not_scanned"] is False
 
 
 def test_failure_is_swallowed_and_leaves_advisory_null():

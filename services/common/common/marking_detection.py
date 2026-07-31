@@ -198,7 +198,20 @@ class TaggingAdvisory:
     detected_caveats: list[str] = field(default_factory=list)
     unassigned_caveats: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+    # Issue #306 gap 2: character offsets into the scanned text for each
+    # `evidence` entry, same order and same 5-item cap -- #138's acceptance
+    # criteria asked for "the detected marking and its location", and until
+    # now only the matched text itself made it into to_dict().
+    evidence_offsets: list[int] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Issue #306 gap 3: set when some of the document's content could not be
+    # scanned for markings at all (OCR unavailable, per-document OCR budget
+    # exhausted, or a page's OCR pass recognized no text) -- distinct from
+    # under_classified/unassigned_caveats being false, which means content
+    # *was* scanned and no mismatch was found. Never affects has_findings:
+    # it's a coverage gap, not a mismatch finding.
+    markings_not_scanned: bool = False
+    unscanned_reasons: list[str] = field(default_factory=list)
 
     @property
     def has_findings(self) -> bool:
@@ -212,7 +225,10 @@ class TaggingAdvisory:
             "detected_caveats": self.detected_caveats,
             "unassigned_caveats": self.unassigned_caveats,
             "evidence": self.evidence,
+            "evidence_offsets": self.evidence_offsets,
             "notes": self.notes,
+            "markings_not_scanned": self.markings_not_scanned,
+            "unscanned_reasons": self.unscanned_reasons,
         }
 
 
@@ -262,11 +278,11 @@ def evaluate_markings(
                 advisory.detected_classification = match.classification
         if best_rank > assigned_rank:
             advisory.under_classified = True
-            advisory.evidence = [
-                m.matched_text
-                for m in detected.matches
-                if ranks.get(m.classification.upper(), -1) == best_rank
+            top_matches = [
+                m for m in detected.matches if ranks.get(m.classification.upper(), -1) == best_rank
             ][:5]
+            advisory.evidence = [m.matched_text for m in top_matches]
+            advisory.evidence_offsets = [m.offset for m in top_matches]
 
     held = {c.upper() for c in assigned_releasability}
     advisory.detected_caveats = list(detected.caveats)

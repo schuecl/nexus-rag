@@ -53,19 +53,41 @@ function advisoryNode(doc) {
       document.createTextNode(' not in the assigned releasability'),
     ]);
   }
-  if (!findings.length) return null;
+  // Issue #306 gap 3: distinct from `findings` above -- this means some of the
+  // document's content (a scanned page OCR couldn't recover) was never
+  // checked for markings at all, not that it was checked and found clean.
+  const unscanned = adv.markings_not_scanned;
+  if (!findings.length && !unscanned) return null;
 
   const box = el('div', { className: 'advisory' });
   box.append('⚠ ', el('strong', { text: 'Tagging advisory' }), ' — ');
-  findings.forEach((parts, i) => {
-    if (i) box.append('; ');
-    box.append(...parts);
-  });
-  box.append('. Confirm or correct the tags before approving.');
-  if ((adv.evidence || []).length) {
-    box.append(el('br'), el('span', {
-      className: 'hint', text: 'evidence: ' + adv.evidence.join(' · '),
-    }));
+  if (findings.length) {
+    findings.forEach((parts, i) => {
+      if (i) box.append('; ');
+      box.append(...parts);
+    });
+    box.append('. Confirm or correct the tags before approving.');
+    if ((adv.evidence || []).length) {
+      const offsets = adv.evidence_offsets || [];
+      // Issue #306 gap 2: pair each evidence excerpt with where in the
+      // document it was found, e.g. "SECRET//NOFORN (offset 142)".
+      const evidenceText = adv.evidence
+        .map((e, i) => (offsets[i] !== undefined ? `${e} (offset ${offsets[i]})` : e))
+        .join(' · ');
+      box.append(el('br'), el('span', { className: 'hint', text: 'evidence: ' + evidenceText }));
+    }
+  }
+  if (unscanned) {
+    if (findings.length) box.append(el('br'));
+    box.append(
+      findings.length ? '' : 'this document’s content was not fully scanned for markings',
+      el('br'),
+      el('span', {
+        className: 'hint',
+        text: 'not scanned: ' + (adv.unscanned_reasons || []).join(', ') +
+          ' -- absence of a finding above does not mean this document is clean.',
+      }),
+    );
   }
   return box;
 }

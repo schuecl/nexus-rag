@@ -20,7 +20,7 @@ import pytest
 
 from app import ocr, parsing
 from app.chunking import chunk_sections
-from app.parsing import ParsedSection, ParsingError, parse_document
+from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -149,6 +149,58 @@ def test_ocr_budget_bounds_a_many_page_scan(monkeypatch):
     sections = parse_document("scanned.pdf", _image_only_pdf(pages=4))
     assert len(calls) == 2
     assert len(sections) == 2  # pages past the budget are skipped, loudly logged
+
+
+# --- OcrStatus: issue #306 gap 3 ------------------------------------------------
+
+
+def test_ocr_status_untouched_when_ocr_unneeded(ocr_ready):
+    status = OcrStatus()
+    parse_document("scanned.pdf", _image_only_pdf(pages=2), status)
+    assert status.any_skipped is False
+    assert status.skipped_pages == 0
+
+
+def test_ocr_status_records_unavailable_engine(ocr_absent):
+    status = OcrStatus()
+    parse_document("scanned.pdf", _image_only_pdf(pages=2), status)
+    assert status.any_skipped is True
+    assert status.skipped_pages == 2
+    assert status.reasons == {"ocr_unavailable"}
+
+
+def test_ocr_status_records_budget_exhaustion(monkeypatch):
+    monkeypatch.setattr(ocr, "ocr_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda data: "RECOGNIZED text.")
+    monkeypatch.setattr(parsing, "_MAX_OCR_IMAGES", 2)
+    status = OcrStatus()
+    parse_document("scanned.pdf", _image_only_pdf(pages=4), status)
+    assert status.skipped_pages == 2
+    assert status.reasons == {"budget_exhausted"}
+
+
+def test_ocr_status_records_no_text_recognized(monkeypatch):
+    monkeypatch.setattr(ocr, "ocr_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda data: "")
+    status = OcrStatus()
+    sections = parse_document("scanned.pdf", _image_only_pdf(pages=1), status)
+    assert sections == []
+    assert status.skipped_pages == 1
+    assert status.reasons == {"no_text_recognized"}
+
+
+def test_ocr_status_not_recorded_for_text_pdf():
+    # A page with a real text layer never reaches the OCR fallback at all --
+    # OcrStatus must stay clean, not report a coverage gap that doesn't exist.
+    status = OcrStatus()
+    parse_document("prose_only.pdf", (FIXTURES / "prose_only.pdf").read_bytes(), status)
+    assert status.any_skipped is False
+
+
+def test_ocr_status_defaults_to_none_without_breaking_parse(ocr_absent):
+    # Callers that don't care (the vast majority of this file's tests) can
+    # omit ocr_status entirely.
+    assert parse_document("scanned.pdf", _image_only_pdf()) == []
 
 
 # --- chunking: "ocr" is prose, not atomic ------------------------------------

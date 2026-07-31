@@ -155,3 +155,24 @@ class TestEvaluateMarkings:
         adv = self._detect_eval("This is ordinary prose with no markings.", assigned="CUI")
         assert adv.has_findings is False
         assert adv.to_dict()["under_classified"] is False
+
+    def test_evidence_offsets_pair_with_evidence_by_position(self):
+        # Issue #306 gap 2: #138's acceptance criteria asked for "the detected
+        # marking and its location" -- evidence carried only the matched text.
+        text = "intro text (S) middle text (S) tail"
+        adv = self._detect_eval(text, assigned="CUI")
+        assert len(adv.evidence_offsets) == len(adv.evidence)
+        for offset, matched_text in zip(adv.evidence_offsets, adv.evidence, strict=True):
+            assert text[offset : offset + len(matched_text)] == matched_text
+
+    def test_evidence_offsets_empty_when_not_under_classified(self):
+        adv = self._detect_eval("This is ordinary prose with no markings.", assigned="CUI")
+        assert adv.evidence_offsets == []
+
+    def test_markings_not_scanned_defaults_false_and_serializes(self):
+        adv = self._detect_eval("SECRET", assigned="CUI")
+        assert adv.markings_not_scanned is False
+        assert adv.unscanned_reasons == []
+        d = adv.to_dict()
+        assert d["markings_not_scanned"] is False
+        assert d["unscanned_reasons"] == []

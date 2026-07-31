@@ -31,7 +31,7 @@ from app import metrics
 from app.captioning import caption_images, captioning_enabled
 from app.chunking import chunk_sections
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
-from app.parsing import ParsedSection, ParsingError, parse_document
+from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
 from common.log_safety import log_safe
@@ -146,10 +146,21 @@ STATUS = ConsumerStatus()
 _ADVISORY_SCAN_LIMIT = 1_000_000
 
 
-def _apply_tagging_advisory(session: Session, doc: Document, sections: list[ParsedSection]) -> None:
+def _apply_tagging_advisory(
+    session: Session,
+    doc: Document,
+    sections: list[ParsedSection],
+    ocr_status: OcrStatus | None = None,
+) -> None:
     """Issue #138 Phase 1: compute the advisory marking-mismatch finding, attach
-    it to `doc`, and (only if it has findings) add an audit entry -- both persist
-    with the caller's next commit.
+    it to `doc`, and (only if it has findings, or content went unscanned --
+    issue #306 gap 3) add an audit entry -- both persist with the caller's
+    next commit.
+
+    `ocr_status` (issue #306 gap 3) reports content the parse stage could not
+    OCR (unavailable engine, exhausted per-document budget, no text
+    recognized) -- when set, the advisory records that markings on this
+    document were not fully scanned, distinct from "scanned and clean".
 
     Fail-safe by construction: any error here is swallowed and logged, leaving
     doc.tagging_advisory untouched. This is decision-support for the curator, so
@@ -175,13 +186,23 @@ def _apply_tagging_advisory(session: Session, doc: Document, sections: list[Pars
             rank_by_value=rank_by_value,
             known_caveats=[r.value for r in releasability_values],
         )
+        if ocr_status is not None and ocr_status.any_skipped:
+            advisory.markings_not_scanned = True
+            advisory.unscanned_reasons = sorted(ocr_status.reasons)
+            advisory.notes.append(
+                f"{ocr_status.skipped_pages} page(s) could not be scanned for markings "
+                f"({', '.join(advisory.unscanned_reasons)}); absence of a finding above does "
+                "not mean this document is clean."
+            )
         doc.tagging_advisory = advisory.to_dict()
-        if advisory.has_findings:
+        if advisory.has_findings or advisory.markings_not_scanned:
             logger.info(
-                "document %s tagging advisory: under_classified=%s unassigned_caveats=%s",
+                "document %s tagging advisory: under_classified=%s unassigned_caveats=%s "
+                "markings_not_scanned=%s",
                 doc.id,
                 advisory.under_classified,
                 advisory.unassigned_caveats,
+                advisory.markings_not_scanned,
             )
             session.add(
                 AuditLogEntry(
@@ -309,13 +330,16 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     # an asyncio timeout around it could never fire (there is no
                     # await point to cancel at). Off the loop, the timeout below
                     # is real and the consumer stays responsive.
-                    sections = await asyncio.to_thread(parse_document, doc.filename, contents)
+                    ocr_status = OcrStatus()
+                    sections = await asyncio.to_thread(
+                        parse_document, doc.filename, contents, ocr_status
+                    )
                     span.set_attribute("document.sections", len(sections))
                 # Issue #138: advisory only, never blocks -- see _apply_tagging_advisory.
                 # Runs on the parsed sections only, before captions are added:
                 # the advisory looks for uploader-applied banner/portion
                 # markings, and a model-generated caption is not one.
-                _apply_tagging_advisory(session, doc, sections)
+                _apply_tagging_advisory(session, doc, sections, ocr_status)
                 # Issue #92: caption embedded images so figure content becomes
                 # retrievable. Degrade-on-failure by contract (never raises,
                 # never fails the document) and internally bounded well under

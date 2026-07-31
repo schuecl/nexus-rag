@@ -82,5 +82,6 @@ class TestProcessingTimeout:
         (#109's whole point) as well as defeating the timeout."""
         source = _source(processing)
 
-        assert "await asyncio.to_thread(parse_document" in source
+        assert "await asyncio.to_thread(\n" in source
+        assert "parse_document, doc.filename, contents, ocr_status" in source
         assert "await asyncio.to_thread(chunk_sections" in source
