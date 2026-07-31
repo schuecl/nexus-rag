@@ -180,6 +180,34 @@ class TestFindSimilarApproved:
         assert {h.id for h in hits} == {"cui-1", "secret-1"}
         assert {name for name, _ in client._queries} == {cui, secret}
 
+    def test_results_are_ranked_by_real_score_across_collections_not_rrf(self, _client):
+        # A dense-only query against one collection returns a real COSINE
+        # score, comparable across collections (unlike hybrid_query's
+        # dense+sparse fusion, whose per-collection BM25 IDF isn't) -- so
+        # this must sort by that score directly, not apply rank-only RRF
+        # (fuse_ranked), which would treat two different collections' rank-1
+        # hits as equally good regardless of how far apart their true scores
+        # are. Caught live against a real Qdrant: a 0.98-similarity
+        # near-duplicate was buried behind unrelated 0.6-similarity hits that
+        # merely happened to also rank 1 in their own (smaller) collection.
+        cui = classification_collection_name("CUI")
+        secret = classification_collection_name("SECRET")
+        _client(
+            hits_by_collection={
+                cui: [
+                    _Hit("cui-1", 0.60, {"classification": "CUI"}),
+                    _Hit("cui-2", 0.58, {"classification": "CUI"}),
+                ],
+                secret: [_Hit("secret-1", 0.98, {"classification": "SECRET"})],
+            },
+            existing={cui, secret},
+        )
+        store = qdrant_backend.QdrantStore()
+
+        hits = store.find_similar_approved(dense=[0.1], limit=2)
+
+        assert [h.id for h in hits] == ["secret-1", "cui-1"]
+
     def test_status_approved_filter_is_applied(self, _client):
         cui = classification_collection_name("CUI")
         client = _client(hits_by_collection={cui: []}, existing={cui})

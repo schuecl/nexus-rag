@@ -135,7 +135,7 @@ class QdrantStore:
         )
 
         client = get_qdrant_client()
-        per_collection: list[list[Hit]] = []
+        all_hits: list[Hit] = []
         try:
             for name in existing_classification_collections(client):
                 hits = client.query_points(
@@ -145,12 +145,23 @@ class QdrantStore:
                     query_filter=query_filter,
                     limit=limit,
                 ).points
-                per_collection.append(
-                    [Hit(id=str(h.id), score=h.score, payload=h.payload or {}) for h in hits]
+                all_hits.extend(
+                    Hit(id=str(h.id), score=h.score, payload=h.payload or {}) for h in hits
                 )
         except (UnexpectedResponse, httpx.HTTPError) as exc:
             raise VectorStoreUnavailable(str(exc)) from exc
-        return fuse_ranked(per_collection, limit=limit)
+        # Deliberately NOT fuse_ranked (rank-only RRF): that combinator exists
+        # because hybrid_query's per-collection scores come from fusing a
+        # dense leg against a sparse/BM25 leg whose IDF is relative to each
+        # collection's own (classification-skewed) corpus, so raw scores
+        # aren't comparable across collections. This is a single dense-only
+        # COSINE query per collection against the same embedding space, so
+        # the scores it returns *are* directly comparable -- sorting by rank
+        # instead of score was verified live (docker compose) to bury a true
+        # near-duplicate at 0.98 similarity behind unrelated documents merely
+        # tied for rank 1 in their own (much smaller) collection.
+        all_hits.sort(key=lambda h: h.score, reverse=True)
+        return all_hits[:limit]
 
     def access_filter_summary(self, claims: UserClaims, allowed_classifications: list[str]) -> dict:
         # The FR-26 clauses, same shape as before the collection split, plus
