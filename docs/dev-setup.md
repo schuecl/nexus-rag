@@ -1173,6 +1173,17 @@ the docs, not a silent "it works" — flag it if you find one.
   regression test against a real generation model actually respecting it — that needs a
   live LibreChat + generation model, the same gap noted for the tool-invocation regression
   testing item below.
+- **In-app knowledge base (FR-33, issue #303)** — a `GET /kb` page (nav icon next to the
+  account/logout controls in `base.html`, since it's a persistent utility rather than a
+  workflow tab) with one how-to article per capability role (ingest, query, curate, purge,
+  admin), each rendered only when the signed-in user's own `UserClaims` grants that role
+  (`kb.html`'s `{% if current_user.can_* %}` checks, the same pattern `base.html` already
+  uses to gate nav tabs) — a user holding multiple roles sees the union of every article
+  those roles unlock, and one holding none yet sees an explicit "ask your Keycloak admin"
+  message instead of an empty page. **Tested against mocks only** (direct route-function
+  calls against an in-memory SQLite session, mirroring `test_login_gate.py`'s pattern,
+  covering every role combination's article visibility) — not yet exercised against a
+  live Postgres pair or a browser.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
 - **Keycloak RFC 8693 token-exchange (`grant_type=token-exchange`) — verified live via a

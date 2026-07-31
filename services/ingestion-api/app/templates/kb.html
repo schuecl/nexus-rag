@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% block title %}Knowledge base — {{ app_name }}{% endblock %}
+{% block main_class %}kb-page{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <span class="eyebrow">Documentation</span>
+    <h1>Knowledge base</h1>
+    <p>
+      How-to articles for every role in this portal. You only see the ones your own
+      account can act on — held roles come from your OIDC claims (FR-33), the same
+      claims that decide what you can actually do, so this page never shows an article
+      for something you'd just get denied on.
+    </p>
+  </div>
+</section>
+
+{% set has_ingest = current_user.can_ingest %}
+{% set has_query = current_user.can_query %}
+{% set has_curate = current_user.curatable_orgs %}
+{% set has_purge = current_user.can_purge %}
+{% set has_admin = current_user.is_admin %}
+{% set has_any_role = has_ingest or has_query or has_curate or has_purge or has_admin %}
+
+<div class="kb-article kb-intro">
+  <h2>Your roles</h2>
+  {% if has_any_role %}
+  <p>Articles below are shown for every role your account currently holds:</p>
+  <ul class="kb-role-summary">
+    {% if has_ingest %}<li class="policy-badge"><span>rag-ingest</span>Ingest</li>{% endif %}
+    {% if has_query %}<li class="policy-badge"><span>rag-query</span>Query</li>{% endif %}
+    {% if has_curate %}<li class="policy-badge"><span>rag-curate</span>Curate</li>{% endif %}
+    {% if has_purge %}<li class="policy-badge"><span>rag-purge</span>Purge</li>{% endif %}
+    {% if has_admin %}<li class="policy-badge"><span>rag-admin</span>Admin</li>{% endif %}
+  </ul>
+  <p class="hint">Hold more than one role? You get the union of every article below —
+    nothing here is exclusive.</p>
+  {% else %}
+  <p>Your account doesn't hold any of this portal's capability roles yet
+    (<code>rag-ingest</code>, <code>rag-query</code>, <code>rag-curate:&lt;org&gt;</code>,
+    <code>rag-purge</code>, <code>rag-admin</code>), so there's no role-specific article to
+    show. Ask whoever administers this deployment's Keycloak realm to grant one.</p>
+  {% endif %}
+</div>
+
+{% if has_ingest %}
+<article class="kb-article" aria-labelledby="kb-ingest-title">
+  <div class="policy-badge"><span>rag-ingest</span>Ingest role</div>
+  <h2 id="kb-ingest-title">Submitting documents</h2>
+  <p>Any user holding <code>rag-ingest</code> can submit documents without needing prior
+    approval to begin processing (FR-10) — review happens after, not before.</p>
+
+  <h3>What this role can do</h3>
+  <ul class="kb-list">
+    <li>Upload PDF, DOCX, PPTX, XLSX, TXT/Markdown, or HTML, up to 50&nbsp;MB.</li>
+    <li>Tag Classification, Releasability, and Access scope yourself — the choices offered
+      are already constrained to what your own claims authorize (FR-18); the UI won't even
+      show you a level above your clearance.</li>
+    <li>Track your own submissions and get notified of the curator's decision, including the
+      reason if rejected (FR-15).</li>
+    <li>Supersede an existing approved document instead of creating a duplicate (FR-7).</li>
+  </ul>
+
+  <h3>Walkthrough</h3>
+  <ol class="kb-steps">
+    <li>
+      <span>1</span>
+      <div>
+        <strong>Open <a href="/">Upload</a></strong>
+        <small>Drag a file onto the drop zone, or browse for it from your device.</small>
+      </div>
+    </li>
+    <li>
+      <span>2</span>
+      <div>
+        <strong>Tag security and access</strong>
+        <small>
+          Classification is a single required value. Releasability is one or more
+          checkboxes (e.g. NATO + FVEY) — leave the no-restriction default if nothing
+          applies. Access scope is free text: <code>ALL_AUTHENTICATED</code>, or a
+          comma-separated list of orgs/groups/users allowed to see it regardless of
+          classification/releasability.
+        </small>
+      </div>
+    </li>
+    <li>
+      <span>3</span>
+      <div>
+        <strong>Add document metadata</strong>
+        <small>Source/Originator and Document type are required; Program/community and
+          Effective date are optional context for discovery and lifecycle management.</small>
+      </div>
+    </li>
+    <li>
+      <span>4</span>
+      <div>
+        <strong>Optional: link a supersession</strong>
+        <small>Paste an existing approved document's ID in "Supersedes document" to submit
+          this as a new version (FR-7). Checked at approval time against both your own
+          authority and the prior document's.</small>
+      </div>
+    </li>
+    <li>
+      <span>5</span>
+      <div>
+        <strong>Submit</strong>
+        <small>Accepted immediately into processing — check the status badge on the Upload
+          page or watch <a href="/notifications">Notifications</a> for the curator's
+          decision.</small>
+      </div>
+    </li>
+  </ol>
+
+  <div class="info-callout">
+    <span aria-hidden="true">i</span>
+    <div>
+      <strong>Not retrievable yet</strong>
+      <p>A submitted document is parsed, chunked, and embedded right away, but stays
+        invisible to search until a curator in your org approves it (FR-11) — that's the
+        control against a mis-tagged document ever reaching a query.</p>
+    </div>
+  </div>
+</article>
+{% endif %}
+
+{% if has_query %}
+<article class="kb-article" aria-labelledby="kb-query-title">
+  <div class="policy-badge"><span>rag-query</span>Query role</div>
+  <h2 id="kb-query-title">Searching the corpus</h2>
+  <p>Every query is filtered server-side by your own clearance, releasability, and access
+    scope before results ever reach you (FR-26) — there's no client-side filter to bypass,
+    on this page or from LibreChat.</p>
+
+  <h3>What this role can do</h3>
+  <ul class="kb-list">
+    <li>Test retrieval directly from this portal's Search page, or through LibreChat's
+      <code>rag_search</code> MCP tool, under the exact same identity and filter.</li>
+    <li>See citations — source document, classification, releasability, and location within
+      the document — alongside every answer (FR-27).</li>
+    <li>Get an honest "no results" instead of a guess when nothing passes the access filter
+      or the reranker isn't confident (FR-28).</li>
+  </ul>
+
+  <h3>Walkthrough</h3>
+  <ol class="kb-steps">
+    <li>
+      <span>1</span>
+      <div>
+        <strong>Open <a href="/search">Search</a></strong>
+        <small>Enter a question and, optionally, how many results to return.</small>
+      </div>
+    </li>
+    <li>
+      <span>2</span>
+      <div>
+        <strong>Read the results</strong>
+        <small>Each hit lists the source document, its classification/releasability, and
+          where in the document the passage came from — verify grounding before trusting an
+          answer.</small>
+      </div>
+    </li>
+    <li>
+      <span>3</span>
+      <div>
+        <strong>Use the production path: LibreChat</strong>
+        <small>This Search page is a debugging aid, not a replacement. In LibreChat, add the
+          <code>rag_search</code> MCP tool — it forwards your own Keycloak identity, so you
+          get the identical filter without extra setup.</small>
+      </div>
+    </li>
+  </ol>
+
+  <div class="info-callout">
+    <span aria-hidden="true">i</span>
+    <div>
+      <strong>Reranking can fall back</strong>
+      <p>If the reranker service is unreachable, results still come back in fused
+        dense+BM25 order — the response says so explicitly rather than silently changing
+        ranking behavior.</p>
+    </div>
+  </div>
+</article>
+{% endif %}
+
+{% if has_curate %}
+<article class="kb-article" aria-labelledby="kb-curate-title">
+  <div class="policy-badge"><span>rag-curate:&lt;org&gt;</span>Curate role</div>
+  <h2 id="kb-curate-title">Reviewing submissions</h2>
+  <p>Your curation authority is scoped to the org(s) named in your own
+    <code>rag-curate:&lt;org&gt;</code> role(s) — never every submission system-wide
+    (FR-12), and capped by your own clearance and releasability (FR-14): you can't approve
+    a document tagged above what you personally hold.</p>
+
+  <h3>What this role can do</h3>
+  <ul class="kb-list">
+    <li>See a queue of pending submissions scoped to your org(s), with the tags the
+      uploader assigned.</li>
+    <li>Approve (publishes it — becomes retrievable), reject (with a required reason sent
+      back to the uploader), or correct the Classification/Releasability/Access-scope tags
+      before approving (FR-13).</li>
+    <li>Browse the <strong>List</strong> — every document across your orgs, any status, not
+      just what's waiting in the queue — and correct metadata even after a document has
+      already cleared curation, without a new supersession.</li>
+  </ul>
+
+  <h3>Walkthrough</h3>
+  <ol class="kb-steps">
+    <li>
+      <span>1</span>
+      <div>
+        <strong>Open <a href="/curate">Curation → Queue</a></strong>
+        <small>Everything currently <code>pending_review</code> in the org(s) you cover.</small>
+      </div>
+    </li>
+    <li>
+      <span>2</span>
+      <div>
+        <strong>Check the tags</strong>
+        <small>Correct Classification, Releasability, or Access scope inline before you
+          approve, if the uploader got something wrong.</small>
+      </div>
+    </li>
+    <li>
+      <span>3</span>
+      <div>
+        <strong>Approve or reject</strong>
+        <small>Approve flips the document to <code>approved</code> and makes it retrievable
+          immediately; reject requires a reason, which becomes a notification back to the
+          uploader.</small>
+      </div>
+    </li>
+    <li>
+      <span>4</span>
+      <div>
+        <strong>Use <a href="/curate/list">List</a> for anything already decided</strong>
+        <small>Search/filter every document in your orgs by status, filename, originator,
+          type, or uploader — and edit metadata on an already-approved document without
+          triggering supersession.</small>
+      </div>
+    </li>
+  </ol>
+
+  <div class="info-callout">
+    <span aria-hidden="true">i</span>
+    <div>
+      <strong>Supersession never leaves a gap</strong>
+      <p>Approving a new version flips the new document to <code>approved</code> before the
+        old one's chunks are deleted — there's never a window where neither version is
+        retrievable. Your authority is re-checked against the old document too, since a new
+        version can change its classification.</p>
+    </div>
+  </div>
+</article>
+{% endif %}
+
+{% if has_purge %}
+<article class="kb-article" aria-labelledby="kb-purge-title">
+  <div class="policy-badge"><span>rag-purge</span>Purge role</div>
+  <h2 id="kb-purge-title">Permanent destruction</h2>
+  <p>Destruction authority is deliberately separate from both curation and admin — holding
+    <code>rag-curate:&lt;org&gt;</code> or <code>rag-admin</code> grants no purge authority
+    at all, and vice versa (issue #123).</p>
+
+  <h3>What this role can do</h3>
+  <ul class="kb-list">
+    <li>Delete a document's content everywhere it lives — Postgres, Qdrant, and the object
+      store — with a required reason, fully audited.</li>
+    <li>See the List page's every document, unscoped by org, clearance, or releasability —
+      the same reach as the destruction authority itself.</li>
+    <li>In most deployments, purge is two-person: filing a request and confirming it require
+      two <em>different</em> <code>rag-purge</code> holders (issue #279) — you cannot
+      confirm your own request.</li>
+  </ul>
+
+  <h3>Walkthrough</h3>
+  <ol class="kb-steps">
+    <li>
+      <span>1</span>
+      <div>
+        <strong>Find the document in <a href="/curate/list">List</a></strong>
+        <small>As a purge holder you see every document regardless of org — search by
+          filename, originator, type, or uploader.</small>
+      </div>
+    </li>
+    <li>
+      <span>2</span>
+      <div>
+        <strong>File a purge request</strong>
+        <small>Nothing is destroyed yet — this only records that you've asked.</small>
+      </div>
+    </li>
+    <li>
+      <span>3</span>
+      <div>
+        <strong>Get a different holder to confirm</strong>
+        <small>A second, distinct <code>rag-purge</code> account must confirm before
+          anything is deleted — enforced server-side, not just a UI convention.</small>
+      </div>
+    </li>
+    <li>
+      <span>4</span>
+      <div>
+        <strong>Deletion runs</strong>
+        <small>The document's id and a "purged" status survive so prior audit history keeps
+          something to point to, even though the content itself is gone.</small>
+      </div>
+    </li>
+  </ol>
+
+  <div class="info-callout">
+    <span aria-hidden="true">i</span>
+    <div>
+      <strong>Single-holder mode exists, but isn't the default</strong>
+      <p>A deployment can disable two-person confirmation for a single-purge-holder dev
+        setup. Production deployments (this Helm chart's default) require it.</p>
+    </div>
+  </div>
+</article>
+{% endif %}
+
+{% if has_admin %}
+<article class="kb-article" aria-labelledby="kb-admin-title">
+  <div class="policy-badge"><span>rag-admin</span>Admin role</div>
+  <h2 id="kb-admin-title">Portal configuration</h2>
+  <p><code>rag-admin</code> manages the classification/releasability vocabulary and the
+    portal's own presentation — it grants <strong>no</strong> document, query, or curation
+    access at all. That boundary is deliberate: the person who manages the tagging
+    vocabulary is not automatically the person who can see what's tagged with it.</p>
+
+  <h3>What this role can do</h3>
+  <ul class="kb-list">
+    <li>Set the classification banner (CAPCO-style text and color) shown at the top and
+      bottom of every page.</li>
+    <li>Adjust the portal theme, application name, and logo (also reused as the favicon).</li>
+    <li>Configure the login page's mandatory-acceptance warning banner that a visitor must
+      accept or decline before signing in.</li>
+    <li>Manage the Classification/Releasability controlled vocabularies — today this is
+      API-only (<code>POST</code>/<code>DELETE /admin/classifications</code>,
+      <code>/admin/releasability</code>); there's no form for it on this page yet.</li>
+  </ul>
+
+  <h3>Walkthrough</h3>
+  <ol class="kb-steps">
+    <li>
+      <span>1</span>
+      <div>
+        <strong>Open <a href="/admin">Admin</a></strong>
+        <small>Every section here writes through its own API route, independently.</small>
+      </div>
+    </li>
+    <li>
+      <span>2</span>
+      <div>
+        <strong>Set the classification banner</strong>
+        <small>Text plus a color; clearing it goes back to an explicit "No label set" —
+          never silently "Unclassified".</small>
+      </div>
+    </li>
+    <li>
+      <span>3</span>
+      <div>
+        <strong>Adjust theme and branding</strong>
+        <small>Palette, application name, and logo URL — shown on the login page, browser
+          tab, and header.</small>
+      </div>
+    </li>
+    <li>
+      <span>4</span>
+      <div>
+        <strong>Configure the login page's warning banner</strong>
+        <small>Title and body text for the mandatory popup a visitor must accept or decline
+          before authenticating.</small>
+      </div>
+    </li>
+  </ol>
+
+  <div class="info-callout">
+    <span aria-hidden="true">i</span>
+    <div>
+      <strong>"No label set" is not "Unclassified"</strong>
+      <p>An unset banner deliberately renders "No label set" rather than defaulting to
+        Unclassified — "nobody has configured a marking" and "this system holds
+        unclassified material" are different statements, and this page never conflates
+        them.</p>
+    </div>
+  </div>
+</article>
+{% endif %}
+{% endblock %}

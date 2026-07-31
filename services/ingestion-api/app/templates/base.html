@@ -156,6 +156,22 @@
       </nav>
 
       <div class="account">
+        {# Issue #303: a persistent utility icon (not a main-nav tab, since
+           it isn't a workflow view) rather than mixed in with
+           Upload/Curation/Notifications/etc. -- it sits with the account
+           controls it's conceptually closer to: help for the person signed
+           in, right next to who they are and how they sign out. #}
+        <a
+          class="account-icon-action{% if request.url.path == '/kb' %} active{% endif %}"
+          href="/kb"
+          aria-label="Knowledge base"
+          title="Knowledge base"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v18H6.5A2.5 2.5 0 0 1 4 18.5z"></path>
+            <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H12v18h5.5a2.5 2.5 0 0 0 2.5-2.5z"></path>
+          </svg>
+        </a>
         <span class="user-summary">
           <span class="user-avatar" aria-hidden="true">
             {{ current_user.preferred_username[:1] | upper }}

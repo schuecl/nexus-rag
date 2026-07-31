@@ -52,8 +52,19 @@ Capability roles, deliberately small and non-overlapping:
 | Edit classification/releasability vocabulary (`ingestion-api` admin routes) | ✖ | ✖ | ✖ | ✖ | ✔ (`deps.require_admin`) | ✖ |
 | Purge a document everywhere (`DELETE /documents/{id}`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ audited, reason required (#123) -- **only** when `PURGE_TWO_PERSON_REQUIRED` is unset (dev default); returns 409 otherwise (#279, gap G3) |
 | File / confirm a purge request (`POST .../purge-request`, `.../confirm`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ file: any holder; confirm: **a different** holder only -- same `sub` as the requester gets 409 (#279, gap G3; `common.purge.purge_confirmation_authorized`) |
+| View knowledge-base how-to articles (`GET /kb`, issue #303/FR-33) | ✖ (redirected to login, same as every page route) | ✔ ingest article only | ✔ query article only | ✔ curate article only | ✔ admin article only | ✔ purge article only |
 | Read the audit log | — | — | — | — | — | — (no route exists for anyone, and since #278 no application DB role can either; see gap G2) |
 | Download original uploaded bytes | — | — | — | — | — | — (no route exists; originals are write-only from the app, NFR-12) |
+
+Note on the knowledge-base row: `GET /kb` itself follows the same auth-only
+page-gate as every other page route (`main.py`'s established convention,
+§8) — any authenticated user gets a 200, never a 403/404 based on role. What
+the ✔ cells above actually describe is *which articles render inside that
+page* (`kb.html`'s own `{% if current_user.can_* %}` checks, one per role,
+mirroring how `base.html` already gates nav tabs on the same properties) —
+there's no separate authorization endpoint being gated, since an article is
+static prose, not a document or an action. A user holding multiple roles sees
+the union of every article those roles unlock.
 
 ## 3. Data-visibility matrix (the privacy view)
 

@@ -26,6 +26,7 @@ PAGE_ROUTES = [
     main.curate_page,
     main.notifications_page,
     main.search_page,
+    main.kb_page,
 ]
 
 

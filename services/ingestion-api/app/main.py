@@ -328,3 +328,21 @@ def search_page(
     if current_user is None:
         return _login_page(request, session)
     return templates.TemplateResponse(request, "search.html", _page_context(session, current_user))
+
+
+@app.get("/kb", response_class=HTMLResponse)
+def kb_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: UserClaims | None = Depends(get_current_user_optional),
+) -> HTMLResponse:
+    """FR-33: the in-app knowledge base. Same pattern as every other page
+    route -- gated on authentication only, not role (main.py's established
+    convention, see admin_page/curate_list_page above). Which *articles*
+    render is decided inside kb.html itself, one `{% if current_user.can_* %}`
+    per role, exactly like base.html already gates nav tabs -- there's no
+    separate authorization endpoint to guard here, since an article is static
+    prose, not a document or an action."""
+    if current_user is None:
+        return _login_page(request, session)
+    return templates.TemplateResponse(request, "kb.html", _page_context(session, current_user))

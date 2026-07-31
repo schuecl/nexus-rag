@@ -1,7 +1,7 @@
 # REQUIREMENTS.md — MPNexus RAG Pipeline
 
 **Project:** Enterprise Retrieval-Augmented Generation (RAG) capability for MPNexus
-**Status:** Adopted — FR-1 through FR-32 implemented; see README.md for current build status
+**Status:** Adopted — FR-1 through FR-33 implemented; see README.md for current build status
 **Owner:** [Corey / MPNexus platform]
 **Last updated:** 2026-07-26
 
@@ -86,6 +86,9 @@ These apply to every component in this project, not just the ones explicitly nam
 - FR-30: Track retrieval quality metrics over time (recall@K, precision@K, or an equivalent proxy) so degradation as the corpus grows is visible, not silent.
 - FR-31: Log every ingestion, curation, and retrieval event (who, what, when, which classification/releasability/access-scope filters were applied or which curation decision was made) for audit purposes, keyed on the actor's OIDC identity (`sub`/`preferred_username`), not a self-reported name.
 - FR-32: Provide a way to periodically re-evaluate the pipeline against a fixed set of test queries to catch regressions after model, chunking, or reranker changes.
+
+### 4.6 In-App Documentation & Onboarding
+- FR-33: Provide an in-app knowledge base of how-to articles covering each role's workflow (ingest, curate, query, purge, admin), reachable from the main navigation. An article is shown only to a user whose OIDC claims (Section 6.2) grant the corresponding role — a user holding multiple roles sees the union of the articles those roles unlock, derived server-side from the same claims as every other access decision in this system, not a client-side toggle (issue #303).
 
 ## 5. Non-Functional Requirements
 
