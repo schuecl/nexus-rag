@@ -134,6 +134,14 @@ class Document(SQLModel, table=True):
     # see app/routes/upload.py.
     original_object_key: str | None = None
 
+    # Issue #285: SHA-256 of the exact bytes ingestion-api spooled at upload
+    # time (app/routes/upload.py), computed alongside the existing #107
+    # streaming size check. This is the tamper-evidence anchor between the
+    # object-store original, the bytes ingestion-worker re-fetches and
+    # parses, and the Qdrant chunk payloads derived from them -- see
+    # processing.py's re-hash-before-parse check.
+    content_sha256: str | None = None
+
     # Issue #138 (Phase 1): advisory, curator-facing marking-mismatch findings
     # computed by the ingestion worker (common/marking_detection.py) -- e.g.
     # "the document's own banner says SECRET but it was tagged CUI". Purely

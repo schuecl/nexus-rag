@@ -15,6 +15,7 @@ un-acked.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import uuid
@@ -77,6 +78,15 @@ PROCESSING_TIMEOUT_SECONDS = float(os.environ.get("PROCESSING_TIMEOUT_SECONDS", 
 # Sentinel distinguishing "deliberately purged" from "the object store lost
 # it" -- see the FileNotFoundError handler in process_document (#214).
 _PURGED_MARKER = "original_object_key is unset (document was purged)"
+
+
+class ContentIntegrityError(Exception):
+    """Issue #285: the bytes just fetched from the object store don't hash to
+    doc.content_sha256 -- the digest ingestion-api computed over what it
+    actually spooled at upload time. Permanent, not retryable: the same key
+    will keep producing the same (wrong) bytes, so this is handled like
+    ParsingError/EmbeddingError below, not the generic transient branch."""
+
 
 DURABLE_CONSUMER_NAME = "ingestion-worker"
 FETCH_BATCH_SIZE = 1
@@ -511,6 +521,19 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
             async with asyncio.timeout(PROCESSING_TIMEOUT_SECONDS):
                 contents = get_object_store().get(doc.original_object_key)
                 metrics.document_bytes.observe(len(contents))
+                # Issue #285: the actual integrity check, at the trust
+                # boundary between ingestion-api (which computed the digest
+                # over what it spooled) and this service (which parses
+                # whatever the object store hands back). Null on rows
+                # uploaded before this column existed (#164-style additive
+                # migration, common/db.py) -- nothing to verify against, so
+                # skip rather than fail every pre-existing document.
+                if doc.content_sha256 is not None:
+                    actual = hashlib.sha256(contents).hexdigest()
+                    if actual != doc.content_sha256:
+                        raise ContentIntegrityError(
+                            f"expected sha256 {doc.content_sha256}, got {actual}"
+                        )
                 # #134's ingest.process stage spans: attribute values are counts
                 # and byte sizes only, never the text they describe.
                 with (
@@ -667,7 +690,11 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     actor_username=doc.uploader_username,
                     action="document.embedded",
                     target_id=str(doc.id),
-                    detail={"filename": doc.filename, "chunk_count": doc.chunk_count},
+                    detail={
+                        "filename": doc.filename,
+                        "chunk_count": doc.chunk_count,
+                        "content_sha256": doc.content_sha256,
+                    },
                 )
             )
             session.commit()
@@ -713,6 +740,37 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     action="document.failed",
                     target_id=str(doc.id),
                     detail={"error": doc.processing_error},
+                )
+            )
+            session.commit()
+            metrics.jobs_total.labels(outcome="permanent_failure").inc()
+            return True
+        except ContentIntegrityError as exc:
+            # Permanent, same reasoning as the FileNotFoundError branch above:
+            # the object store will keep handing back the same wrong bytes on
+            # redelivery, so retrying can't fix this -- and it must not be
+            # allowed to succeed, since these are provably not the bytes the
+            # uploader submitted or that any later curator decision would be
+            # about (Section 1, tamper-evidence).
+            doc.status = "failed"
+            doc.processing_started_at = None
+            doc.updated_at = _utcnow()
+            doc.processing_error = (
+                "content integrity check failed: the object store's bytes no longer "
+                "match the digest recorded at upload"
+            )
+            logger.error("content hash mismatch for %s: %s", log_safe(document_id), log_safe(exc))
+            session.add(doc)
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.failed",
+                    target_id=str(doc.id),
+                    # Hashes only, never the bytes they're derived from --
+                    # safe to keep in the audit trail even though the row
+                    # itself will later be scrubbed on purge (common/purge.py).
+                    detail={"error": str(exc), "reason": "content_hash_mismatch"},
                 )
             )
             session.commit()

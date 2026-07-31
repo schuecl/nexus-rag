@@ -179,6 +179,13 @@ def purge_document(
     doc.rejection_reason = None
     doc.processing_error = None
     doc.original_object_key = None
+    # #285: a content digest is itself a content fingerprint -- retaining it
+    # (or logging it below) would let someone who separately obtains the
+    # source bytes confirm this purge destroyed that exact document, the
+    # same re-identification risk the missing filename above is guarding
+    # against. Scrub it here and deliberately leave it out of the audit
+    # detail dict below.
+    doc.content_sha256 = None
     doc.chunk_count = 0
     doc.updated_at = _utcnow()
     session.add(doc)

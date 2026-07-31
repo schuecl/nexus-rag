@@ -40,6 +40,9 @@ class _Doc:
         self.releasability = ["FVEY"]
         self.access_scope = ["USAREUR-AF"]
         self.original_object_key = "documents/x/original"
+        # None (the real Document default): #285's re-verification check
+        # skips entirely rather than trying to hash-check a fake fixture.
+        self.content_sha256 = None
         self.status = "queued"
         self.chunk_count = 0
         self.processing_error = None

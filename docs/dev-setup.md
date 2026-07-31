@@ -1159,6 +1159,30 @@ the docs, not a silent "it works" — flag it if you find one.
   Fixed in both `services/ingestion-api/Dockerfile` (writes) and
   `services/ingestion-worker/Dockerfile` (reads) by adding `/srv/object-store` to the
   existing `mkdir -p` line ahead of the `chown`.
+- **Content integrity verification (NFR-18, issue #285)** — `ingestion-api` computes a
+  SHA-256 digest over the exact bytes it spools during upload (`app/routes/upload.py`,
+  riding the existing #107 streaming read) and stores it on the `Document` row
+  (`documents.content_sha256`); `ingestion-worker` re-computes that digest over the bytes it
+  fetches back from the object store and refuses to process a mismatch (`ContentIntegrityError`
+  in `app/processing.py`), landing the document in `failed` with a terminal ack rather than
+  retrying — the same bytes under the same key will always mismatch the same way, so
+  redelivery can't help. The digest is carried in the `document.submit`/`document.embedded`
+  audit entries; it is deliberately excluded from, and scrubbed as part of, a purge tombstone
+  (`common/purge.py`), for the same re-identification reason the existing filename exclusion
+  there already documents. **Validated against a live environment** (2026-07-31, real
+  `docker compose up` stack): uploaded a document and confirmed the stored digest matched the
+  bytes on disk and the worker's `document.embedded` audit entry; separately, paused
+  `ingestion-worker`, overwrote the object-store original in place, resumed the worker, and
+  confirmed the document landed in `failed` with `reason: content_hash_mismatch` and both the
+  expected and actual digests in the audit row; also confirmed purge nulls `content_sha256`
+  on the row and never writes it to the `document.purged` audit entry. **Known gap, tracked
+  separately (issue #314):** the additive-column back-fill this required
+  (`common/db.py`'s `_ensure_columns`) turned out to be incompatible with the #278
+  grants-lockdown model on any environment that has already been through one `docker compose
+  up` cycle — including this one, which needed a one-time manual `ALTER TABLE` as the
+  bootstrap superuser to unblock during this validation. A genuinely fresh volume is not
+  affected (the column is created as part of `create_all()`, before ownership is ever
+  locked down); #314 tracks the general fix for upgrading an already-locked-down deployment.
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus

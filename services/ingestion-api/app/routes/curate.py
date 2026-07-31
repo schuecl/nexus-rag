@@ -599,6 +599,9 @@ def approve(
                 detail={
                     "corrections": corrections.model_dump() if corrections else None,
                     "tagging_advisory": _tagging_advisory_outcome(doc),
+                    # #285: binds this decision to the exact bytes the curator
+                    # was shown, not just the document id.
+                    "content_sha256": doc.content_sha256,
                 },
             )
         )
@@ -664,6 +667,7 @@ def reject(
                 detail={
                     "reason": body.reason,
                     "tagging_advisory": _tagging_advisory_outcome(doc),
+                    "content_sha256": doc.content_sha256,
                 },
             )
         )

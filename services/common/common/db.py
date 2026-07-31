@@ -50,6 +50,10 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         # rewrite.
         "queue_published_at": "TIMESTAMP WITH TIME ZONE",
         "processing_started_at": "TIMESTAMP WITH TIME ZONE",
+        # #285: content integrity digest, nullable so pre-existing rows
+        # (uploaded before this column existed) upgrade without a rewrite --
+        # ingestion-worker's re-verification check is skipped for those.
+        "content_sha256": "VARCHAR(64)",
     },
     "portal_settings": {
         # #248: branding + login popup banner, all defaulted so an existing

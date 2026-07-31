@@ -15,6 +15,7 @@ what fixes that; see services/ingestion-worker/app/processing.py.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -142,6 +143,11 @@ async def submit_document(
     if not contents:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
     metrics.upload_bytes.observe(len(contents))
+    # Issue #285: tamper-evidence anchor -- ingestion-worker re-hashes the
+    # bytes it fetches back from the object store and refuses to process a
+    # mismatch (processing.py), so this digest is the thing that check is
+    # verified against, not just a stored fingerprint.
+    content_sha256 = hashlib.sha256(contents).hexdigest()
 
     # Issue #211: reject here rather than at parse time. parse_document
     # dispatches on the filename extension, which the uploader chooses, so
@@ -215,6 +221,7 @@ async def submit_document(
         effective_date=metadata.effective_date,
         status="queued",
         supersedes_document_id=superseded_doc.id if superseded_doc else None,
+        content_sha256=content_sha256,
     )
     # NFR-12: durably store the original before returning 202 -- doc.id is
     # already populated (Document.id's default_factory runs at construction,
@@ -235,6 +242,7 @@ async def submit_document(
                 "supersedes_document_id": str(doc.supersedes_document_id)
                 if doc.supersedes_document_id
                 else None,
+                "content_sha256": doc.content_sha256,
             },
         )
     )
