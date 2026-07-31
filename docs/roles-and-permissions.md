@@ -33,7 +33,7 @@ Capability roles, deliberately small and non-overlapping:
 | `rag-query` | `rag_search` retrieval | anything above the FR-26 filter |
 | `rag-curate:<org>` | curation queue **for that org only** | curating other orgs; approving above own clearance/releasability |
 | `rag-admin` | classification/releasability vocabulary routes | **any document or query access at all** — a boundary `claims.py` and `deps.py` state in code comments, on purpose |
-| `rag-purge` | audited destruction (#123) | deliberately separate from `rag-admin` so vocabulary admin and destruction can be different people (`deps.require_purge` docstring) |
+| `rag-purge` | audited destruction (#123); in a two-person deployment (#279, gap G3), only *requesting* — a second, different `rag-purge` holder must independently hold it too, to *confirm* | deliberately separate from `rag-admin` so vocabulary admin and destruction can be different people (`deps.require_purge` docstring); confirming your own request (`common.purge.purge_confirmation_authorized`) |
 
 ## 2. Role × capability matrix (human identities)
 
@@ -44,12 +44,14 @@ Capability roles, deliberately small and non-overlapping:
 |---|---|---|---|---|---|---|
 | Upload + tag document (`ingestion-api` `POST /documents`) | ✖ 401 | ✔ tags validated against **own** claims, FR-18 (`upload.py` → `validate_against_claims`) | ✖ 403 | ✖ 403 | ✖ 403 | ✖ 403 |
 | List/poll documents (`GET /documents/mine`, `/{id}`) | ✖ | ✔ **own uploads only** — `uploader_sub == sub`, else 404 (`upload.py:get_document`) | ✖ | ✖ (own queue view instead) | ✖ | ✖ |
-| See curation queue (`GET /curate`) | ✖ | ✖ | ✖ | ✔ **filtered to `owner_org ∈ curatable_orgs`** (`curate.py:_pending_documents`) | ✖ | ✖ |
-| Read a pending document's content | ✖ | own only | ✖ | ✔ within org + clearance + releasability (`_check_curator_authority`) — **`access_scope` is NOT checked: see gap G1** | ✖ | ✖ |
+| See curation queue (`GET /curate`) | ✖ | ✖ | ✖ | ✔ **filtered to `owner_org ∈ curatable_orgs`**, plus classification, releasability, and — for a pending document — `access_scope` (`curate.py:list_queue`/`list_documents`; issue #277, gap G1 closed for the read path) | ✖ | ✖ 403 (`require_curator` only — the Queue is curation workflow, not something purge authority extends to) |
+| See the curation List, any status (`GET /curate/documents`) | ✖ | ✖ | ✖ | ✔ same scoping as the Queue row above | ✖ | ✔ **unscoped** — every document regardless of org/clearance/releasability, matching `rag-purge`'s own unscoped destruction authority (#279, gap G3; `require_curator_or_purge`); a caller holding both roles gets the curator-scoped view, not the wider one |
+| Read a pending document's content | ✖ | own only | ✖ | ✔ within org + clearance + releasability + `access_scope` (`_check_curator_authority`) — issue #277 added the last of these; see gap G1 for what's still not covered | ✖ | ✖ |
 | Approve / reject / correct tags (`POST /curate/{id}/approve\|reject`) | ✖ | ✖ | ✖ | ✔ org (else **404**, not 403 — existence-oracle fix #215) + clearance ceiling (403) + releasability held (403, FR-14.1); re-checked against the *old* doc on supersession (FR-7, `_validate_supersede`) | ✖ | ✖ |
 | Query the corpus (`orchestration-mcp` `rag_search` / `/debug/rag_search`) | ✖ | ✖ | ✔ under the mandatory FR-26 filter (§4) | ✖ | ✖ | ✖ |
 | Edit classification/releasability vocabulary (`ingestion-api` admin routes) | ✖ | ✖ | ✖ | ✖ | ✔ (`deps.require_admin`) | ✖ |
-| Purge a document everywhere (`DELETE /documents/{id}`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ audited, reason required (#123) |
+| Purge a document everywhere (`DELETE /documents/{id}`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ audited, reason required (#123) -- **only** when `PURGE_TWO_PERSON_REQUIRED` is unset (dev default); returns 409 otherwise (#279, gap G3) |
+| File / confirm a purge request (`POST .../purge-request`, `.../confirm`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ file: any holder; confirm: **a different** holder only -- same `sub` as the requester gets 409 (#279, gap G3; `common.purge.purge_confirmation_authorized`) |
 | Read the audit log | — | — | — | — | — | — (no route exists for anyone; see gap G2) |
 | Download original uploaded bytes | — | — | — | — | — | — (no route exists; originals are write-only from the app, NFR-12) |
 
@@ -60,7 +62,7 @@ The same facts inverted: **which document content can each identity read?**
 | Document state | Uploader | Same-org curator (cleared) | Curator, *not* in the doc's `access_scope` group | `rag-query` user (cleared + caveats + in scope) | `rag-query` user outside any one dimension | `rag-admin` |
 |---|---|---|---|---|---|---|
 | `queued`/`processing`/`embedded` | metadata only (status poll) | not yet in queue | — | ✖ | ✖ | ✖ |
-| `pending_review` | metadata only | **full content** (review requires it) | **full content — gap G1** | ✖ (FR-11/FR-26: only `approved` matches) | ✖ | ✖ |
+| `pending_review` | metadata only | **full content** (review requires it) | ✖ — hard-denied, no fallback (issue #277, gap G1) | ✖ (FR-11/FR-26: only `approved` matches) | ✖ | ✖ |
 | `approved` | metadata only | full content via queue history? — no: once decided it leaves the queue | ✖ | ✔ retrievable chunks | ✖ (fails closed) | ✖ |
 | `rejected` / `superseded` | metadata only | ✖ | ✖ | ✖ (validated live: golden-query harness asserts non-retrievability regardless of persona, FR-26) | ✖ | ✖ |
 | `purged` | metadata (scrubbed row) | ✖ | ✖ | ✖ — chunks swept from **every** collection (#267 fix) | ✖ | ✖ |
@@ -126,16 +128,46 @@ Documented so each can become its own issue; none is hidden behind a green
 checkmark above. Ordered by how much they matter in a
 documents-must-not-be-broadly-viewable deployment.
 
-**G1 — Curators are not bound by `access_scope` (need-to-know).**
-`_check_curator_authority` checks org, clearance ceiling, and releasability —
-but not membership in the document's `access_scope` groups. A Signal-Corps
-document pending review is readable by any same-org curator with the clearance
-and caveats, whether or not they are in Signal-Corps. Arguably inherent
-(curation requires reading), but it is the largest privacy delta in the system
-and is currently an *unrecorded* decision. Options, in increasing cost:
-record it as accepted risk in this file; restrict queue visibility to
-scope-matching curators when a scope-matching curator exists; metadata-only
-review for out-of-scope curators; dual-control approval for scoped documents.
+**G1 — Curators are not bound by `access_scope` (need-to-know) — closed by
+#277.** `_check_curator_authority` (approve/reject/supersede) and
+`curate.py:list_queue`/`list_documents` now check `access_scope` the same
+way they already checked clearance and releasability: a hard requirement for
+reading, approving, or rejecting a *pending* document, with **no fallback
+and no grace period**. A curator outside a document's `access_scope` never
+sees it in the queue and cannot act on it directly by id either, no matter
+how long it has sat in `pending_review`.
+
+An earlier version of this fix used a time-based grace period (prefer a
+scope-matching curator for N hours, then open the document to every
+org-authorized curator) to guarantee a document could never sit unreviewed
+for want of a scope-matching curator. That was deliberately reverted: a
+fallback that widens access on a timer defeats the purpose of a
+need-to-know control — it just delays the same leak G1 exists to prevent,
+and would have left `access_scope` unenforced at the actual approve/reject
+call the whole time regardless.
+
+The consequence, accepted on purpose rather than an oversight: **if no
+curator in a document's owning org holds a group/org/sub that matches its
+`access_scope`, that document has no one who can review it.** There is no
+system-level fallback for this — it is an admin/provisioning problem (assign
+the right group to a curator, or correct the document's `access_scope` tag,
+which itself requires whoever submitted it or an admin to notice and fix)
+rather than something the software works around by widening access. A
+deployment that hands out narrow `access_scope` values should make sure at
+least one curator per org actually holds each group in use, the same way it
+already has to make sure at least one curator per org holds each
+classification/releasability combination in use.
+
+There is still no curator directory in this system (identity is
+per-request, decoded from that request's own OIDC token —
+`common/claims.py` has no concept of "every user who holds
+`rag-curate:<org>`"), so nothing here can proactively warn an admin that a
+document has no eligible reviewer; it can only be discovered by the document
+staying in `pending_review`. A Keycloak admin API integration (new service
+credential, admin REST calls, caching, a failure mode for an unreachable
+admin API) could support that kind of proactive check, or a "documents with
+no eligible curator" report. Not done here — deferred as its own, larger
+decision if the lack of one proves painful in practice.
 
 **G2 — One Postgres identity reads everything, including the audit log.**
 Stated in `rag_search`'s own #125 docstring: no *route* exposes the audit log,
@@ -146,21 +178,70 @@ roles (`ingestion_api`, `orchestration_mcp`) with explicit grants; audit_log
 INSERT-only for the query path; SELECT on audit_log granted to no application
 role at all.
 
-**G3 — Destruction is single-person.** `rag-purge` is separate from
-`rag-admin` (good), but one person holding it can irreversibly destroy alone.
-Usual production expectation for destruction is a two-person rule: a purge
-*request* row plus an independent confirmation before execution.
+**G3 — Destruction is single-person — narrowed by #279.** `rag-purge` was
+separate from `rag-admin` already (good), but one person holding it could
+irreversibly destroy a document alone. `POST /documents/{id}/purge-request`
+now records intent only (`common.purge.request_purge`); nothing is destroyed
+until a **different** `rag-purge` holder confirms via
+`POST .../purge-request/{request_id}/confirm`
+(`common.purge.confirm_purge`) -- same-`sub` confirmation is refused
+server-side (`purge_confirmation_authorized`), and an unconfirmed request
+stops being confirmable once `PURGE_REQUEST_EXPIRY_HOURS` (default 24) has
+passed, so a stale request can't sit as a loaded gun. Whether the two-person
+path is *mandatory* is a deployment flag: `PURGE_TWO_PERSON_REQUIRED`
+defaults true in code and in the Helm chart; `docker-compose.yml` sets it
+false for the dev loop, since `seed-sample-data` and the dev realm only ever
+provisioned one purge-capable identity (`dave-admin`) until now. The seeded
+realm also gained a second, independent purge-only user (`eve-purge`,
+`infra/keycloak/realm-export/nexus-rag-realm.json`) specifically so the
+two-person path has someone to confirm with in dev, addressing the issue's
+second point -- `dave-admin` holding `rag-purge` alongside every other role
+still collapses the separation on its own account, but that account is
+otherwise exercised by too much of `docs/dev-setup.md` and `scripts/` to
+narrow here without a wider, separate change.
 
-**G4 — Conflicting `rag-clearance:*` roles resolve silently by token order**
-(`claims.py` comment calls it Keycloak-admin hygiene). A user accidentally
-holding both `rag-clearance:SECRET` and `rag-clearance:CUI` gets whichever
-comes first. Should fail loud (parse error → 403) instead of picking one.
+A `rag-purge` holder without any `rag-curate:<org>` role now reaches
+`curate_list.html` too (nav link goes straight to `/curate/list`, the Queue
+tab hidden since that stays curator-only): `list_documents`
+(`require_curator_or_purge`) gives them an unscoped list -- matching
+`require_purge`'s own unscoped destruction authority, rather than the
+curator-scoped org/clearance/releasability view -- with Edit hidden
+(`CAN_EDIT_METADATA`, since `PATCH /curate/documents/{id}` stays
+require_curator-only) and only Delete available. A caller holding both roles
+still gets the curator-scoped view -- narrower, and the one they're already
+used to; holding `rag-purge` never widens what an existing curator sees.
 
-**G5 — Static service credentials with no rotation story.** Qdrant keys, NATS
-account passwords, the reranker secret, and `APP_DB_USER` are long-lived
-values in env/config. No documented rotation procedure or dual-key overlap
-window exists. At minimum, document rotation; better, support two concurrently
-valid values per secret so rotation needs no downtime.
+Narrowed, not closed: there is still no UI for the *confirm* step of the
+two-person flow itself (the List's delete button only exercises the
+single-person path, unaffected in dev since that path stays on there). No
+expiry sweep job either; see `PurgeRequest`'s own docstring for why that's
+deliberate rather than deferred.
+
+**G4 — Conflicting `rag-clearance:*` roles — resolved (#280).** A token
+carrying two or more distinct `rag-clearance:<value>` roles is now rejected
+at the verification boundary: `parse_claims` raises
+`ConflictingClearanceError` (a `jwt.InvalidTokenError`), so every entry
+point maps it to 401 like any other malformed token. Duplicate *identical*
+values and zero clearance roles remain valid. Previously the first role in
+`rag_roles` order won silently.
+
+**G5 — Static service credentials, rotation documented and two of six now
+no-downtime (#281).** Qdrant keys, NATS account passwords, the reranker
+secret, `APP_DB_USER`, the session-token Fernet key, and the Keycloak client
+secret are long-lived values in env/config.
+[`docs/credential-rotation.md`](credential-rotation.md) has an
+order-of-operations runbook per credential (stage 1), including which side
+has to restart first and what breaks if the order is reversed. Stage 2 —
+dual-concurrently-valid values per secret, so rotation needs no downtime — is
+done for the two credentials the issue scoped concretely: the reranker
+secret now accepts an optional `RERANKER_SHARED_SECRET_PREVIOUS`
+(`reranker-service/app/main.py`), and the session-token key uses
+`cryptography.fernet.MultiFernet` with an optional
+`SESSION_TOKEN_ENCRYPTION_KEY_PREVIOUS` (`common/token_crypto.py`), with
+existing sessions migrating off the retired key automatically as normal
+token-refresh writes touch each row. Qdrant/NATS/Keycloak rotation stays
+config-level on those systems' own side (no code change proposed for them in
+the issue); `APP_DB_USER` remains open as a candidate not yet picked up.
 
 **G6 — `rag-query` retrieval has no per-document view audit granularity.**
 The audit row records the filter and result count, not *which* documents were

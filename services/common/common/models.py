@@ -178,6 +178,32 @@ class Document(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class PurgeRequest(SQLModel, table=True):
+    """Issue #279 (gap G3): the two-person half of destruction. Recording
+    this row destroys nothing by itself -- `common/purge.py`'s
+    `purge_document` only ever runs once a *different* `rag-purge` holder
+    confirms (`confirming_sub != requested_by_sub`, enforced by
+    `purge_confirmation_authorized`). `status` only ever moves
+    pending -> confirmed; there is no background sweep for the expiry window
+    -- `confirm_purge` simply refuses a request once `expires_at` has
+    passed, which is enough to keep a stale request from ever being acted on
+    without needing a scheduled job."""
+
+    __tablename__ = "purge_requests"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    document_id: uuid.UUID = Field(foreign_key="documents.id")
+    reason: str
+    requested_by_sub: str
+    requested_by_username: str
+    requested_at: datetime = Field(default_factory=_utcnow)
+    expires_at: datetime
+    status: str = Field(default="pending")  # pending | confirmed
+    confirmed_by_sub: str | None = None
+    confirmed_by_username: str | None = None
+    confirmed_at: datetime | None = None
+
+
 class AuditLogEntry(SQLModel, table=True):
     """Every ingestion, curation, and retrieval-relevant event (FR-31), keyed on
     the actor's OIDC identity rather than a self-reported name."""

@@ -7,6 +7,19 @@ Issue #273: that same clearance/releasability authority is also enforced at
 -- a curator who lacks clearance for a document, or lacks one of its
 releasability values, must not see that it exists at all, purely by virtue of
 sharing an org with it.
+
+Issue #277 (gap G1): org/clearance/releasability alone don't check a pending
+document's `access_scope` (need-to-know) -- a Signal-Corps-scoped document
+was fully readable by any same-org curator with the clearance and caveats,
+whether or not they're in Signal-Corps, even though the FR-26 retrieval
+filter would deny that same person the approved chunks. `access_scope` is
+now checked the same way clearance and releasability already are: a hard
+requirement for reading (and therefore approving/rejecting) a *pending*
+document, with no fallback and no grace period. A document with no
+same-org curator whose sub/groups/org happen to match its access_scope
+simply has no one who can review it -- that is an admin/user-provisioning
+problem (assign the right group, or fix the tag) rather than something this
+module works around by widening access on a timer.
 """
 
 from __future__ import annotations
@@ -21,16 +34,34 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from app.deps import allowed_classifications, require_curator, verify_csrf
+from app.deps import (
+    allowed_classifications,
+    require_curator,
+    require_curator_or_purge,
+    verify_csrf,
+)
 from common.claims import UserClaims
 from common.db import get_session
-from common.metadata import releasability_authorized
+from common.metadata import access_scope_authorized, releasability_authorized
 from common.models import AuditLogEntry, Document, Notification
 from common.vector_store import get_store
 
 logger = logging.getLogger("ingestion-api")
 
 router = APIRouter(prefix="/curate", tags=["curation"])
+
+
+def _visible_to_curator(doc: Document, user: UserClaims) -> bool:
+    """Issue #277: on top of the existing org/clearance/releasability
+    narrowing, a *pending* document is only visible to a curator whose
+    sub/groups/org match its access_scope -- unconditionally, not just
+    while some grace period runs. Anything not pending_review is unaffected:
+    once a document is decided, need-to-know no longer gates the curation
+    list the same way (see docs/roles-and-permissions.md's data-visibility
+    matrix)."""
+    if doc.status != "pending_review":
+        return True
+    return access_scope_authorized(doc.access_scope, sub=user.sub, groups=user.groups, org=user.org)
 
 
 @router.get("/queue")
@@ -53,7 +84,12 @@ def list_queue(
         .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
         .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
     ).all()
-    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+    return [
+        d
+        for d in docs
+        if releasability_authorized(d.releasability, user.releasability)
+        and _visible_to_curator(d, user)
+    ]
 
 
 # Issue #266: statuses a document can be edited from through the curation
@@ -74,22 +110,34 @@ def list_documents(
         description="Case-insensitive search across filename, "
         "source/originator, document type, and uploader username",
     ),
-    user: UserClaims = Depends(require_curator),
+    user: UserClaims = Depends(require_curator_or_purge),
     session: Session = Depends(get_session),
 ) -> Sequence[Document]:
     """Issue #266: the "master list" -- every document (any status) the
-    curator holds authority over, not just the pending_review queue
-    /curate/queue above returns. Scoped identically to list_queue (owner_org
-    in curatable_orgs, classification at or below clearance, every
-    releasability value held -- issue #273); the filters below only ever
-    narrow that set further, never widen it.
+    caller holds authority over, not just the pending_review queue
+    /curate/queue above returns.
+
+    Two distinct authorities can reach this, scoped differently (issue #279,
+    gap G3): a curator (any rag-curate:<org> role) gets exactly the existing
+    scoping -- owner_org in curatable_orgs, classification at or below
+    clearance, every releasability value held (issue #273), and, for rows
+    still pending_review, access_scope membership (issue #277). A rag-purge
+    holder with *no* curatable_orgs gets an unscoped list instead, matching
+    require_purge's own unscoped destruction authority (app/routes/upload.py)
+    -- they can already purge any document by id; this just lets them find
+    it. status_filter/classification/q only ever narrow whichever set that
+    caller already gets, never widen it. A caller holding both roles gets the
+    curator-scoped view -- narrower, and the one they're already used to.
     """
-    allowed = allowed_classifications(session, user.clearance)
-    stmt = (
-        select(Document)
-        .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
-        .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
-    )
+    if user.curatable_orgs:
+        allowed = allowed_classifications(session, user.clearance)
+        stmt = (
+            select(Document)
+            .where(Document.owner_org.in_(user.curatable_orgs))  # type: ignore[attr-defined]
+            .where(Document.classification.in_(allowed))  # type: ignore[attr-defined]
+        )
+    else:
+        stmt = select(Document)
     if status_filter:
         stmt = stmt.where(Document.status == status_filter)
     if classification:
@@ -105,7 +153,14 @@ def list_documents(
             )
         )
     docs = session.exec(stmt.order_by(Document.updated_at.desc())).all()  # type: ignore[attr-defined]
-    return [d for d in docs if releasability_authorized(d.releasability, user.releasability)]
+    if not user.curatable_orgs:
+        return docs
+    return [
+        d
+        for d in docs
+        if releasability_authorized(d.releasability, user.releasability)
+        and _visible_to_curator(d, user)
+    ]
 
 
 class DocumentEdit(BaseModel):
@@ -335,6 +390,19 @@ def _check_curator_authority(user: UserClaims, doc: Document, session: Session) 
             status.HTTP_403_FORBIDDEN,
             f"cannot approve a document with releasability values {doc.releasability}, "
             "one or more of which you do not hold",
+        )
+    # Issue #277 (gap G1): need-to-know, same as _visible_to_curator applies
+    # to queue listing -- but this is the actual access-control point, not
+    # just discoverability. Only gates a document still pending_review: once
+    # decided, access_scope no longer bears on a curator's authority to act
+    # on it (e.g. approving a new version that supersedes an already-approved
+    # document whose access_scope they don't happen to match).
+    if doc.status == "pending_review" and not access_scope_authorized(
+        doc.access_scope, sub=user.sub, groups=user.groups, org=user.org
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "cannot approve or reject a document outside your access scope",
         )
 
 

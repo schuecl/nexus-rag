@@ -5,9 +5,12 @@
 # recall miss against the golden set and on any forbidden (pending/rejected/
 # superseded) document leaking into results (FR-26 regression).
 #
-# Runs nightly and on PRs that touch anything the stack depends on. The
-# mutation job is nightly/manual-only and advisory until a baseline score is
-# established (see docs/testing.md).
+# Runs nightly and on manual dispatch. golden-query additionally runs on a PR
+# that carries the `needs-e2e` label (issue #301) -- the full-stack compose
+# boot + ollama model pull is too slow to pay on every PR touching the stack,
+# so it's opt-in per-PR rather than path-filtered. The mutation job is
+# nightly/manual-only and advisory until a baseline score is established (see
+# docs/testing.md).
 name: e2e
 
 on:
@@ -15,12 +18,7 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
   pull_request:
-    paths:
-      - "services/**"
-      - "scripts/**"
-      - "infra/**"
-      - "docker-compose.yml"
-      - ".github/workflows/e2e.yml"
+    types: [opened, synchronize, reopened, labeled]
 
 # Read-only token: this workflow only builds/runs the stack and uploads
 # artifacts, neither of which needs write scopes (#112).
@@ -29,6 +27,13 @@ permissions:
 
 jobs:
   golden-query:
+    # Nightly/manual runs always execute; a PR only runs it once someone
+    # opts in via the `needs-e2e` label (#301) -- a doc-only or unrelated PR
+    # doesn't otherwise pay for a full compose boot + model pull it can't
+    # affect. A skipped job still reports a (passing) status, so this can't
+    # reproduce the "stuck on Expected -- waiting for status" bug the old
+    # path filter risked (docs/testing.md).
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'needs-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

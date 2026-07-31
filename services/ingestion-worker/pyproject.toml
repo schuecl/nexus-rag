@@ -42,14 +42,13 @@ test = ["pytest>=9.0.3", "pytest-asyncio>=0.24", "pytest-cov>=7.0"]
 # same configuration orchestration-mcp already uses.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# #241/#92: app/ocr.py and app/captioning.py join the gated set, but they are
-# added here rather than to ci.yml's matrix `cov` string because that string is
-# embedded in the derived check name that both `Protect-Main*` rulesets pin as
-# required (see the comment on that matrix entry). `--cov` appends, so this
-# unions with the flags CI passes on the command line and the floor covers all
-# four modules. pytest-cov is in requirements-test.txt, and CI installs it
-# explicitly.
-addopts = "--cov=app.ocr --cov=app.captioning"
+# #92: app/captioning.py joins the gated set. app/ocr.py (#241) moved back
+# into ci.yml's matrix `cov` string once #256 decoupled the check name from
+# that string -- see docs/testing.md's coverage-policy section. `--cov`
+# appends, so this unions with the flags CI passes on the command line and
+# the floor covers all four modules. pytest-cov is in requirements-test.txt,
+# and CI installs it explicitly.
+addopts = "--cov=app.captioning"
 
 [build-system]
 requires = ["setuptools>=68"]

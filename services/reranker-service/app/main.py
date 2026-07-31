@@ -99,6 +99,15 @@ MAX_RERANK_CHUNKS = int(os.environ.get("MAX_RERANK_CHUNKS", "512"))
 # same posture as today -- but loudly, not silently (see the warning below).
 RERANKER_SHARED_SECRET = os.environ.get("RERANKER_SHARED_SECRET", "")
 
+# Issue #281 gap G5 stage 2: a second, optional value accepted alongside the
+# primary during rotation, so orchestration-mcp can be switched to a new
+# secret and this service restarted with it without a window where every
+# request 401s until both sides agree. Set only while a rotation is in
+# progress -- see docs/credential-rotation.md's reranker section for the
+# order of operations -- and unset once orchestration-mcp is confirmed on
+# the new value.
+RERANKER_SHARED_SECRET_PREVIOUS = os.environ.get("RERANKER_SHARED_SECRET_PREVIOUS", "")
+
 if not RERANKER_SHARED_SECRET:  # pragma: no cover - startup-time side effect
     logging.getLogger("reranker-service").warning(
         "RERANKER_SHARED_SECRET is not set -- /rerank accepts any caller that can "
@@ -116,9 +125,12 @@ def _check_shared_secret(
 ) -> None:
     if not RERANKER_SHARED_SECRET:
         return
-    if not x_reranker_shared_secret or not hmac.compare_digest(
-        x_reranker_shared_secret, RERANKER_SHARED_SECRET
-    ):
+    presented = x_reranker_shared_secret or ""
+    valid = hmac.compare_digest(presented, RERANKER_SHARED_SECRET) or (
+        bool(RERANKER_SHARED_SECRET_PREVIOUS)
+        and hmac.compare_digest(presented, RERANKER_SHARED_SECRET_PREVIOUS)
+    )
+    if not x_reranker_shared_secret or not valid:
         metrics.requests_total.labels(outcome="unauthorized").inc()
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "missing or invalid X-Reranker-Shared-Secret"
