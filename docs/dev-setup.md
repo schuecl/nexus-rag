@@ -1180,10 +1180,12 @@ the docs, not a silent "it works" — flag it if you find one.
   (`kb.html`'s `{% if current_user.can_* %}` checks, the same pattern `base.html` already
   uses to gate nav tabs) — a user holding multiple roles sees the union of every article
   those roles unlock, and one holding none yet sees an explicit "ask your Keycloak admin"
-  message instead of an empty page. **Tested against mocks only** (direct route-function
-  calls against an in-memory SQLite session, mirroring `test_login_gate.py`'s pattern,
-  covering every role combination's article visibility) — not yet exercised against a
-  live Postgres pair or a browser.
+  message instead of an empty page. **Validated against a live environment** (2026-07-31,
+  real `docker compose up` stack): role-gated article visibility and the knowledge-base
+  content itself confirmed against real signed-in users. Also covered by unit tests
+  (direct route-function calls against an in-memory SQLite session, mirroring
+  `test_login_gate.py`'s pattern, one case per role combination) for regression coverage
+  between live runs.
 
 **Stubbed / TODO (see inline `TODO` comments at each site):**
 - **Keycloak RFC 8693 token-exchange (`grant_type=token-exchange`) — verified live via a
