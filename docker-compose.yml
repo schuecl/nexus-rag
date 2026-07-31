@@ -426,6 +426,14 @@ services:
       # this volume, cannot ALTER TABLE at all.
       migrate-db-schema:
         condition: service_completed_successfully
+      # #317: this service's own DATABASE_URL role needs SELECT+INSERT on
+      # classification_levels for _seed_defaults (main.py's lifespan) before
+      # this service can report healthy -- on a fresh volume nothing grants
+      # that until this one-shot runs, and unlike lock-down-db-grants (which
+      # depends on this service already being healthy), this one doesn't wait
+      # on it.
+      grant-service-privileges:
+        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
       qdrant:
@@ -523,6 +531,15 @@ services:
       # #314: same reasoning as ingestion-api's dependency above -- this
       # service also calls init_db() from its own startup.
       migrate-db-schema:
+        condition: service_completed_successfully
+      # #317: not needed for this service's own healthcheck (health() never
+      # touches the database, see app/main.py) -- processing.py's generic
+      # `except Exception` branch already treats a missing grant as a
+      # transient failure and leaves the message un-acked for JetStream to
+      # redeliver, so this can't deadlock the way ingestion-api's healthcheck
+      # could. Depending on it anyway avoids that first-document
+      # fail-and-redeliver cycle on every fresh stand-up.
+      grant-service-privileges:
         condition: service_completed_successfully
       qdrant:
         condition: service_started
@@ -1108,6 +1125,63 @@ services:
         condition: service_healthy
     restart: "no"
 
+  grant-service-privileges:
+    # Issue #317: on a fresh volume, migrate-db-schema (above) now creates
+    # every table owned by the bootstrap superuser from the very first boot
+    # (#314/#316) -- so the per-service roles hold no privileges on them at
+    # all until something grants some. The one-shot that used to be the only
+    # place that happened, lock-down-db-grants below, waits for ingestion-api
+    # to report healthy; but ingestion-api's lifespan (_seed_defaults, which
+    # needs SELECT+INSERT on classification_levels) can't report healthy
+    # without exactly those grants. Neither side can go first -- confirmed by
+    # reproducing the crash-loop on a fresh volume and manually running
+    # apply-service-grants.sh out of order to unstick it.
+    #
+    # This runs the same grant matrix (infra/postgres/
+    # grant-service-privileges.sh, shared with apply-service-grants.sh so
+    # there's one source of truth) alone, before ingestion-api/
+    # ingestion-worker start, breaking the cycle. Granting doesn't require
+    # table ownership -- the bootstrap superuser can GRANT on any table
+    # regardless of owner -- so this is safe to run before
+    # lock-down-db-grants has ever reassigned ownership. lock-down-db-grants
+    # still runs afterward and remains the authority: it reassigns ownership,
+    # REVOKEs everything, and re-applies this same matrix, so an upgrade that
+    # needs a stale grant stripped still gets that.
+    #
+    # Re-run on every `up`, like migrate-db-schema/ensure-db-roles -- a role
+    # or table added by a later release has to reach a volume that predates
+    # it, and depends_on: service_completed_successfully re-runs a one-shot
+    # container on every `up` the same way those do.
+    security_opt: ["no-new-privileges:true"]
+    image: postgres:16.14
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      INGESTION_API_DB_USER: ${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}
+      INGESTION_WORKER_DB_USER: ${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}
+      ORCHESTRATION_MCP_DB_USER: ${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}
+      AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
+    volumes:
+      - ./infra/postgres/grant-service-privileges.sh:/grant-service-privileges.sh:ro
+    entrypoint: ["/bin/bash", "/grant-service-privileges.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # The roles this grants to must exist first. On a fresh volume they
+      # already do (init-app-roles.sh runs ensure-roles.sh at initdb time,
+      # before Postgres even reports healthy); this dependency matters for an
+      # upgrade where a role was only just added and ensure-db-roles (which
+      # otherwise only depends on postgres: service_healthy, and so would
+      # otherwise race this) hasn't applied it yet.
+      ensure-db-roles:
+        condition: service_completed_successfully
+      # The tables this grants on must exist first.
+      migrate-db-schema:
+        condition: service_completed_successfully
+    restart: "no"
+
   lock-down-db-grants:
     # NFR-2 + NFR-3, issues #278 and (formerly) the harden-audit-log step this
     # replaces. Applies the per-service grant matrix and reassigns table
@@ -1141,6 +1215,11 @@ services:
       AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
     volumes:
       - ./infra/postgres/apply-service-grants.sh:/apply-service-grants.sh:ro
+      # Issue #317: apply-service-grants.sh calls this directly (bash
+      # /grant-service-privileges.sh) after its own REVOKE, so the grant
+      # matrix has one source of truth shared with the grant-service-
+      # privileges one-shot above.
+      - ./infra/postgres/grant-service-privileges.sh:/grant-service-privileges.sh:ro
     entrypoint: ["/bin/bash", "/apply-service-grants.sh"]
     depends_on:
       ingestion-api:

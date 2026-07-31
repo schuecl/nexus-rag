@@ -186,11 +186,17 @@ decision if the lack of one proves painful in practice.
 **G2 — One Postgres identity read everything — resolved (#278).** Each service
 now connects as its own role, holding only the privileges its code actually
 exercises. The matrix is derived from the code and lives in
-`infra/postgres/apply-service-grants.sh`; Compose applies it through the
-`lock-down-db-grants` one-shot, which also reassigns every table's ownership
-to the bootstrap superuser — an owner always retains `GRANT` on its own
-objects, so `REVOKE` alone would leave a role able to hand itself back what
-was taken.
+`infra/postgres/grant-service-privileges.sh`; Compose applies it twice —
+once through the `grant-service-privileges` one-shot, alone, before
+`ingestion-api`/`ingestion-worker` start, and again through the
+`lock-down-db-grants` one-shot (`infra/postgres/apply-service-grants.sh`),
+which also reassigns every table's ownership to the bootstrap superuser — an
+owner always retains `GRANT` on its own objects, so `REVOKE` alone would
+leave a role able to hand itself back what was taken. The split exists
+because of issue #317: `lock-down-db-grants` waits for `ingestion-api` to
+report healthy, but on a fresh volume nothing else grants `ingestion-api`'s
+own role the privileges its startup needs to *become* healthy — the earlier,
+standalone `grant-service-privileges` pass breaks that cycle.
 
 Three consequences worth stating, because each was checked rather than
 assumed:

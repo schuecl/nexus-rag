@@ -3,10 +3,19 @@
 # the privileges it actually uses, and take away everything else.
 #
 # This supersedes the harden-audit-log one-shot, which did the same job for one
-# table. Folding it in rather than running both keeps the ordering honest: the
-# ownership reassignment and the grant matrix have to happen in one pass, or
-# there is a window where a table is owned by a role that has just been
-# stripped of the privileges it needs.
+# table. Folding ownership reassignment and the grant matrix into one pass here
+# keeps *that* ordering honest -- there must be no window where a table is
+# owned by a role that has just been stripped of the privileges it needs. But
+# per issue #317, this script's own postcondition (ingestion-api needing
+# SELECT+INSERT on classification_levels before its healthcheck passes) can't
+# be the only place those grants are applied: this whole script depends on
+# ingestion-api already being healthy, so on a fresh volume (where
+# migrate-db-schema, #314/#316, now creates every table owned by the bootstrap
+# superuser from the very first boot) neither side can go first. The matrix
+# itself now lives in grant-service-privileges.sh, run once standalone before
+# ingestion-api/ingestion-worker start (breaking that cycle) and again from
+# this script, after the REVOKE below, so this remains the authority that also
+# strips whatever the early pass didn't need to remove.
 #
 # Why it runs here and not in ensure-roles.sh: every statement below names a
 # table, and the tables do not exist until SQLModel's create_all() has run
@@ -68,7 +77,8 @@ LEGACY_ROLE="${APP_DB_USER:-nexus_rag_app}"
 # Issue #309: not one of the four service roles above, and deliberately not
 # put through the REVOKE-ALL-then-regrant loop below -- it never held
 # anything to be reassigned or stripped, so it doesn't need the ownership
-# dance those roles do. It just needs its one SELECT grant (re)applied.
+# dance those roles do. It just needs USAGE on the schema (below) and its one
+# SELECT grant, which grant-service-privileges.sh (re)applies.
 REPORTING_ROLE="${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}"
 
 PSQL="psql -v ON_ERROR_STOP=1 --username $POSTGRES_USER --dbname $POSTGRES_DB"
@@ -162,52 +172,9 @@ $PSQL <<-EOSQL
 	GRANT USAGE ON SCHEMA public TO "${REPORTING_ROLE}";
 EOSQL
 
-# The matrix.
-$PSQL <<-EOSQL
-	-- ingestion-api: the upload and curation UI, the admin vocabulary editor,
-	-- and the OIDC browser-login session store.
-	GRANT SELECT, INSERT, UPDATE ON documents             TO "${API_ROLE}";
-	GRANT SELECT, INSERT, UPDATE ON classification_levels TO "${API_ROLE}";
-	GRANT SELECT, INSERT, UPDATE ON releasability_values  TO "${API_ROLE}";
-	GRANT SELECT, INSERT, UPDATE ON portal_settings       TO "${API_ROLE}";
-	GRANT SELECT, INSERT, UPDATE ON notifications         TO "${API_ROLE}";
-	GRANT SELECT, INSERT, DELETE ON oauth_states          TO "${API_ROLE}";
-	GRANT SELECT, INSERT, UPDATE, DELETE ON user_sessions TO "${API_ROLE}";
-	GRANT INSERT                 ON audit_log             TO "${API_ROLE}";
-
-	-- ingestion-worker: reads the queued row, writes back status and chunk
-	-- counts. No session or OAuth tables at all -- it never sees a browser.
-	GRANT SELECT, UPDATE         ON documents             TO "${WORKER_ROLE}";
-	GRANT SELECT                 ON classification_levels TO "${WORKER_ROLE}";
-	GRANT SELECT                 ON releasability_values  TO "${WORKER_ROLE}";
-	GRANT INSERT                 ON audit_log             TO "${WORKER_ROLE}";
-
-	-- orchestration-mcp: the retrieval path. It reads the classification
-	-- ladder to build the FR-26 access filter and writes an audit row per
-	-- query. That is the entire extent of its database access -- notably it
-	-- cannot read documents at all, because chunk payloads come from Qdrant.
-	GRANT SELECT                 ON classification_levels TO "${MCP_ROLE}";
-	GRANT INSERT                 ON audit_log             TO "${MCP_ROLE}";
-
-	-- audit-reporting (issue #309): the sole SELECT grantee on audit_log,
-	-- and nothing else -- an offline reader that mines curator-decision
-	-- audit entries to measure suggester-vs-curator agreement
-	-- (scripts/calibrate_tagging_advisory.py). classification_levels is
-	-- also readable so the script can rank-compare a flagged/suggested
-	-- classification against the curator's final one; that vocabulary
-	-- carries no access-control-sensitive data, unlike documents/audit_log.
-	GRANT SELECT                 ON classification_levels TO "${REPORTING_ROLE}";
-	GRANT SELECT                 ON audit_log             TO "${REPORTING_ROLE}";
-EOSQL
-
-# Sequences. audit_log/documents use application-generated ids, but any table
-# with a SERIAL/IDENTITY column needs USAGE on its sequence for INSERT to work.
-# Granted per role from the live catalogue rather than a fixed list, same
-# reasoning as the ownership loop.
-$PSQL <<-EOSQL
-	GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${API_ROLE}";
-	GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${WORKER_ROLE}";
-	GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${MCP_ROLE}";
-EOSQL
+# The matrix -- issue #317: shared with the grant-service-privileges one-shot
+# that runs before ingestion-api/ingestion-worker start, so it has exactly one
+# source of truth. Mounted alongside this script at the same container path.
+bash /grant-service-privileges.sh
 
 echo "apply-service-grants: per-service privileges applied (#278); audit_log is INSERT-only for every application role, SELECT-only for the dedicated audit-reporting role (#309)"

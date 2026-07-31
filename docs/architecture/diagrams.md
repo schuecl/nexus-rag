@@ -98,9 +98,10 @@ What to note:
 - NATS uses per-service credentials with subject-level ACLs (#212):
   `ingestion-api` may only publish, the worker may only consume.
 - One-shot containers (`ollama-model-init`, `seed-sample-data`,
-  `ensure-db-roles`, `provision-metrics-view`, `lock-down-db-grants`,
-  `eval-retrieval` under `--profile eval`) run to completion and exit; they
-  are omitted above for legibility.
+  `ensure-db-roles`, `migrate-db-schema`, `grant-service-privileges`,
+  `provision-metrics-view`, `lock-down-db-grants`, `eval-retrieval` under
+  `--profile eval`) run to completion and exit; they are omitted above for
+  legibility.
 
 ---
 

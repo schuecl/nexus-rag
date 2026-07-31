@@ -1216,12 +1216,39 @@ the docs, not a silent "it works" — flag it if you find one.
   then confirmed a simulated new `_ADDITIVE_COLUMNS` entry applied cleanly through
   `migrate-db-schema` and that `ingestion-api`/`ingestion-worker` restarted healthy afterward,
   and that `lock-down-db-grants` still re-applies cleanly on top. A genuinely fresh volume was
-  never affected by the original bug (the column is created as part of `create_all()`, before
-  ownership is ever locked down) and is unaffected by this fix. Out of scope: this chart's
+  never affected by the original #314 bug (the column is created as part of `create_all()`,
+  before ownership is ever locked down) -- but this fix turned out to have its own fresh-volume
+  side effect, tracked and fixed as issue #317 below. Out of scope: this chart's
   `externalPostgres` path (Helm/production) deploys no database and already documents grant
   application as the external-Postgres operator's responsibility (`helm/nexus-rag/values.yaml`)
   — the equivalent schema-migration step there is the same operator's responsibility, noted
   alongside that existing comment.
+- **Fresh-volume deadlock introduced by the #314 fix above (issue #317)** — `migrate-db-schema`
+  creates every table owned by the bootstrap superuser from the very first boot, which closes
+  #314's upgrade-path hole but opens a new one on a brand-new volume: `INGESTION_API_DB_USER`
+  now holds *no* table-level privileges at all until `lock-down-db-grants` applies them, and
+  that one-shot `depends_on: ingestion-api: condition: service_healthy` — but `ingestion-api`'s
+  lifespan (`_seed_defaults` in `app/main.py`, which needs `SELECT`+`INSERT` on
+  `classification_levels`) cannot report healthy without exactly those grants. Neither side can
+  go first: every fresh `docker compose up -d` (`down -v` first, a new contributor's first `up`,
+  or any CI job starting from a clean volume — `e2e.yml`'s `golden-query`/`browser-verify` jobs)
+  hit this deterministically, not intermittently. Fixed by extracting the grant matrix out of
+  `apply-service-grants.sh` into `infra/postgres/grant-service-privileges.sh` (one source of
+  truth) and running it twice: once as a new standalone `grant-service-privileges` one-shot,
+  connected as the bootstrap superuser, right after `migrate-db-schema` and before
+  `ingestion-api`/`ingestion-worker` start (granting doesn't require table ownership — the
+  bootstrap superuser can `GRANT` on any table regardless of owner — so this is safe before
+  ownership has ever been reassigned); and again, unchanged in effect, from
+  `apply-service-grants.sh` after its `REVOKE ALL`, so `lock-down-db-grants` remains the
+  authority that also strips whatever the early pass didn't need to remove. The
+  ownership-reassignment/`REVOKE` half stays exactly where it was — moving it earlier would
+  reopen the #314 upgrade-path bug this whole mechanism exists to avoid — and its "refusing to
+  apply grants" postcondition check is untouched. **Validated against a live environment**
+  (2026-08-01): reproduced the deadlock on a genuinely fresh `postgres-data` volume (`docker
+  compose up -d` with no prior volume — this repo's dev environment had none at the time),
+  confirmed `ingestion-api` reached healthy after the fix with `grant-service-privileges`
+  completing first, and confirmed `lock-down-db-grants` still re-applies cleanly afterward with
+  no privilege drift (`\dp` matches the matrix exactly, same as before this change).
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus
