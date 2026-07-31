@@ -8,7 +8,8 @@
 # Runs nightly and on manual dispatch. golden-query additionally runs on a PR
 # that carries the `needs-e2e` label (issue #301) -- the full-stack compose
 # boot + ollama model pull is too slow to pay on every PR touching the stack,
-# so it's opt-in per-PR rather than path-filtered. The mutation job is
+# so it's opt-in per-PR rather than path-filtered. browser-verify (issue #187)
+# follows the same needs-e2e gating for the same reason. The mutation job is
 # nightly/manual-only and advisory until a baseline score is established (see
 # docs/testing.md).
 name: e2e
@@ -120,6 +121,86 @@ jobs:
           name: retrieval-eval-report
           path: retrieval-eval.txt
           if-no-files-found: ignore
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  browser-verify:
+    # Issue #187: CSRF double-submit and logout/re-login, driven by a real
+    # Chromium against the real Compose stack -- the browser mechanics
+    # underneath what services/ingestion-api/tests already covers with
+    # TestClient (server-side logic only, no real cookies/redirects). Same
+    # opt-in gating as golden-query, for the same reason (full compose boot +
+    # model pull is too slow to pay on every PR).
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'needs-e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Generate the dev TLS material Keycloak's HTTPS listener needs
+        # See golden-query's identical step above for why this is required.
+        run: |
+          infra/certs/generate-dev-certs.sh
+          chmod 0644 infra/certs/dev.key
+      - name: Alias `keycloak` to localhost
+        # docs/dev-setup.md's "hosts alias" step: Keycloak stamps whichever
+        # hostname the request used into its browser-facing discovery
+        # metadata (authorization_endpoint, end_session_endpoint), and
+        # routes/auth.py's OIDC_BROWSER_ISSUER is the host-external
+        # https://keycloak:8443 entry -- a real browser (this job's Chromium,
+        # same as a developer's) needs that name to resolve, same as it does
+        # server-to-server over the Compose network.
+        run: echo "127.0.0.1 keycloak" | sudo tee -a /etc/hosts
+      - name: Start the full stack and wait for it to be healthy
+        # Same wait strategy as golden-query's step above; this job doesn't
+        # need seed-sample-data's documents, only a healthy ingestion-api +
+        # Keycloak, but waiting on the same one-shots keeps `docker compose
+        # up -d` from racing this job against a still-booting stack.
+        env:
+          GENERATION_MODEL: nomic-embed-text
+        run: |
+          set -e
+          docker compose up -d
+          docker compose ps
+          echo "::group::Waiting for service healthchecks"
+          timeout 900 bash -c '
+            for svc in ingestion-api ingestion-worker orchestration-mcp reranker-service; do
+              waited=0
+              until [ "$(docker inspect --format "{{.State.Health.Status}}" "nexus-rag-$svc-1" 2>/dev/null)" = "healthy" ]; do
+                sleep 5
+                waited=$((waited + 5))
+                if [ $((waited % 30)) -eq 0 ]; then
+                  echo "  ... still waiting on $svc (${waited}s, state=$(docker inspect --format "{{.State.Health.Status}}" "nexus-rag-$svc-1" 2>/dev/null || echo absent))"
+                fi
+              done
+              echo "  [healthy] $svc after ${waited}s"
+            done'
+          echo "::endgroup::"
+          docker compose wait ollama-model-init seed-sample-data harden-audit-log || true
+          for svc in ollama-model-init seed-sample-data harden-audit-log; do
+            code=$(docker inspect --format '{{.State.ExitCode}}' "nexus-rag-$svc-1")
+            if [ "$code" != "0" ]; then
+              echo "::error::$svc exited with code $code"
+              exit 1
+            fi
+          done
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scripts/requirements-browser.txt
+      - name: Install Playwright and Chromium
+        # scripts/requirements-browser.txt is deliberately not part of the
+        # scripts/Dockerfile image every one-shot container shares -- see
+        # that file's header comment.
+        run: |
+          pip install -r scripts/requirements-browser.txt
+          playwright install --with-deps chromium
+      - name: Run the browser CSRF/logout verification
+        run: python3 scripts/verify_browser_csrf_logout.py
       - name: Dump compose logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=300

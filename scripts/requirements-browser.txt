@@ -1,0 +1,12 @@
+# Issue #187: separate from requirements.txt/requirements.in on purpose.
+# Those are hash-compiled into the shared scripts/Dockerfile image every
+# one-shot service (seed-sample-data, eval-retrieval, calibrate-tagging-
+# advisory, ...) builds from -- adding Playwright's ~300MB Chromium download
+# there would bloat every one of those unrelated builds. This file backs
+# verify_browser_csrf_logout.py alone, which runs directly on the host/CI
+# runner (not containerized on the compose network -- see that script's
+# module docstring for why: OIDC_REDIRECT_URI is fixed to the host-mapped
+# 127.0.0.1:8001, so the flow only works from wherever that's reachable as
+# `localhost`), and is installed on demand rather than pinned into any image.
+playwright==1.62.0
+httpx==0.28.1

@@ -14,6 +14,7 @@ golden-query harness the e2e workflow reuses.
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
 | Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
+| Browser CSRF + logout (issue #187) | `scripts/verify_browser_csrf_logout.py` | `e2e.yml` job `browser-verify` (same `needs-e2e` gating as golden-query) | Real Chromium against a real `docker compose up`: HttpOnly/readable cookie attributes, missing/mismatched/matching `X-CSRF-Token` (NFR-14), and a full Keycloak RP-initiated logout actually ending the SSO session (issue #254) rather than just the server-side logic `services/ingestion-api/tests` already covers with `TestClient` |
 | Tagging-advisory calibration | `scripts/calibrate_tagging_advisory.py` | Manual or scheduled (`docker compose --profile calibration run`), not in any CI workflow | Suggester-vs-curator agreement over time for Phase 1-3's advisories (FR-13/FR-16/FR-30/FR-32) — reporting only, no pass/fail gate by default |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **advisory**) | Test-suite strength on claims/access-filter/metadata/versioning |
 
@@ -84,7 +85,8 @@ docker compose --profile eval run --rm eval-retrieval
   four app services as of issue #79), the NFR-16 image-pin check, and a full
   `docker compose build` of all custom images.
 - **`.github/workflows/e2e.yml`** (nightly, manual, and a PR labeled
-  `needs-e2e`): full-stack golden-query e2e; mutation testing (advisory,
+  `needs-e2e`): full-stack golden-query e2e; browser-verify (issue #187,
+  same gating as golden-query -- see above); mutation testing (advisory,
   nightly/manual only regardless of label, see below). Reports uploaded as
   artifacts.
 - **`.github/workflows/security.yml`** (PR + weekly): `bandit`,

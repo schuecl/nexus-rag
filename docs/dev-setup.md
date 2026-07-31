@@ -1004,8 +1004,16 @@ the docs, not a silent "it works" — flag it if you find one.
   MCP) is never CSRF-exposed and skips this check entirely, same reasoning as
   `get_current_user`'s two paths never forking enforcement logic. Sandbox-`TestClient`-
   verified (mismatched/missing header rejected, matching header passes, bearer-token
-  callers unaffected, logout clears both cookies); the logout path specifically has
-  also been confirmed against a real browser (see above, issue #254).
+  callers unaffected, logout clears both cookies). **Issue #187: confirmed live against a
+  real browser** (`scripts/verify_browser_csrf_logout.py`, wired into `e2e.yml`'s
+  `browser-verify` job alongside `golden-query`) — the session cookie is actually
+  `HttpOnly` and the CSRF cookie actually isn't, `base.html`'s JS can read exactly the
+  cookie it's supposed to, missing/mismatched `X-CSRF-Token` is rejected and a matching
+  one passes, and a full Keycloak RP-initiated logout (`id_token_hint` +
+  `post_logout_redirect_uri`) actually ends the SSO session — a subsequent authenticated
+  request 401s and logging back in re-prompts for real credentials rather than silently
+  re-authenticating (issue #254's fix, now regression-tested rather than only manually
+  confirmed once).
 - **Qdrant access control (NFR-15)** — Qdrant now requires an API key in every
   environment, including this dev stack (`QDRANT__SERVICE__API_KEY` /
   `QDRANT__SERVICE__READ_ONLY_API_KEY` in `docker-compose.yml`, `.env.example`'s
