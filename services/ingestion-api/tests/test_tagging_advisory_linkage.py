@@ -4,6 +4,13 @@ rather than leaving "did the curator agree with the flag" as something only
 recoverable by diffing the `document.tagging_advisory` and `document.approve`/
 `document.reject` audit rows by document ID after the fact.
 
+Deliberately reads only `doc.tagging_advisory` (a Document column), never
+audit_log itself -- issue #278's per-service DB grants make audit_log
+INSERT-only for every application role, including ingestion-api's, and a
+`select(AuditLogEntry)` here would violate that (caught live against the real
+dev stack: it raised `psycopg.errors.InsufficientPrivilege`, which this
+in-memory-SQLite suite can't reproduce since SQLite has no such grants).
+
 Same technique as test_curate_nfr13_revert.py: call approve()/reject()
 directly against an in-memory SQLite session, bypassing the FastAPI layer.
 """
@@ -93,34 +100,16 @@ def _decision_entry(session: Session, action: str) -> AuditLogEntry:
 
 
 class TestApproveLinksFlaggedAdvisory:
-    def test_approve_embeds_link_to_the_flagged_audit_row(self, session: Session) -> None:
+    def test_approve_embeds_the_flagged_advisory(self, session: Session) -> None:
         doc = _document(tagging_advisory=_flagged_advisory())
         session.add(doc)
         session.commit()
         session.refresh(doc)
-        session.add(
-            AuditLogEntry(
-                actor_sub=doc.uploader_sub,
-                actor_username=doc.uploader_username,
-                action="document.tagging_advisory",
-                target_id=str(doc.id),
-                detail=_flagged_advisory(),
-            )
-        )
-        session.commit()
-        flagged_id = (
-            session.exec(
-                select(AuditLogEntry).where(AuditLogEntry.action == "document.tagging_advisory")
-            )
-            .one()
-            .id
-        )
 
         curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
 
         entry = _decision_entry(session, "document.approve")
         outcome = entry.detail["tagging_advisory"]
-        assert outcome["audit_log_id"] == str(flagged_id)
         assert outcome["flagged_classification"] == "SECRET"
         # No correction was applied -- final tags are still what was flagged.
         assert outcome["final_classification"] == "CUI"
@@ -159,28 +148,11 @@ class TestApproveLinksFlaggedAdvisory:
 
 
 class TestRejectLinksFlaggedAdvisory:
-    def test_reject_embeds_link_to_the_flagged_audit_row(self, session: Session) -> None:
+    def test_reject_embeds_the_flagged_advisory(self, session: Session) -> None:
         doc = _document(tagging_advisory=_flagged_advisory())
         session.add(doc)
         session.commit()
         session.refresh(doc)
-        session.add(
-            AuditLogEntry(
-                actor_sub=doc.uploader_sub,
-                actor_username=doc.uploader_username,
-                action="document.tagging_advisory",
-                target_id=str(doc.id),
-                detail=_flagged_advisory(),
-            )
-        )
-        session.commit()
-        flagged_id = (
-            session.exec(
-                select(AuditLogEntry).where(AuditLogEntry.action == "document.tagging_advisory")
-            )
-            .one()
-            .id
-        )
 
         curate.reject(
             doc.id,
@@ -192,7 +164,6 @@ class TestRejectLinksFlaggedAdvisory:
 
         entry = _decision_entry(session, "document.reject")
         outcome = entry.detail["tagging_advisory"]
-        assert outcome["audit_log_id"] == str(flagged_id)
         assert outcome["flagged_classification"] == "SECRET"
 
     def test_reject_of_unflagged_document_has_no_tagging_advisory_link(

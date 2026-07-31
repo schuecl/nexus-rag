@@ -434,14 +434,23 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
     return old_doc
 
 
-def _tagging_advisory_outcome(session: Session, doc: Document) -> dict | None:
+def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """Issue #306 gap 1: link the curator's decision back to the ingestion-time
     marking-mismatch advisory (issue #138), if one was flagged for this
     document. Without this, recovering "did the curator agree with the flag"
     means diffing the `document.tagging_advisory` and `document.approve`/
-    `document.reject` audit rows by document ID after the fact -- this embeds
-    the flagged values, the curator's final tags, and the linked audit row id
-    directly in the decision's own audit entry.
+    `document.reject` audit rows by document ID after the fact -- embedding the
+    flagged values and the curator's final tags directly in the decision's own
+    audit entry makes that row self-contained instead.
+
+    Deliberately reads only `doc.tagging_advisory` (a Document column
+    ingestion-api already has SELECT on), not the audit_log table itself --
+    issue #278's per-service DB grants make audit_log INSERT-only for every
+    application role, including this one (see
+    infra/postgres/apply-service-grants.sh), specifically so no route needs
+    read access to the trail. A `select(AuditLogEntry)` lookup here would
+    violate that boundary and fail against the real grant (caught live: it
+    raised `psycopg.errors.InsufficientPrivilege` against the dev stack).
 
     Returns None when nothing was flagged (the common case), so approve/reject
     audit entries stay unchanged for documents the advisory had no findings
@@ -450,16 +459,7 @@ def _tagging_advisory_outcome(session: Session, doc: Document) -> dict | None:
     advisory = doc.tagging_advisory or {}
     if not (advisory.get("under_classified") or advisory.get("unassigned_caveats")):
         return None
-    flagged_entry = session.exec(
-        select(AuditLogEntry)
-        .where(
-            AuditLogEntry.action == "document.tagging_advisory",
-            AuditLogEntry.target_id == str(doc.id),
-        )
-        .order_by(AuditLogEntry.created_at.desc())  # type: ignore[attr-defined]
-    ).first()
     return {
-        "audit_log_id": str(flagged_entry.id) if flagged_entry else None,
         "flagged_classification": advisory.get("detected_classification"),
         "flagged_caveats": advisory.get("unassigned_caveats"),
         "final_classification": doc.classification,
@@ -571,7 +571,7 @@ def approve(
                 target_id=str(doc.id),
                 detail={
                     "corrections": corrections.model_dump() if corrections else None,
-                    "tagging_advisory": _tagging_advisory_outcome(session, doc),
+                    "tagging_advisory": _tagging_advisory_outcome(doc),
                 },
             )
         )
@@ -636,7 +636,7 @@ def reject(
                 target_id=str(doc.id),
                 detail={
                     "reason": body.reason,
-                    "tagging_advisory": _tagging_advisory_outcome(session, doc),
+                    "tagging_advisory": _tagging_advisory_outcome(doc),
                 },
             )
         )
