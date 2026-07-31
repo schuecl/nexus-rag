@@ -1175,14 +1175,45 @@ the docs, not a silent "it works" — flag it if you find one.
   `ingestion-worker`, overwrote the object-store original in place, resumed the worker, and
   confirmed the document landed in `failed` with `reason: content_hash_mismatch` and both the
   expected and actual digests in the audit row; also confirmed purge nulls `content_sha256`
-  on the row and never writes it to the `document.purged` audit entry. **Known gap, tracked
-  separately (issue #314):** the additive-column back-fill this required
-  (`common/db.py`'s `_ensure_columns`) turned out to be incompatible with the #278
-  grants-lockdown model on any environment that has already been through one `docker compose
-  up` cycle — including this one, which needed a one-time manual `ALTER TABLE` as the
-  bootstrap superuser to unblock during this validation. A genuinely fresh volume is not
-  affected (the column is created as part of `create_all()`, before ownership is ever
-  locked down); #314 tracks the general fix for upgrading an already-locked-down deployment.
+  on the row and never writes it to the `document.purged` audit entry. Validating this
+  surfaced a real gap, tracked and fixed as issue #314 (below): the additive-column back-fill
+  this required (`common/db.py`'s `_ensure_columns`) turned out to be incompatible with the
+  #278 grants-lockdown model on any environment that has already been through one `docker
+  compose up` cycle — this run needed a one-time manual `ALTER TABLE` as the bootstrap
+  superuser to unblock during the validation above, before the fix existed.
+- **Additive-column back-fill vs. the #278 grants lockdown (issue #314)** — `common/db.py`'s
+  `_ensure_columns()` runs `ALTER TABLE ... ADD COLUMN` using each service's own
+  least-privilege `DATABASE_URL`, but `ALTER TABLE` requires table *ownership* in Postgres —
+  there is no separate grantable "add a column" privilege — and `lock-down-db-grants`
+  reassigns every table's ownership to the bootstrap superuser specifically so no application
+  role can grant itself anything back (#278). On any environment that has already been
+  through one `lock-down-db-grants` cycle (every real deployment past its first boot), a
+  release that adds a new entry to `_ADDITIVE_COLUMNS` for an existing table made
+  `ingestion-api`/`ingestion-worker` crash-loop on startup with
+  `psycopg.errors.InsufficientPrivilege: must be owner of table` — and since
+  `lock-down-db-grants` itself depends on `ingestion-api: condition: service_healthy`, the
+  whole stack deadlocked with no self-recovery. Latent since #278 landed (every additive
+  column already in `_ADDITIVE_COLUMNS` at that point predates it — a `CREATE TABLE` for a
+  brand-new table was already handled, since `ensure-roles.sh` re-grants `CREATE ON SCHEMA
+  public` before every `up`); first triggered by #285's `content_sha256` column above, which
+  is exactly how it was found. Fixed with a new `migrate-db-schema` one-shot Compose service
+  that runs the same `init_db()` (so it can never drift from `_ADDITIVE_COLUMNS`, unlike
+  duplicating it as raw SQL) connected as the bootstrap superuser, before `ingestion-api`/
+  `ingestion-worker` start — same ordering `ensure-roles.sh` already uses for granting
+  `CREATE` pre-startup. Both services' own later `init_db()` calls are now a no-op (the
+  schema already matches) rather than a privilege error. **Validated against a live
+  environment** (2026-07-31): reproduced the failure directly (`ALTER TABLE documents ADD
+  COLUMN ... ` as the `nexus_rag_ingestion_api` role against this repo's own long-running,
+  already-locked-down dev stack failed with exactly the `InsufficientPrivilege` error above),
+  then confirmed a simulated new `_ADDITIVE_COLUMNS` entry applied cleanly through
+  `migrate-db-schema` and that `ingestion-api`/`ingestion-worker` restarted healthy afterward,
+  and that `lock-down-db-grants` still re-applies cleanly on top. A genuinely fresh volume was
+  never affected by the original bug (the column is created as part of `create_all()`, before
+  ownership is ever locked down) and is unaffected by this fix. Out of scope: this chart's
+  `externalPostgres` path (Helm/production) deploys no database and already documents grant
+  application as the external-Postgres operator's responsibility (`helm/nexus-rag/values.yaml`)
+  — the equivalent schema-migration step there is the same operator's responsibility, noted
+  alongside that existing comment.
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus

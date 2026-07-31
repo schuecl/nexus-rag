@@ -121,6 +121,18 @@ externalPostgres:
   # exact matrix, and Compose runs it as the lock-down-db-grants one-shot.
   # Notably, nothing gets SELECT on audit_log -- reading the trail is a
   # deliberate DBA/SIEM act (NFR-2), not something an application role can do.
+  #
+  # Issue #314: once these grants have been applied, per-service roles lose
+  # table ownership and can no longer run the ALTER TABLE ADD COLUMN that
+  # common/db.py's additive-column back-fill (_ADDITIVE_COLUMNS) needs on a
+  # later release -- there is no separate grantable "add a column" privilege
+  # in Postgres, only ownership. Compose's fix is the migrate-db-schema
+  # one-shot (runs init_db() as the bootstrap superuser before the app
+  # services start); against an external Postgres, your own migration step
+  # has to do the same thing -- run `python -c "from common.db import
+  # init_db; init_db()"` (or the equivalent ALTER TABLE statements from
+  # _ADDITIVE_COLUMNS) as a role that owns the tables, before rolling out a
+  # release that added a new entry there, same as any other schema change.
   perServiceKeys:
     # Empty = fall back to secretKey above, i.e. the pre-#278 shared
     # credential. Set all three once your Postgres has the roles.

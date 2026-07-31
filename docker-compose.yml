@@ -420,6 +420,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # #314: must have already applied create_all()/_ensure_columns() as the
+      # bootstrap superuser -- this service's own later init_db() call runs
+      # with a role that, once lock-down-db-grants has ever executed against
+      # this volume, cannot ALTER TABLE at all.
+      migrate-db-schema:
+        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
       qdrant:
@@ -514,6 +520,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # #314: same reasoning as ingestion-api's dependency above -- this
+      # service also calls init_db() from its own startup.
+      migrate-db-schema:
+        condition: service_completed_successfully
       qdrant:
         condition: service_started
       nats:
@@ -1048,6 +1058,51 @@ services:
     volumes:
       - ./infra/postgres/ensure-roles.sh:/ensure-roles.sh:ro
     entrypoint: ["/bin/bash", "/ensure-roles.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  migrate-db-schema:
+    # Issue #314: common/db.py's init_db() (create_all() + the _ADDITIVE_COLUMNS
+    # back-fill) needs table-owner privileges -- ALTER TABLE ADD COLUMN has no
+    # separate grantable privilege in Postgres, and lock-down-db-grants below
+    # reassigns every table to the bootstrap superuser specifically so no
+    # application role can grant itself anything back. That makes the two
+    # incompatible: ingestion-api/ingestion-worker each call init_db() from
+    # their own startup using their own least-privilege DATABASE_URL, so a
+    # release that adds a new entry to _ADDITIVE_COLUMNS for an existing,
+    # already-locked-down table (first hit by #285's content_sha256 column)
+    # makes that ALTER fail with `InsufficientPrivilege: must be owner of
+    # table`, both services crash-loop, and lock-down-db-grants itself never
+    # runs (it depends on ingestion-api: condition: service_healthy) -- a
+    # deadlock with no self-recovery.
+    #
+    # Fix: run the same init_db() here first, connected as the bootstrap
+    # superuser, before either app service starts -- same ordering
+    # ensure-roles.sh already uses for granting CREATE pre-startup. Reuses the
+    # ingestion-api image (already has common + SQLModel installed) instead of
+    # duplicating _ADDITIVE_COLUMNS as raw SQL, so this can never drift from
+    # the single source of truth. `import common.models` registers every
+    # SQLModel table class with SQLModel.metadata before init_db() reads it --
+    # common/db.py itself only imports the engine/session plumbing, not the
+    # models. ingestion-api's/ingestion-worker's own later init_db() calls
+    # become no-ops (table/columns already exist), so they stop needing any
+    # DDL privilege at all; left in place as-is since they cost nothing once
+    # idempotent and are the same safety net a fresh volume already relies on.
+    #
+    # Re-run on every `up`, like ensure-db-roles/lock-down-db-grants -- an
+    # additive column from a later release has to reach a volume that predates
+    # it, the same reasoning #221 already established for roles.
+    security_opt: ["no-new-privileges:true"]
+    build:
+      context: .
+      dockerfile: services/ingestion-api/Dockerfile
+    entrypoint: ["python3", "-c", "import common.models; from common.db import init_db; init_db()"]
+    environment:
+      # Bootstrap superuser, deliberately not any of the per-service
+      # DATABASE_URLs below -- see the rationale above.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nexus_rag}:${POSTGRES_PASSWORD:-nexus_rag}@postgres:5432/${POSTGRES_DB:-nexus_rag}
     depends_on:
       postgres:
         condition: service_healthy
