@@ -909,10 +909,10 @@ the docs, not a silent "it works" — flag it if you find one.
   `qdrant/qdrant:v1.18.2`, `keycloak:26.7.0`, `ollama/ollama:0.32.1`, `mongo:7.0.31`,
   `litellm:v1.93.0`) — except `librechat:v0.8.7`, deliberately held at the exact version
   Section 7.7's OBO integration recipe was verified against rather than bumped to newest.
-  The three first-party images (`ingestion-api`, `orchestration-mcp`, `reranker-service`)
-  in `values.yaml` are pinned to `0.1.0` (matching `Chart.yaml`'s `appVersion`) as a
-  placeholder for a versioning convention, not a value backed by an actual tagged image
-  yet — there's no CI pipeline in this repo that builds/pushes one. The Keycloak bump in
+  The four first-party images (`ingestion-api`, `ingestion-worker`, `orchestration-mcp`,
+  `reranker-service`) in `values.yaml` are pinned to `0.1.0` (matching `Chart.yaml`'s
+  `appVersion`), and since the v0.1.0 tag those are real images on GHCR, not a placeholder
+  — see `docs/releasing.md` for the release process that builds/pushes them. The Keycloak bump in
   particular (26.2 → 26.7.0) deserves a full `down -v` / `up` / realm-import / login retest
   before trusting it, given how many of the eight Keycloak bugs above turned out to be
   version-behavior surprises rather than code bugs.

@@ -4,11 +4,15 @@ How this stack is versioned, how a release is cut, and how released artifacts
 reach an air-gapped MPNexus environment. Introduced by #295; the design
 rationale lives in that issue's discussion.
 
-Confidence label, per this repo's convention: the process below is
-*implemented* (workflow, guards, and scripts exist and are unit/lint-checked)
-and becomes *validated live* the first time a `vX.Y.Z` tag actually runs
-`release.yml` end to end. Anything that turns out to differ in practice gets
-corrected here in the same PR that fixes it.
+Confidence label, per this repo's convention: **validated live** as of v0.1.0
+(2026-07-31, run
+[30626111804](https://github.com/schuecl/nexus-rag/actions/runs/30626111804),
+8m42s, green) — tag push through image/chart publish through GitHub Release
+creation ran end to end exactly as documented below. The air-gapped export
+(`scripts/export_release_bundle.sh`) is still *implemented* only: it needs
+docker and helm on a connected host, neither available in the environment
+that cut v0.1.0, so it hasn't run yet. Anything that turns out to differ in
+practice gets corrected here in the same PR that fixes it.
 
 ## Versioning scheme
 
