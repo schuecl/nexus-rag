@@ -43,6 +43,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
       APP_DB_USER: ${APP_DB_USER:-nexus_rag_app}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-nexus_rag_app}
+      # #278: one role per service. The shared APP_DB_USER above is kept only
+      # so apply-service-grants.sh can reassign the tables it owns on an
+      # existing deployment and strip its privileges; nothing connects as it.
+      INGESTION_API_DB_USER: ${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}
+      INGESTION_API_DB_PASSWORD: ${INGESTION_API_DB_PASSWORD:-nexus_rag_ingestion_api}
+      INGESTION_WORKER_DB_USER: ${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}
+      INGESTION_WORKER_DB_PASSWORD: ${INGESTION_WORKER_DB_PASSWORD:-nexus_rag_ingestion_worker}
+      ORCHESTRATION_MCP_DB_USER: ${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}
+      ORCHESTRATION_MCP_DB_PASSWORD: ${ORCHESTRATION_MCP_DB_PASSWORD:-nexus_rag_orchestration_mcp}
       KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak_app}
       KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:-keycloak}
@@ -344,9 +353,11 @@ services:
       # available, and seed-sample-data never purges anyway. See
       # app/routes/upload.py.
       PURGE_TWO_PERSON_REQUIRED: "false"
-      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
-      # postgres service's init-app-roles.sh.
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # NFR-3 / #278: this service's OWN non-superuser role, not a shared one.
+      # It holds DML on the tables the upload/curation/admin UI touches and
+      # INSERT-only on audit_log -- see infra/postgres/apply-service-grants.sh
+      # for the matrix and why nothing gets SELECT on the audit trail.
+      DATABASE_URL: postgresql+psycopg://${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}:${INGESTION_API_DB_PASSWORD:-nexus_rag_ingestion_api}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       # Issue #75: the third entry (https://keycloak:8443) is the issuer
       # stamped on tokens produced by LibreChat's OBO token-exchange call,
       # which now goes to Keycloak's HTTPS listener (openid-client's
@@ -457,9 +468,10 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
-      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
-      # postgres service's init-app-roles.sh.
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # NFR-3 / #278: the worker's own role -- SELECT/UPDATE on documents,
+      # SELECT on the vocabulary tables, INSERT on audit_log. It never sees a
+      # browser, so it has no access to user_sessions or oauth_states at all.
+      DATABASE_URL: postgresql+psycopg://${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}:${INGESTION_WORKER_DB_PASSWORD:-nexus_rag_ingestion_worker}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       QDRANT_URL: http://qdrant:6333
       # NFR-15: full read/write key -- this is now the service that creates
       # the collection and writes points, moved out of ingestion-api.
@@ -540,9 +552,11 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
-      # NFR-3: non-superuser app role, distinct from POSTGRES_USER -- see
-      # postgres service's init-app-roles.sh.
-      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-nexus_rag_app}:${APP_DB_PASSWORD:-nexus_rag_app}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # NFR-3 / #278: the narrowest of the three. SELECT on
+      # classification_levels (to build the FR-26 access filter) and INSERT on
+      # audit_log. It cannot read documents -- chunk payloads come from Qdrant
+      # -- so a compromise of the retrieval path yields no database content.
+      DATABASE_URL: postgresql+psycopg://${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}:${ORCHESTRATION_MCP_DB_PASSWORD:-nexus_rag_orchestration_mcp}@postgres:5432/${POSTGRES_DB:-nexus_rag}
       # Issue #75: the third entry (https://keycloak:8443) is the issuer
       # stamped on tokens produced by LibreChat's OBO token-exchange call,
       # which now goes to Keycloak's HTTPS listener (openid-client's
@@ -1004,6 +1018,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
       APP_DB_USER: ${APP_DB_USER:-nexus_rag_app}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-nexus_rag_app}
+      # #278: one role per service. The shared APP_DB_USER above is kept only
+      # so apply-service-grants.sh can reassign the tables it owns on an
+      # existing deployment and strip its privileges; nothing connects as it.
+      INGESTION_API_DB_USER: ${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}
+      INGESTION_API_DB_PASSWORD: ${INGESTION_API_DB_PASSWORD:-nexus_rag_ingestion_api}
+      INGESTION_WORKER_DB_USER: ${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}
+      INGESTION_WORKER_DB_PASSWORD: ${INGESTION_WORKER_DB_PASSWORD:-nexus_rag_ingestion_worker}
+      ORCHESTRATION_MCP_DB_USER: ${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}
+      ORCHESTRATION_MCP_DB_PASSWORD: ${ORCHESTRATION_MCP_DB_PASSWORD:-nexus_rag_orchestration_mcp}
       KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak_app}
       KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_app}
       LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm_app}
@@ -1019,37 +1042,39 @@ services:
         condition: service_healthy
     restart: "no"
 
-  harden-audit-log:
-    # NFR-2: audit_log must be append-only from the app's own DB credentials
-    # (APP_DB_USER, not the postgres superuser). Can't do this from
-    # postgres's docker-entrypoint-initdb.d (init-app-roles.sh) -- the
-    # audit_log table doesn't exist yet at that point, it's created by
-    # SQLModel's create_all() (common/db.py's init_db(), called from
-    # ingestion-api's lifespan) the first time that service starts. Runs
-    # once ingestion-api reports healthy, connecting as the bootstrap
-    # superuser (the only other place besides init-app-roles.sh that ever
-    # does) to reassign table ownership away from APP_DB_USER entirely --
-    # not just REVOKE while it's still the owner, which it could trivially
-    # undo (owners always retain GRANT on their own objects; only losing
-    # ownership outright closes that).
+  lock-down-db-grants:
+    # NFR-2 + NFR-3, issues #278 and (formerly) the harden-audit-log step this
+    # replaces. Applies the per-service grant matrix and reassigns table
+    # ownership away from the application roles.
+    #
+    # Can't run from postgres's docker-entrypoint-initdb.d, and can't run in
+    # ensure-roles.sh either: every statement names a table, and the tables
+    # don't exist until SQLModel's create_all() has run (common/db.py's
+    # init_db(), from ingestion-api's lifespan). So it waits for ingestion-api
+    # to report healthy and connects as the bootstrap superuser -- the same
+    # ordering harden-audit-log used, for the same reason.
+    #
+    # Reassigning ownership is the part that cannot be skipped: an owner always
+    # retains GRANT on its own objects, so REVOKE alone leaves a role able to
+    # hand itself back whatever was taken away. harden-audit-log knew this for
+    # audit_log; #278 applies it to every table.
+    #
+    # Re-run on every `up`, like ensure-db-roles (#221) -- a grant added by a
+    # later release has to reach deployments whose volume predates it.
+    security_opt: ["no-new-privileges:true"]
     image: postgres:16.14
     environment:
+      PGHOST: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-nexus_rag}
-    command:
-      - psql
-      - -v
-      - ON_ERROR_STOP=1
-      - -h
-      - postgres
-      - -U
-      - ${POSTGRES_USER:-nexus_rag}
-      - -d
-      - ${POSTGRES_DB:-nexus_rag}
-      - -c
-      - >-
-        ALTER TABLE audit_log OWNER TO "${POSTGRES_USER:-nexus_rag}";
-        REVOKE ALL ON audit_log FROM "${APP_DB_USER:-nexus_rag_app}";
-        GRANT SELECT, INSERT ON audit_log TO "${APP_DB_USER:-nexus_rag_app}";
+      POSTGRES_USER: ${POSTGRES_USER:-nexus_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      APP_DB_USER: ${APP_DB_USER:-nexus_rag_app}
+      INGESTION_API_DB_USER: ${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}
+      INGESTION_WORKER_DB_USER: ${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}
+      ORCHESTRATION_MCP_DB_USER: ${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}
+    volumes:
+      - ./infra/postgres/apply-service-grants.sh:/apply-service-grants.sh:ro
+    entrypoint: ["/bin/bash", "/apply-service-grants.sh"]
     depends_on:
       ingestion-api:
         condition: service_healthy

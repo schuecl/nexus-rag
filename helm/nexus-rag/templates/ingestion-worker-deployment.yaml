@@ -108,7 +108,9 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.externalPostgres.existingSecret }}
-                  key: {{ .Values.externalPostgres.secretKey }}
+                  # #278: this service's own role, falling back to the
+                  # shared pre-#278 credential when unset.
+                  key: {{ .Values.externalPostgres.perServiceKeys.ingestionWorker | default .Values.externalPostgres.secretKey }}
             - name: QDRANT_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
             # NFR-15: full read/write key -- this is the service that now

@@ -5,7 +5,8 @@
 # tests/e2e's BDD scenarios against this pin). 9.0.3 is also where
 # PYSEC-2026-1845 (predictable /tmp/pytest-of-{user}) is fixed, so this pin
 # closes that alert rather than accepting it. Re-check the upper bound when
-# pytest-bdd ships a 9.1-compatible release.
+# pytest-bdd ships a 9.1-compatible release (still 8.1.0 as of 2026-07-30;
+# dependabot's 9.1.1 bump failed all 10 BDD scenarios on exactly this).
 pytest==9.0.3
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
@@ -29,9 +30,9 @@ pillow==12.3.0
 pytesseract==0.3.13
 # #134: common/tracing.py's OpenTelemetry stack (unit tests build a real
 # in-memory TracerProvider to assert span trees and NATS header propagation)
-opentelemetry-api==1.30.0
-opentelemetry-sdk==1.30.0
-opentelemetry-exporter-otlp-proto-http==1.30.0
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
 # #160: the Milvus backend's client (unit tests cover the FR-26 expression
 # builder and backend selection; live parity runs against a real container)
-pymilvus==2.5.18
+pymilvus==3.0.1

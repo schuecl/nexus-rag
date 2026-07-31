@@ -13,7 +13,7 @@ golden-query harness the e2e workflow reuses.
 | Unit | `tests/unit/common/` | `ci.yml` (every PR, py 3.11 + 3.12) | Claims parsing & signature verification, the FR-26 access filter, FR-18 metadata enforcement, classification ranking, FR-7 supersede guards, object store (incl. path-traversal), job-queue publishing |
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
-| Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly + PRs touching the stack) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
+| Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **advisory**) | Test-suite strength on claims/access-filter/metadata/versioning |
 
 Design notes:
@@ -82,10 +82,10 @@ docker compose --profile eval run --rm eval-retrieval
   below), `ruff check`, `mypy` (enforced across `services/common` and all
   four app services as of issue #79), the NFR-16 image-pin check, and a full
   `docker compose build` of all custom images.
-- **`.github/workflows/e2e.yml`** (nightly, manual, and PRs touching
-  `services/`, `scripts/`, `infra/`, `docker-compose.yml`): full-stack
-  golden-query e2e; mutation testing (advisory, see below). Reports uploaded
-  as artifacts.
+- **`.github/workflows/e2e.yml`** (nightly, manual, and a PR labeled
+  `needs-e2e`): full-stack golden-query e2e; mutation testing (advisory,
+  nightly/manual only regardless of label, see below). Reports uploaded as
+  artifacts.
 - **`.github/workflows/security.yml`** (PR + weekly): `bandit`,
   `pip-audit` against the shipped dependency tree (the test toolchain is
   dev-only and excluded), `helm lint` + `helm template`, Trivy filesystem
@@ -164,18 +164,25 @@ value in practice, disable it there rather than reintroducing a second
 source of truth for the checks list.
 
 **Deliberately not required: `golden-query` and `mutation`.** Both live in
-`e2e.yml`, which is path-filtered (`services/**`, `scripts/**`, `infra/**`,
-`docker-compose.yml`, the workflow file itself) and also runs on a nightly
-schedule. A required status check that never fires for a given PR (e.g. a
-docs-only or workflow-only change that doesn't touch those paths) leaves
+`e2e.yml`. `golden-query` used to be path-filtered (`services/**`,
+`scripts/**`, `infra/**`, `docker-compose.yml`, the workflow file itself),
+triggering on nearly every real PR; issue #301 replaced that with a
+job-level `if` gated on the PR carrying a `needs-e2e` label (or the nightly/
+manual triggers, which always run it) — the full compose boot plus the
+`ollama-model-init` pull was too slow to pay by default on PRs that mostly
+can't regress retrieval. A required status check that never fires for a
+given PR (e.g. a docs-only change, or a code PR nobody labeled) would leave
 GitHub's merge button permanently stuck on "Expected — waiting for status to
 be reported" — the same class of bug the fork-PR CodeQL fix above addresses,
-just triggered by a path filter instead of a fork-token limitation. `mutation`
-is additionally still advisory pending a baseline (see below). Making
-`golden-query` a merge gate would mean either dropping its path filter (paying
-its ~5-6 minute full-stack-compose cost on every PR, including doc-only ones)
-or accepting that gap — worth revisiting once there's an owner for that
-tradeoff, but out of scope here.
+just triggered by a conditional trigger instead of a fork-token limitation.
+A *skipped* job (the `if` false case) does report a status, so this
+specific mechanism wouldn't reproduce that bug on its own — but making
+`golden-query` required would still mean either labeling every single PR
+`needs-e2e` (defeating the point of the opt-in) or accepting that most PRs
+merge without this coverage, which is exactly today's tradeoff stated
+plainly rather than made required and then quietly never enforced.
+`mutation` is additionally still advisory pending a baseline (see below) and
+stays nightly/manual-only regardless of the label.
 
 **Fork-PR CodeQL reporting, confirmed working.** Issue #81's comment flagged
 an open question: does the default CodeQL setup produce a check run on

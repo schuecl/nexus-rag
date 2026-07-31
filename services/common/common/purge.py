@@ -32,7 +32,8 @@ the fact of the document, not its content.
 
 Deliberately NOT handled here: expunging prior audit entries that mention this
 document. NFR-2 makes audit_log append-only on purpose and the application role
-holds only SELECT/INSERT, so it *cannot* delete them by construction. That
+holds INSERT and nothing else since #278 -- not even SELECT -- so it *cannot*
+delete them by construction. That
 tension is real and is called out in #123 -- resolving it needs a policy
 decision and an out-of-band administrative path, not an application function.
 

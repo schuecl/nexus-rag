@@ -93,11 +93,12 @@ What to note:
 - `orchestration-mcp` holds a **read-only** Qdrant API key (NFR-15); only
   `ingestion-api` (curation flips) and the worker (upserts) can write vectors.
 - The audit log is append-only from the app role's perspective — the
-  `harden-audit-log` one-shot revokes everything but SELECT/INSERT (NFR-2).
+  `lock-down-db-grants` one-shot leaves every application role with INSERT and
+  nothing else -- not even SELECT (NFR-2, #278).
 - NATS uses per-service credentials with subject-level ACLs (#212):
   `ingestion-api` may only publish, the worker may only consume.
 - One-shot containers (`ollama-model-init`, `seed-sample-data`,
-  `ensure-db-roles`, `provision-metrics-view`, `harden-audit-log`,
+  `ensure-db-roles`, `provision-metrics-view`, `lock-down-db-grants`,
   `eval-retrieval` under `--profile eval`) run to completion and exit; they
   are omitted above for legibility.
 
