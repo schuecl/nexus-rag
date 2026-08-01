@@ -55,6 +55,22 @@ class TestValidateSupersedeTarget:
             validate_supersede_target(_document(owner_org="Signal-Corps"), **GOOD_KWARGS)
         assert any("different org" in e for e in excinfo.value.errors)
 
+    def test_cross_org_target_short_circuits_other_checks(self):
+        # Issue #325: a cross-org target must not also reveal its exact
+        # status/classification/releasability -- those are only meaningful
+        # to disclose to a caller with some standing over the document.
+        doc = _document(
+            owner_org="Signal-Corps",
+            status="pending_review",
+            classification="SECRET",
+            releasability=["NOFORN"],
+        )
+        with pytest.raises(SupersedeValidationError) as excinfo:
+            validate_supersede_target(
+                doc, **{**GOOD_KWARGS, "allowed_classifications": ["UNCLASSIFIED", "CUI"]}
+            )
+        assert excinfo.value.errors == ["target document belongs to a different org"]
+
     def test_classification_above_clearance_rejected(self):
         # #102 narrowed the ladder to UNCLASSIFIED < CUI < SECRET, so "above
         # the submitter's cleared level" is now expressed by narrowing what
@@ -72,9 +88,12 @@ class TestValidateSupersedeTarget:
         assert any("does not hold" in e for e in excinfo.value.errors)
 
     def test_multiple_violations_accumulate(self):
+        # Same-org only -- issue #325 made a cross-org target short-circuit
+        # to a single generic error instead of accumulating (see
+        # test_cross_org_target_short_circuits_other_checks above), so this
+        # now pins accumulation for the remaining three checks only.
         doc = _document(
             status="pending_review",
-            owner_org="Signal-Corps",
             classification="SECRET",
             releasability=["NOFORN"],
         )
@@ -82,4 +101,4 @@ class TestValidateSupersedeTarget:
             validate_supersede_target(
                 doc, **{**GOOD_KWARGS, "allowed_classifications": ["UNCLASSIFIED", "CUI"]}
             )
-        assert len(excinfo.value.errors) == 4
+        assert len(excinfo.value.errors) == 3
