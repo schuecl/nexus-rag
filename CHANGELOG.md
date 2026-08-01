@@ -17,6 +17,64 @@ changed in the running system, with the issue/PR reference for the trail.
 
 _Nothing yet._
 
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- Curator content view: `/curate/{id}/content` lets a curator read a
+  pending document's actual parsed chunk text before approving it, instead
+  of reviewing only filename/tags/advisories (#284).
+- Hidden-instruction content advisory: ingestion-time scan for invisible/
+  control Unicode (including Unicode Tag "ASCII smuggling") and common
+  prompt-injection trigger phrases, surfaced in the same tagging advisory
+  box as the marking-mismatch/precedent/LLM findings (#284).
+- Tagging advisory Phase 2: precedent suggestion via kNN over the approved
+  corpus, surfacing similar approved documents' classification/
+  releasability as a curator reference (#307).
+- Tagging advisory Phase 3: opt-in LLM zero-shot classification suggestion
+  against the admin-configured classification vocabulary, off by default
+  (`CLASSIFICATION_MODEL`) (#308).
+- Tagging advisory Phase 4: `scripts/calibrate_tagging_advisory.py`
+  reports how often each suggester (marking-mismatch, precedent, LLM,
+  releasability-caveat) agreed with the curator's final decision, mined
+  from existing audit entries; run via the new `calibration` compose
+  profile (#309).
+- Content-hash tamper-evidence (NFR-18): uploaded bytes are SHA-256'd at
+  ingestion and re-verified before parsing, failing permanently on a
+  mismatch; the digest is carried in submit/approve/reject/embedded audit
+  entries (#285).
+- Role-gated in-app knowledge base in the ingestion-api web app (FR-33)
+  (#305).
+- Browser-level CSRF/logout verification: a Playwright script drives a
+  real Chromium session against the live stack, now gating CI alongside
+  the golden-query job (#187).
+
+### Fixed
+
+- Curation authority checks now consistently resolve existence, then
+  curator authority, then document status/org/classification — closing
+  several existence- and status-oracle leaks where a curator without
+  authority over a document (wrong org, or authority only over a
+  supersession's new-but-not-old version) could learn its status or
+  classification from an error message before the authority check ran
+  (#322, #325, #326).
+- `curate_list.html` and `notifications.html` had their page-load script
+  in a template block that ran before `base.html` defined the functions
+  it called, so both pages threw on every load and never populated
+  (#323). Fixed alongside: `GET /notifications`'s page route was shadowed
+  by the JSON API route registered at the same path, making the page
+  permanently unreachable regardless (#328).
+- Fresh-volume deployments deadlocked: a new additive DB column
+  (`_ADDITIVE_COLUMNS`) requires table ownership the service role doesn't
+  have post-grants-lockdown, and lock-down-db-grants itself waits on
+  ingestion-api being healthy — neither could go first. A new
+  `migrate-db-schema` one-shot now applies schema as the bootstrap
+  superuser before either service starts (#314, #317).
+- Concurrent requests during `lock-down-db-grants` could hit a genuine
+  `InsufficientPrivilege` in the window between its REVOKE and re-GRANT
+  running as separate transactions; both now run inside one transaction
+  (#319).
+
 ## [0.1.0] - 2026-07-31
 
 First tagged release. 0.1.0 is the version the chart and service packages

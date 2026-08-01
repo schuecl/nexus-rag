@@ -332,7 +332,7 @@ rerankerService:
     # is backed by a real image: release.yml publishes it on every vX.Y.Z
     # tag, and the release PR bumps this together with appVersion --
     # scripts/check_version_consistency.py fails CI if they disagree.
-    tag: "0.1.0"
+    tag: "0.2.0"
   model: "cross-encoder/ms-marco-MiniLM-L6-v2"
   replicas: 1
   # Issue #216: /rerank has no authorization model of its own -- reachability
@@ -380,7 +380,7 @@ ingestionApi:
     repository: ingestion-api
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.1.0"
+    tag: "0.2.0"
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
@@ -461,7 +461,7 @@ orchestrationMcp:
     repository: orchestration-mcp
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.1.0"
+    tag: "0.2.0"
   replicas: 2
   service:
     type: ClusterIP
@@ -490,7 +490,7 @@ ingestionWorker:
     repository: ingestion-worker
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.1.0"
+    tag: "0.2.0"
   replicas: 2
   # FR-4: chunking target size (words) and overlap ratio -- Section 2's
   # starting point.
