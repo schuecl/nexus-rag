@@ -12,10 +12,11 @@
 # ingestion-api already being healthy, so on a fresh volume (where
 # migrate-db-schema, #314/#316, now creates every table owned by the bootstrap
 # superuser from the very first boot) neither side can go first. The matrix
-# itself now lives in grant-service-privileges.sh, run once standalone before
-# ingestion-api/ingestion-worker start (breaking that cycle) and again from
-# this script, after the REVOKE below, so this remains the authority that also
-# strips whatever the early pass didn't need to remove.
+# itself now lives in grant-matrix.sql (#319), applied once standalone by
+# grant-service-privileges.sh before ingestion-api/ingestion-worker start
+# (breaking that cycle) and again from this script, after the REVOKE below,
+# so this remains the authority that also strips whatever the early pass
+# didn't need to remove.
 #
 # Why it runs here and not in ensure-roles.sh: every statement below names a
 # table, and the tables do not exist until SQLModel's create_all() has run
@@ -139,29 +140,58 @@ $PSQL <<-EOSQL
 	END \$\$;
 	EOSQL
 
-# Now revoke everything from every application role, so this script is the only
-# thing that decides what they hold. Re-running it after a release that removed
-# a grant actually removes it, instead of leaving the old one behind.
+# Now revoke everything from every application role and re-apply the grant
+# matrix (grant-matrix.sql, issue #317's single source of truth, shared with
+# the grant-service-privileges one-shot that runs before ingestion-api/
+# ingestion-worker start) -- all inside one explicit transaction.
 #
-# The legacy shared role is included: on an upgrade it arrives holding ALL
-# PRIVILEGES on the whole database, which is the thing this issue exists to
-# remove. It keeps CONNECT so that an operator who has not yet rotated their
-# DATABASE_URL gets an authorization error naming the table, rather than a
-# connection failure that looks like the database is down.
-for role in "$API_ROLE" "$WORKER_ROLE" "$MCP_ROLE" "$LEGACY_ROLE"; do
-  $PSQL <<-EOSQL
-	REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "${role}";
-	REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "${role}";
-	REVOKE ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" FROM "${role}";
-	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${role}";
-	EOSQL
-done
+# Issue #319: this used to be REVOKE (one psql invocation per role) followed,
+# several separate psql invocations later, by `bash /grant-service-privileges.sh`
+# re-granting the matrix -- each invocation its own autocommitting
+# transaction. Postgres privilege checks are enforced against currently
+# committed state, not snapshotted per-session, so any request from a role
+# whose REVOKE had committed but whose re-GRANT hadn't yet got a genuine
+# InsufficientPrivilege 500 -- reproduced live against classification_levels
+# on a re-`up` with concurrent traffic. Wrapping the whole REVOKE+GRANT pass
+# in one transaction closes that window rather than narrowing it: nothing
+# outside this transaction observes an intermediate state, because none of it
+# is visible until COMMIT.
+#
+# The legacy shared role is included in the REVOKE: on an upgrade it arrives
+# holding ALL PRIVILEGES on the whole database, which is the thing this issue
+# exists to remove. It keeps CONNECT so that an operator who has not yet
+# rotated their DATABASE_URL gets an authorization error naming the table,
+# rather than a connection failure that looks like the database is down.
+#
+# CREATE on the schema goes back to POSTGRES_USER-only too. ensure-roles.sh
+# grants it to API_ROLE before ingestion-api starts so create_all() can add a
+# table a later release introduced; this closes that window again now that
+# startup is done. USAGE stays -- without it a role cannot see the schema at
+# all.
+$PSQL -v api_role="$API_ROLE" -v worker_role="$WORKER_ROLE" \
+  -v mcp_role="$MCP_ROLE" -v reporting_role="$REPORTING_ROLE" <<-EOSQL
+	BEGIN;
 
-# CREATE on the schema goes back too. ensure-roles.sh grants it before
-# ingestion-api starts so create_all() can add a table a later release
-# introduced; this closes the window again now that startup is done. USAGE
-# stays -- without it the role cannot see the schema at all.
-$PSQL <<-EOSQL
+	REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "${API_ROLE}";
+	REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "${API_ROLE}";
+	REVOKE ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" FROM "${API_ROLE}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${API_ROLE}";
+
+	REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "${WORKER_ROLE}";
+	REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "${WORKER_ROLE}";
+	REVOKE ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" FROM "${WORKER_ROLE}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${WORKER_ROLE}";
+
+	REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "${MCP_ROLE}";
+	REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "${MCP_ROLE}";
+	REVOKE ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" FROM "${MCP_ROLE}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${MCP_ROLE}";
+
+	REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "${LEGACY_ROLE}";
+	REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "${LEGACY_ROLE}";
+	REVOKE ALL PRIVILEGES ON DATABASE "${POSTGRES_DB}" FROM "${LEGACY_ROLE}";
+	GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${LEGACY_ROLE}";
+
 	REVOKE CREATE ON SCHEMA public FROM "${API_ROLE}";
 	REVOKE CREATE ON SCHEMA public FROM "${WORKER_ROLE}";
 	REVOKE CREATE ON SCHEMA public FROM "${MCP_ROLE}";
@@ -170,11 +200,10 @@ $PSQL <<-EOSQL
 	GRANT USAGE ON SCHEMA public TO "${WORKER_ROLE}";
 	GRANT USAGE ON SCHEMA public TO "${MCP_ROLE}";
 	GRANT USAGE ON SCHEMA public TO "${REPORTING_ROLE}";
-EOSQL
 
-# The matrix -- issue #317: shared with the grant-service-privileges one-shot
-# that runs before ingestion-api/ingestion-worker start, so it has exactly one
-# source of truth. Mounted alongside this script at the same container path.
-bash /grant-service-privileges.sh
+	\i /grant-matrix.sql
 
-echo "apply-service-grants: per-service privileges applied (#278); audit_log is INSERT-only for every application role, SELECT-only for the dedicated audit-reporting role (#309)"
+	COMMIT;
+	EOSQL
+
+echo "apply-service-grants: per-service privileges applied (#278); audit_log is INSERT-only for every application role, SELECT-only for the dedicated audit-reporting role (#309); REVOKE+GRANT applied as one transaction (#319)"
