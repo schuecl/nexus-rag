@@ -52,7 +52,7 @@ class TestApproveRaceLock:
         source = (ROUTES / "curate.py").read_text()
 
         # approve() and reject() are both state-changing decisions.
-        assert source.count("_load_pending(session, doc_id, lock=True)") == 2
+        assert source.count("_load_pending(session, doc_id, user, lock=True)") == 2
 
     def test_read_only_paths_do_not_lock(self):
         """Locking the queue view would serialise every curator's page load

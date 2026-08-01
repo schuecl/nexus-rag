@@ -338,15 +338,25 @@ def edit_metadata(
     return doc
 
 
-def _load_pending(session: Session, doc_id: uuid.UUID, *, lock: bool = False) -> Document:
+def _load_pending(
+    session: Session, doc_id: uuid.UUID, user: UserClaims, *, lock: bool = False
+) -> Document:
     # Issue #215: `lock=True` takes a row lock (SELECT ... FOR UPDATE) so two
     # curators acting on the same document can't both pass the
     # `pending_review` check and both proceed. Same mechanism #164 introduced
     # for the worker's processing lease. Not taken on read-only paths, which
     # would otherwise serialise the queue view against every decision.
+    #
+    # Issue #322: existence and org authority are checked, in that order,
+    # *before* the status check below -- the same order get_content already
+    # uses. Checking status first let a curator with authority over *some*
+    # org, but not this document's, learn that an out-of-org id exists and
+    # its exact non-pending status via the 409 message, the same class of
+    # oracle #215 closed for the 403-vs-404 case.
     doc = session.get(Document, doc_id, with_for_update=lock)
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    _check_curator_authority(user, doc, session)
     if doc.status != "pending_review":
         raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
     return doc
@@ -435,19 +445,12 @@ def get_content(
     Scoped to `pending_review` documents only: reviewing content before a
     decision is exactly the gap this closes, and once a document is decided
     it has already left the queue (list_queue) -- there is no ongoing reason
-    for this route to serve it. Authority is checked through
-    `_check_curator_authority` *before* the status check below, the same
-    order approve()/reject() already use -- an out-of-org caller gets 404
-    before anything about the document's existence or status is revealed,
-    rather than _load_pending's status-first 409 (see issue #322, filed
-    against approve()/reject() reusing that ordering the other way around).
+    for this route to serve it. Reuses `_load_pending`, which checks
+    existence, then org/clearance/releasability/access_scope authority, then
+    status, in that order (issue #322) -- an out-of-org caller gets 404
+    before anything about the document's existence or status is revealed.
     """
-    doc = session.get(Document, doc_id)
-    if doc is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
-    _check_curator_authority(user, doc, session)
-    if doc.status != "pending_review":
-        raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
+    doc = _load_pending(session, doc_id, user)
     chunks = get_store().fetch_document_chunks(str(doc.id), doc.classification)
     return [ChunkContent(**chunk) for chunk in chunks]
 
@@ -586,8 +589,7 @@ def approve(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> Document:
-    doc = _load_pending(session, doc_id, lock=True)
-    _check_curator_authority(user, doc, session)
+    doc = _load_pending(session, doc_id, user, lock=True)
 
     # #229: which collection this document's chunks are stamped with *before*
     # any correction below -- a classification correction moves them to a
@@ -699,8 +701,7 @@ def reject(
     session: Session = Depends(get_session),
     _csrf: None = Depends(verify_csrf),
 ) -> Document:
-    doc = _load_pending(session, doc_id, lock=True)
-    _check_curator_authority(user, doc, session)
+    doc = _load_pending(session, doc_id, user, lock=True)
 
     doc.status = "rejected"
     doc.rejection_reason = body.reason
