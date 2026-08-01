@@ -10,7 +10,7 @@
 {% block scripts %}
 <script>
 async function loadNotifications() {
-  const res = await fetch('/notifications', { headers: authHeaders() });
+  const res = await fetch('/notifications/list', { headers: authHeaders() });
   const el = document.getElementById('notifications');
   if (!res.ok) {
     el.textContent = 'Error: ' + res.status + ' ' + (await res.text());

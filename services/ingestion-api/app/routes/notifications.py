@@ -18,7 +18,7 @@ from common.models import Notification
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-@router.get("")
+@router.get("/list")
 def list_notifications(
     unread_only: bool = False,
     user: UserClaims = Depends(get_current_user),

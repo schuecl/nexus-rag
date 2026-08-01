@@ -205,7 +205,7 @@ Document access is scoped by ownership, not by privilege:
 | `GET /documents/mine` | `uploader_sub == caller` |
 | `GET /documents/{id}` | 404 unless the caller is the uploader |
 | `GET /curate/queue` | `pending_review` in the curator's own orgs |
-| `GET /notifications` | `recipient_sub == caller` |
+| `GET /notifications/list` | `recipient_sub == caller` |
 
 So an application administrator cannot read another user's queries or
 documents through the application. That is the intended property and it holds

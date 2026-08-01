@@ -126,7 +126,7 @@ def check_logout_and_relogin(context: BrowserContext, page, failures: list[str])
     else:
         log("Both cookies cleared from the browser after logout.")
 
-    resp = context.request.get(INGESTION_API_URL + "/notifications")
+    resp = context.request.get(INGESTION_API_URL + "/notifications/list")
     if resp.status != 401:
         failures.append(f"authenticated API call after logout: expected 401, got {resp.status}")
     else:

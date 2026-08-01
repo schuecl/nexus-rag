@@ -813,10 +813,22 @@ the docs, not a silent "it works" — flag it if you find one.
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
   included for rejections. No SMTP/email infra in this dev stack, so this is a
-  discrete, markable-as-read record (`GET /notifications`, `POST
+  discrete, markable-as-read record (`GET /notifications/list`, `POST
   /notifications/{id}/read`, both scoped to the recipient) rather than an email/push
   notification — a real notification the uploader doesn't have to already know a
   document ID to find, not just data that happens to be visible if you go looking.
+  **Fixed and validated against a live environment** (2026-08-01): the JSON list
+  endpoint used to be registered at the same path (`GET /notifications`) as the page
+  route in `app/main.py`, and Starlette's first-match routing meant the page was
+  permanently unreachable — every request, browser navigation included, hit the JSON
+  API's hard 401 instead (issue #328; present since the feature's original PR, #10, not
+  a regression from #323's template fix). Moved the JSON endpoint to `GET
+  /notifications/list`, mirroring the `/curate/queue`+`/curate/documents` vs.
+  `/curate`+`/curate/list` split. Confirmed live (`docker compose up`): unauthenticated
+  `GET /notifications` now returns the anonymous-landing page (200 HTML, matching `/`,
+  `/curate`, `/admin`, `/search`) instead of a 401, and, authenticated as
+  `alice-ingest`, the page renders and its own script successfully pulls real
+  notification data from `GET /notifications/list`.
 - **Document parsing, chunking, embedding, and Qdrant storage (FR-3..FR-6)** —
   `services/ingestion-worker/app/{parsing,chunking,embedding}.py`, run by the
   `ingestion-worker` service, not `ingestion-api` (see NFR-11 below for why).
