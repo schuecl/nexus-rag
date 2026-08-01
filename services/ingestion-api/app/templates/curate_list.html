@@ -57,7 +57,9 @@ available here; metadata editing requires a <code>rag-curate:&lt;org&gt;</code> 
 
 <div id="documents"></div>
 <div id="result" class="msg" hidden></div>
+{% endblock %}
 
+{% block scripts %}
 <script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
 <script>
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};

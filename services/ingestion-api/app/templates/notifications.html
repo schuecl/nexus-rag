@@ -5,7 +5,9 @@
 <p>Decisions on documents you submitted (FR-15). Unread ones are highlighted.</p>
 <button onclick="loadNotifications()">Refresh</button>
 <div id="notifications"></div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 async function loadNotifications() {
   const res = await fetch('/notifications', { headers: authHeaders() });
