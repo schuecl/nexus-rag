@@ -46,7 +46,7 @@ Capability roles, deliberately small and non-overlapping:
 | List/poll documents (`GET /documents/mine`, `/{id}`) | ✖ | ✔ **own uploads only** — `uploader_sub == sub`, else 404 (`upload.py:get_document`) | ✖ | ✖ (own queue view instead) | ✖ | ✖ |
 | See curation queue (`GET /curate`) | ✖ | ✖ | ✖ | ✔ **filtered to `owner_org ∈ curatable_orgs`**, plus classification, releasability, and — for a pending document — `access_scope` (`curate.py:list_queue`/`list_documents`; issue #277, gap G1 closed for the read path) | ✖ | ✖ 403 (`require_curator` only — the Queue is curation workflow, not something purge authority extends to) |
 | See the curation List, any status (`GET /curate/documents`) | ✖ | ✖ | ✖ | ✔ same scoping as the Queue row above | ✖ | ✔ **unscoped** — every document regardless of org/clearance/releasability, matching `rag-purge`'s own unscoped destruction authority (#279, gap G3; `require_curator_or_purge`); a caller holding both roles gets the curator-scoped view, not the wider one |
-| Read a pending document's content | ✖ | own only | ✖ | ✔ within org + clearance + releasability + `access_scope` (`_check_curator_authority`) — issue #277 added the last of these; see gap G1 for what's still not covered | ✖ | ✖ |
+| Read a pending document's content (`GET /curate/{id}/content`) | ✖ | own only | ✖ | ✔ parsed chunk text, read back from the vector store (`get_store().fetch_document_chunks`) — same authority order as approve/reject: org (404) then clearance/releasability/`access_scope` (403, `_check_curator_authority`); 409 if the document has already left `pending_review` (issue #284) | ✖ | ✖ |
 | Approve / reject / correct tags (`POST /curate/{id}/approve\|reject`) | ✖ | ✖ | ✖ | ✔ org (else **404**, not 403 — existence-oracle fix #215) + clearance ceiling (403) + releasability held (403, FR-14.1); re-checked against the *old* doc on supersession (FR-7, `_validate_supersede`) | ✖ | ✖ |
 | Query the corpus (`orchestration-mcp` `rag_search` / `/debug/rag_search`) | ✖ | ✖ | ✔ under the mandatory FR-26 filter (§4) | ✖ | ✖ | ✖ |
 | Edit classification/releasability vocabulary (`ingestion-api` admin routes) | ✖ | ✖ | ✖ | ✖ | ✔ (`deps.require_admin`) | ✖ |
@@ -54,7 +54,7 @@ Capability roles, deliberately small and non-overlapping:
 | File / confirm a purge request (`POST .../purge-request`, `.../confirm`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ file: any holder; confirm: **a different** holder only -- same `sub` as the requester gets 409 (#279, gap G3; `common.purge.purge_confirmation_authorized`) |
 | View knowledge-base how-to articles (`GET /kb`, issue #303/FR-33) | ✖ (redirected to login, same as every page route) | ✔ ingest article only | ✔ query article only | ✔ curate article only | ✔ admin article only | ✔ purge article only |
 | Read the audit log | — | — | — | — | — | — (no route exists for anyone, and since #278 no application DB role can either; see gap G2) |
-| Download original uploaded bytes | — | — | — | — | — | — (no route exists; originals are write-only from the app, NFR-12) |
+| Download original uploaded bytes | — | — | — | — | — | — (no route exists; originals are write-only from the app, NFR-12 — distinct from the content row above, which serves *parsed chunk text*, never the original file) |
 
 Note on the knowledge-base row: `GET /kb` itself follows the same auth-only
 page-gate as every other page route (`main.py`'s established convention,
@@ -73,7 +73,7 @@ The same facts inverted: **which document content can each identity read?**
 | Document state | Uploader | Same-org curator (cleared) | Curator, *not* in the doc's `access_scope` group | `rag-query` user (cleared + caveats + in scope) | `rag-query` user outside any one dimension | `rag-admin` |
 |---|---|---|---|---|---|---|
 | `queued`/`processing`/`embedded` | metadata only (status poll) | not yet in queue | — | ✖ | ✖ | ✖ |
-| `pending_review` | metadata only | **full content** (review requires it) | ✖ — hard-denied, no fallback (issue #277, gap G1) | ✖ (FR-11/FR-26: only `approved` matches) | ✖ | ✖ |
+| `pending_review` | metadata only | **full content** via `GET /curate/{id}/content` (review requires it; issue #284 — this row previously described intent, not an implemented route: no such route existed until #284 added one) | ✖ — hard-denied, no fallback (issue #277, gap G1) | ✖ (FR-11/FR-26: only `approved` matches) | ✖ | ✖ |
 | `approved` | metadata only | full content via queue history? — no: once decided it leaves the queue | ✖ | ✔ retrievable chunks | ✖ (fails closed) | ✖ |
 | `rejected` / `superseded` | metadata only | ✖ | ✖ | ✖ (validated live: golden-query harness asserts non-retrievability regardless of persona, FR-26) | ✖ | ✖ |
 | `purged` | metadata (scrubbed row) | ✖ | ✖ | ✖ — chunks swept from **every** collection (#267 fix) | ✖ | ✖ |

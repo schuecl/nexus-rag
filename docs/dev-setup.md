@@ -719,6 +719,39 @@ the docs, not a silent "it works" — flag it if you find one.
   against the shared `access_scope_authorized` predicate, plus service-level tests
   covering queue visibility and the approve/reject hard block against an in-memory
   SQLite session) — not yet exercised against a live Postgres pair or a browser.
+- **Curator content view + hidden-instruction content advisory (issue #284)** — before
+  this, no route anywhere in `ingestion-api` served a curator the actual text of a
+  document they were being asked to approve; the curation gate reviewed metadata
+  (filename, tags, the #138 marking advisory), never content. `GET /curate/{id}/content`
+  now returns a `pending_review` document's parsed chunk text — read back from the vector
+  store (`VectorStore.fetch_document_chunks`), i.e. exactly what retrieval will serve if
+  approved, not a re-render of the original upload — gated by the same
+  `_check_curator_authority` order approve()/reject() already use (org 404, then
+  clearance/releasability/`access_scope` 403), 409 once the document has left
+  `pending_review`. `/curate`'s queue page gets a "View content" button per row
+  (collapsed, fetched on first open) rendered the same textContent-only way as every
+  other field on that page (issue #207). Alongside it, `common/content_advisory.py`
+  scans a document's own parsed text at ingestion time for invisible/control Unicode
+  characters (the Cf-category "ASCII smuggling" trick, among others) and a short list of
+  common prompt-injection trigger phrases, folded into the same `document.tagging_advisory`
+  JSON column and advisory box the #138 marking-mismatch/#307 precedent/#308 LLM-suggestion
+  findings already share — advisory only, never blocking, same fail-safe posture as the
+  rest of that family. **Validated against a live environment** (2026-08-01, real
+  `docker compose up` stack): uploaded a document containing an injection-shaped sentence
+  as `alice-ingest`, confirmed the worker flagged it end-to-end (`tagging_advisory.
+  content_advisory.findings`, audit entry) and that `GET /curate/{id}/content` returned
+  its real parsed text as `carol-curator`; confirmed 403 for a `rag-query`-only identity,
+  404 for a bogus id, and 409 once a document left `pending_review`; and drove the actual
+  `/curate` page with a real Chromium instance (Playwright) logged in as `carol-curator`,
+  clicking "View content" and confirming the chunk text and content-advisory hint render
+  with no console errors. That live browser run also surfaced and fixed an unrelated,
+  pre-existing bug in `curate.html`: its inline `<script>` lived inside `{% block content
+  %}`, which renders (and, via its own unconditional `loadQueue()` call, *executes*)
+  before `base.html`'s later `<script>` defines `authHeaders()` — a plain `ReferenceError`
+  on every page load that silently prevented the queue from ever populating. Moved into
+  `{% block scripts %}`, the pattern `admin.html`/`login.html`/`upload.html` already use
+  correctly. The identical bug still affects `curate_list.html` and `notifications.html`
+  (issue #323, filed rather than fixed here — out of scope for this change).
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk

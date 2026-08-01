@@ -343,6 +343,45 @@ def _has_document_points(client: QdrantClient, collection_name: str, document_id
     return bool(points)
 
 
+def fetch_document_chunks(
+    client: QdrantClient, document_id: str, classification: str
+) -> list[dict]:
+    """Issue #284: read back the parsed chunk text a curator is being asked to
+    approve, from the same collection retrieval would serve it from -- what a
+    curator sees here is what `rag_search` will actually return, not a
+    separate re-render of the original upload.
+
+    `classification` selects the collection the same way every other
+    per-document operation in this module does (issue #229) -- while a
+    document is `pending_review` its chunks live in the collection matching
+    its *current* tag; a correction only moves them once approval commits.
+
+    Returns payload dicts sorted by `chunk_index` -- Qdrant's scroll makes no
+    ordering guarantee, and a curator reading top to bottom should see the
+    document in its original order, not scroll order.
+    """
+    name = classification_collection_name(classification)
+    if not client.collection_exists(name):
+        return []
+    doc_filter = _document_filter(document_id)
+    chunks: list[dict] = []
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=name,
+            scroll_filter=doc_filter,
+            limit=_MIGRATION_PAGE_SIZE,
+            with_payload=True,
+            with_vectors=False,
+            offset=offset,
+        )
+        chunks.extend(point.payload or {} for point in points)
+        if offset is None:
+            break
+    chunks.sort(key=lambda payload: payload.get("chunk_index", 0))
+    return chunks
+
+
 def _set_payload_if_present(
     client: QdrantClient, document_id: str, collection_name: str, fields: dict
 ) -> bool:

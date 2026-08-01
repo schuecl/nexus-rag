@@ -39,6 +39,7 @@ from common.qdrant_store import (
     delete_document_chunks,
     ensure_collection,
     existing_classification_collections,
+    fetch_document_chunks,
     get_qdrant_client,
     update_document_payload,
     upsert_chunks,
@@ -181,3 +182,6 @@ class QdrantStore:
 
     def delete_document_chunks(self, document_id: str, classification: str) -> None:
         delete_document_chunks(get_qdrant_client(), document_id, classification)
+
+    def fetch_document_chunks(self, document_id: str, classification: str) -> list[dict]:
+        return fetch_document_chunks(get_qdrant_client(), document_id, classification)

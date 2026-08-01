@@ -326,3 +326,18 @@ class MilvusStore:
             collection_name=MILVUS_COLLECTION,
             filter=f"document_id == {_quote(document_id)}",
         )
+
+    def fetch_document_chunks(self, document_id: str, classification: str) -> list[dict]:
+        # classification: unused, see module docstring (#229 not implemented here) --
+        # one collection, so unlike QdrantStore's per-collection lookup there's
+        # nothing to select between.
+        del classification
+        rows = _client().query(
+            collection_name=MILVUS_COLLECTION,
+            filter=f"document_id == {_quote(document_id)}",
+            output_fields=["payload"],
+            limit=16384,
+        )
+        chunks = [dict(row.get("payload") or {}) for row in rows]
+        chunks.sort(key=lambda payload: payload.get("chunk_index", 0))
+        return chunks

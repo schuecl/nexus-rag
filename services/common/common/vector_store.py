@@ -151,6 +151,16 @@ class VectorStore(Protocol):
         `classification` selects which collection to delete from (issue
         #229)."""
 
+    def fetch_document_chunks(self, document_id: str, classification: str) -> list[dict]:
+        """Issue #284: the parsed chunk payloads (including `text`) for one
+        document, sorted by `chunk_index` -- the curator content view reads
+        this instead of re-parsing the original, since it's what retrieval
+        will actually serve once approved. `classification` selects the
+        collection the same way `update_document_payload`/
+        `delete_document_chunks` do (issue #229). Returns `[]` for a document
+        with no chunks yet rather than raising -- callers already know the
+        document exists from Postgres by the time they call this."""
+
 
 # Reciprocal Rank Fusion constant, matching the informal literature default
 # (and Qdrant's own FusionQuery(Fusion.RRF), which uses the same value) --

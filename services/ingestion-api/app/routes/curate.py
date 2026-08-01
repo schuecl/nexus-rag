@@ -406,6 +406,52 @@ def _check_curator_authority(user: UserClaims, doc: Document, session: Session) 
         )
 
 
+class ChunkContent(BaseModel):
+    """Issue #284: the fields a curator needs to actually read a chunk,
+    deliberately not the raw Qdrant payload dict -- pydantic drops any field
+    that isn't declared here, so the response can't grow an unintended leak
+    just because a later change adds something new to the payload (e.g. FR-26
+    fields like access_scope, already visible to this curator via the
+    Document row, aren't repeated here)."""
+
+    chunk_index: int
+    heading: str | None = None
+    page_or_slide: int | None = None
+    content_type: str = "text"
+    text: str
+
+
+@router.get("/{doc_id}/content")
+def get_content(
+    doc_id: uuid.UUID,
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+) -> list[ChunkContent]:
+    """Issue #284: the parsed chunk text a curator is being asked to approve
+    -- read back from the vector store (whichever backend is configured,
+    #160), which is what retrieval will actually serve if this document is
+    approved, rather than a second re-render of the original upload.
+
+    Scoped to `pending_review` documents only: reviewing content before a
+    decision is exactly the gap this closes, and once a document is decided
+    it has already left the queue (list_queue) -- there is no ongoing reason
+    for this route to serve it. Authority is checked through
+    `_check_curator_authority` *before* the status check below, the same
+    order approve()/reject() already use -- an out-of-org caller gets 404
+    before anything about the document's existence or status is revealed,
+    rather than _load_pending's status-first 409 (see issue #322, filed
+    against approve()/reject() reusing that ordering the other way around).
+    """
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    _check_curator_authority(user, doc, session)
+    if doc.status != "pending_review":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
+    chunks = get_store().fetch_document_chunks(str(doc.id), doc.classification)
+    return [ChunkContent(**chunk) for chunk in chunks]
+
+
 def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -> Document:
     """FR-7: everything that can fail about the version swap, checked *before*
     any mutation (Postgres or Qdrant) happens for either document -- so a
@@ -437,8 +483,9 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
 def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """Issue #306 gap 1: link the curator's decision back to the ingestion-time
     marking-mismatch advisory (issue #138), precedent advisory (issue #307
-    Phase 2), and LLM classification suggestion (issue #308 Phase 3), if any
-    was flagged for this document. Without this,
+    Phase 2), LLM classification suggestion (issue #308 Phase 3), and content
+    advisory (issue #284 item 2), if any was flagged for this document.
+    Without this,
     recovering "did the curator agree with the flag" means diffing the
     `document.tagging_advisory` and `document.approve`/`document.reject`
     audit rows by document ID after the fact -- embedding the flagged values
@@ -471,10 +518,12 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     advisory = doc.tagging_advisory or {}
     precedent = advisory.get("precedent") or {}
     llm_suggestion = advisory.get("llm_suggestion") or {}
+    content_findings = (advisory.get("content_advisory") or {}).get("findings") or []
     flagged = bool(advisory.get("under_classified") or advisory.get("unassigned_caveats"))
     flagged_precedent = precedent.get("disagrees_with_assigned")
     flagged_llm = llm_suggestion.get("disagrees_with_assigned")
-    if not (flagged or flagged_precedent or flagged_llm):
+    flagged_content = bool(content_findings)
+    if not (flagged or flagged_precedent or flagged_llm or flagged_content):
         return None
     outcome = {
         "assigned_classification": advisory.get("assigned_classification"),
@@ -491,6 +540,12 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
         outcome["llm_suggested_classification"] = llm_suggestion.get("suggested_classification")
         outcome["llm_suggested_doc_type"] = llm_suggestion.get("suggested_doc_type")
         outcome["llm_confidence"] = llm_suggestion.get("confidence")
+    if flagged_content:
+        # Kinds only, not the full findings (which carry context excerpts of
+        # the document's own text) -- this audit entry records that the
+        # curator was shown a hidden-instruction flag, not a second copy of
+        # the flagged content itself.
+        outcome["content_advisory_kinds"] = sorted({f["kind"] for f in content_findings})
     return outcome
 
 

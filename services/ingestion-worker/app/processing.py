@@ -34,6 +34,7 @@ from app.chunking import chunk_sections
 from app.classification_suggestion import suggest_classification, suggestion_enabled
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
+from common.content_advisory import detect_content_risks
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
 from common.log_safety import log_safe
@@ -232,6 +233,56 @@ def _apply_tagging_advisory(
     except Exception:
         logger.exception(
             "tagging advisory failed for document %s; continuing ingestion without it",
+            doc.id,
+        )
+
+
+def _apply_content_advisory(
+    session: Session,
+    doc: Document,
+    sections: list[ParsedSection],
+) -> None:
+    """Issue #284, item 2: scan the document's own parsed text for
+    hidden-instruction risk -- invisible/control Unicode characters and common
+    prompt-injection trigger phrases -- and merge the finding into the same
+    `doc.tagging_advisory` column/UI surface Phase 1's marking-mismatch
+    advisory uses, under a `content_advisory` key.
+
+    Without the curator content view issue #284 also adds, this advisory was
+    the *only* way a curator could learn a document contains hidden text at
+    all; with the content view, it directs attention to where in the
+    now-visible text to look. Either way, this never blocks, corrects, or
+    decides anything -- see common/content_advisory.py's module docstring.
+
+    Same fail-safe posture as `_apply_tagging_advisory`: any error here is
+    swallowed and logged, leaving whatever `tagging_advisory` already held
+    untouched. A hidden-instruction scan must never fail or delay ingestion.
+    """
+    try:
+        text = "\n".join(s.text for s in sections)[:_ADVISORY_SCAN_LIMIT]
+        advisory = detect_content_risks(text)
+        doc.tagging_advisory = {
+            **(doc.tagging_advisory or {}),
+            "content_advisory": advisory.to_dict(),
+        }
+        if advisory.has_findings:
+            logger.info(
+                "document %s content advisory: %d finding(s)",
+                doc.id,
+                len(advisory.findings),
+            )
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.tagging_advisory",
+                    target_id=str(doc.id),
+                    detail={"content_advisory": advisory.to_dict()},
+                )
+            )
+    except Exception:
+        logger.exception(
+            "content advisory failed for document %s; continuing ingestion without it",
             doc.id,
         )
 
@@ -558,6 +609,11 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                 # the advisory looks for uploader-applied banner/portion
                 # markings, and a model-generated caption is not one.
                 _apply_tagging_advisory(session, doc, sections, ocr_status)
+                # Issue #284: same "before captions are added" reasoning as the
+                # marking advisory above -- a hidden-instruction scan should
+                # look at what the uploader submitted, not at model-generated
+                # caption text.
+                _apply_content_advisory(session, doc, sections)
                 # Issue #92: caption embedded images so figure content becomes
                 # retrievable. Degrade-on-failure by contract (never raises,
                 # never fails the document) and internally bounded well under

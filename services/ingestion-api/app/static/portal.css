@@ -2533,6 +2533,28 @@ label.checkbox-label {
   color: var(--text);
 }
 
+/* Issue #284: the curator content view -- one block per chunk, in document
+   order. white-space: pre-wrap so a chunk's own line breaks/indentation
+   render as parsed, without ever needing innerHTML to do it. */
+.content-view {
+  margin-top: 0.6rem;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.content-view .chunk {
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
+.content-view .chunk:last-child {
+  border-bottom: none;
+}
+
 .doc-toolbar {
   display: flex;
   flex-wrap: wrap;

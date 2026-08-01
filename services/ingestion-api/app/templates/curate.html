@@ -13,7 +13,9 @@ tags need fixing (FR-13) -- corrections are re-checked against your own curator 
 <button onclick="loadQueue()">Refresh</button>
 <div id="queue"></div>
 <div id="result" class="msg" hidden></div>
+{% endblock %}
 
+{% block scripts %}
 <script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
 <script>
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
@@ -102,6 +104,37 @@ function advisoryNode(doc) {
     );
     findings.push(parts);
   }
+  // Issue #284 item 2: hidden-instruction-risk findings (invisible/control
+  // Unicode characters, common prompt-injection trigger phrases) in the
+  // document's own parsed text. `detail`/`context` are always one of a fixed
+  // set of our own strings or an escaped codepoint -- see
+  // common/content_advisory.py's module docstring for why that's safe to
+  // show verbatim -- but textContent is used throughout regardless, the same
+  // defense-in-depth posture as every other field on this page.
+  const contentFindings = (adv.content_advisory && adv.content_advisory.findings) || [];
+  let contentFindingsNode = null;
+  if (contentFindings.length) {
+    const kinds = [...new Set(contentFindings.map((f) => f.kind))];
+    findings.push([
+      document.createTextNode(`${contentFindings.length} hidden-instruction-risk finding(s) (`),
+      el('strong', { text: kinds.join(', ') }),
+      document.createTextNode(') in the document’s own text -- open the content view before approving'),
+    ]);
+    contentFindingsNode = el('span', {
+      className: 'hint',
+      children: [
+        'content advisory: ',
+        ...contentFindings.flatMap((f, i) => {
+          const parts = [
+            document.createTextNode(`${f.kind} — ${f.detail} (offset ${f.offset}): `),
+            el('code', { text: f.context }),
+          ];
+          return i === contentFindings.length - 1 ? parts : [...parts, el('br')];
+        }),
+      ],
+    });
+  }
+
   // Issue #306 gap 3: distinct from `findings` above -- this means some of the
   // document's content (a scanned page OCR couldn't recover) was never
   // checked for markings at all, not that it was checked and found clean.
@@ -127,6 +160,9 @@ function advisoryNode(doc) {
     }
     if (llm && llm.disagrees_with_assigned && llm.rationale) {
       box.append(el('br'), el('span', { className: 'hint', text: 'LLM rationale: ' + llm.rationale }));
+    }
+    if (contentFindingsNode) {
+      box.append(el('br'), contentFindingsNode);
     }
   }
   if (unscanned) {
@@ -199,17 +235,68 @@ async function loadQueue() {
       ] }),
     ] }));
 
+    // Issue #284: the content view -- collapsed by default, fetched on first
+    // open. Placed in `info` (not the button column) so it reads top to
+    // bottom above the tag-correction fields, the same reading order as the
+    // rest of this row.
+    const contentView = el('div', { className: 'content-view', id: `content-${doc.id}` });
+    contentView.hidden = true;
+    info.append(contentView);
+
     // addEventListener rather than an inline onclick="approve('...')": the id
     // is a server-generated UUID so string-building it was safe, but a
     // listener keeps every value on this page out of a parsed context.
+    const viewContentBtn = el('button', { text: 'View content' });
+    viewContentBtn.addEventListener('click', () => toggleContent(doc.id, viewContentBtn));
     const approveBtn = el('button', { text: 'Approve' });
     approveBtn.addEventListener('click', () => approve(doc.id));
     const rejectBtn = el('button', { text: 'Reject' });
     rejectBtn.addEventListener('click', () => reject(doc.id));
 
-    row.append(info, el('div', { children: [approveBtn, rejectBtn] }));
+    row.append(info, el('div', { children: [viewContentBtn, approveBtn, rejectBtn] }));
     queueEl.appendChild(row);
   }
+}
+
+// Issue #284: chunk text fetched at most once per document per page load --
+// re-toggling after the first fetch just shows/hides what's already there.
+// Cleared implicitly on every loadQueue() (the whole #queue subtree, and
+// with it every content-${id} div, is rebuilt from scratch).
+const fetchedContent = new Set();
+
+async function toggleContent(id, button) {
+  const panel = document.getElementById(`content-${id}`);
+  if (!fetchedContent.has(id)) {
+    button.disabled = true;
+    const res = await fetch(`/curate/${id}/content`, { headers: authHeaders() });
+    button.disabled = false;
+    if (!res.ok) {
+      panel.textContent = 'Error: ' + res.status + ' ' + (await res.text());
+      panel.hidden = false;
+      return;
+    }
+    const chunks = await res.json();
+    fetchedContent.add(id);
+    if (chunks.length === 0) {
+      panel.textContent = 'No chunk text available yet.';
+    } else {
+      for (const chunk of chunks) {
+        // Every field here is parsed document text or a plain number --
+        // never assigned through innerHTML, same rule as the rest of this
+        // page (issue #207).
+        const meta = [`chunk ${chunk.chunk_index}`];
+        if (chunk.heading) meta.push(chunk.heading);
+        if (chunk.page_or_slide != null) meta.push(`p. ${chunk.page_or_slide}`);
+        if (chunk.content_type && chunk.content_type !== 'text') meta.push(chunk.content_type);
+        panel.append(el('div', { className: 'chunk', children: [
+          el('div', { className: 'hint', text: meta.join(' · ') }),
+          document.createTextNode(chunk.text),
+        ] }));
+      }
+    }
+  }
+  panel.hidden = !panel.hidden;
+  button.textContent = panel.hidden ? 'View content' : 'Hide content';
 }
 
 function readCorrections(id, doc) {
