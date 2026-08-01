@@ -1137,16 +1137,17 @@ services:
     # reproducing the crash-loop on a fresh volume and manually running
     # apply-service-grants.sh out of order to unstick it.
     #
-    # This runs the same grant matrix (infra/postgres/
-    # grant-service-privileges.sh, shared with apply-service-grants.sh so
-    # there's one source of truth) alone, before ingestion-api/
+    # This runs the same grant matrix (infra/postgres/grant-matrix.sql,
+    # issue #319's single source of truth, applied here via
+    # grant-service-privileges.sh) alone, before ingestion-api/
     # ingestion-worker start, breaking the cycle. Granting doesn't require
     # table ownership -- the bootstrap superuser can GRANT on any table
     # regardless of owner -- so this is safe to run before
     # lock-down-db-grants has ever reassigned ownership. lock-down-db-grants
     # still runs afterward and remains the authority: it reassigns ownership,
-    # REVOKEs everything, and re-applies this same matrix, so an upgrade that
-    # needs a stale grant stripped still gets that.
+    # REVOKEs everything, and re-applies this same matrix (as one transaction
+    # with the REVOKE, #319), so an upgrade that needs a stale grant stripped
+    # still gets that.
     #
     # Re-run on every `up`, like migrate-db-schema/ensure-db-roles -- a role
     # or table added by a later release has to reach a volume that predates
@@ -1165,6 +1166,11 @@ services:
       AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
     volumes:
       - ./infra/postgres/grant-service-privileges.sh:/grant-service-privileges.sh:ro
+      # Issue #319: the grant matrix itself, `\i`'d by grant-service-
+      # privileges.sh (and, atomically with its own REVOKE, by
+      # apply-service-grants.sh below) -- see that file for why it's plain
+      # SQL rather than embedded in either shell script.
+      - ./infra/postgres/grant-matrix.sql:/grant-matrix.sql:ro
     entrypoint: ["/bin/bash", "/grant-service-privileges.sh"]
     depends_on:
       postgres:
@@ -1215,11 +1221,14 @@ services:
       AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
     volumes:
       - ./infra/postgres/apply-service-grants.sh:/apply-service-grants.sh:ro
-      # Issue #317: apply-service-grants.sh calls this directly (bash
-      # /grant-service-privileges.sh) after its own REVOKE, so the grant
-      # matrix has one source of truth shared with the grant-service-
-      # privileges one-shot above.
-      - ./infra/postgres/grant-service-privileges.sh:/grant-service-privileges.sh:ro
+      # Issue #319: apply-service-grants.sh `\i`'s this directly, inside its
+      # own psql session, immediately after its REVOKE and still inside the
+      # same explicit transaction -- not a separate `bash
+      # /grant-service-privileges.sh` subprocess (that used to be its own
+      # autocommitting transaction, which is what left the window this issue
+      # fixes). One source of truth shared with the grant-service-privileges
+      # one-shot above.
+      - ./infra/postgres/grant-matrix.sql:/grant-matrix.sql:ro
     entrypoint: ["/bin/bash", "/apply-service-grants.sh"]
     depends_on:
       ingestion-api:

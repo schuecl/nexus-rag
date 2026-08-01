@@ -1282,6 +1282,29 @@ the docs, not a silent "it works" — flag it if you find one.
   confirmed `ingestion-api` reached healthy after the fix with `grant-service-privileges`
   completing first, and confirmed `lock-down-db-grants` still re-applies cleanly afterward with
   no privilege drift (`\dp` matches the matrix exactly, same as before this change).
+- **`lock-down-db-grants` racing concurrent requests during its REVOKE/GRANT window (issue
+  #319)**, found live while validating #317 above: `apply-service-grants.sh` ran its `REVOKE
+  ALL ... FROM role` loop and its re-`GRANT` (`grant-service-privileges.sh`) as separate `psql`
+  invocations — separate autocommitting transactions — so on any re-`up` where
+  `lock-down-db-grants` had real REVOKE/GRANT work to redo (every run after the first), a
+  request landing in the gap between the REVOKE committing and the matching GRANT committing got
+  a genuine `InsufficientPrivilege` 500. Not specific to `seed-sample-data`: any client request
+  in flight at the wrong moment during a stack restart or rolling upgrade could hit it. Fixed by
+  extracting the grant matrix to plain SQL (`infra/postgres/grant-matrix.sql`, `:"var"`
+  identifier substitution) and having `apply-service-grants.sh` `\i` it directly, inside its own
+  psql session, immediately after its `REVOKE` and still inside one explicit `BEGIN`/`COMMIT` —
+  rather than shelling out to a second script that opened its own transaction. `grant-
+  service-privileges.sh` (the earlier, standalone one-shot from #317) becomes a thin wrapper that
+  applies the same file with `psql -f`. Postgres privilege checks read committed state only, so a
+  transaction that never exposes an intermediate commit closes the window rather than narrowing
+  it. **Validated against a live environment** (2026-08-01): reproduced the original race by
+  extracting the pre-fix scripts via `git show` and running them in an isolated container against
+  the live dev stack while hammering `classification_levels` as the `ingestion-api` role from a
+  separate probe loop — 4 denials in 20s (`permission denied for table classification_levels`,
+  the exact error from the issue). Ran the same probe against the fixed scripts, 4 times, forcing
+  `lock-down-db-grants` to redo real REVOKE/GRANT work each time (concurrently with
+  `seed-sample-data`'s own traffic on one rep) — 0 denials across 1,300+ probes, 0 `500`s in
+  `ingestion-api`'s logs, and `\dp` still matches the matrix exactly.
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus
