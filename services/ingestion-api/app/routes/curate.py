@@ -467,19 +467,26 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
     curator's authority over the *new* doc's (possibly corrected) tags
     doesn't imply authority over the old doc's -- a version can legitimately
     change classification, so both have to be checked.
+
+    Issue #326: existence, then authority, then status, in that order --
+    matching _load_pending (#322). Checking status first let a curator with
+    authority over the *new* doc but not the *old* one (lower clearance than
+    the original uploader, whose clearance is what submission-time validation
+    checked) learn old_doc's exact non-approved status via the 409 message,
+    before their lack of authority over old_doc was ever established.
     """
     old_doc = session.get(Document, new_doc.supersedes_document_id)
     if old_doc is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "the document this submission supersedes no longer exists"
         )
+    _check_curator_authority(user, old_doc, session)
     if old_doc.status != "approved":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"the document this submission supersedes is now '{old_doc.status}', not "
             "'approved' -- resolve manually before approving this version",
         )
-    _check_curator_authority(user, old_doc, session)
     return old_doc
 
 
