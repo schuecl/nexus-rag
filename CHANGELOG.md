@@ -22,6 +22,13 @@ changed in the running system, with the issue/PR reference for the trail.
   against the near-white body text of the dark themes. Now a `.row.unread`
   rule keyed off the same `--warning`/`--warning-soft` tokens every theme
   keeps stable (#337, #338).
+- Portal pages showed a spurious vertical scrollbar and misjudged their own
+  height even when content fit in one viewport — the sticky-footer layout
+  subtracted a fixed `150px` for header/footer from `100vh` but never
+  accounted for the top/bottom classification banners added later (#166),
+  so every page ran taller than the viewport by roughly the banners'
+  combined height. Now a flex-column body sizes the content area to fill
+  whatever space the header, footer, and banners actually leave (#340).
 
 ## [0.2.0] - 2026-08-01
 

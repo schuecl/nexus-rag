@@ -87,6 +87,8 @@ html {
 body {
   margin: 0;
   min-width: 320px;
+  display: flex;
+  flex-direction: column;
   /* The layered gradient: a bright horizon low and left, falling away to near
      black. Slightly oversized and slowly drifting, so the light moves the way
      a scanning display does rather than sitting still. */
@@ -475,7 +477,7 @@ svg {
 
 .page-shell {
   width: min(1220px, calc(100% - 40px));
-  min-height: calc(100vh - 150px);
+  flex: 1 0 auto;
   margin: 0 auto;
   padding: 44px 0 72px;
 }
