@@ -22,9 +22,14 @@ guessing a value.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import httpx
+
+from common.log_safety import log_safe
+
+logger = logging.getLogger(__name__)
 
 RERANKER_URL = os.environ.get("RERANKER_URL", "http://reranker-service:8003")
 # Issue #216: matches reranker-service's own RERANKER_SHARED_SECRET (app/main.py) --
@@ -86,7 +91,8 @@ async def rerank(
             resp.raise_for_status()
             scores = {row["id"]: row["score"] for row in resp.json()}
     except httpx.HTTPError as exc:
-        return candidates[:top_k], f"reranker-service unavailable ({exc}); using fused order"
+        logger.warning("reranker-service unavailable: %s: %s", type(exc).__name__, log_safe(exc))
+        return candidates[:top_k], "reranking unavailable; using fused order"
 
     def _boosted_score(candidate: dict) -> float:
         base = scores.get(candidate["id"], float("-inf"))
@@ -96,7 +102,7 @@ async def rerank(
         return base * weight
 
     ranked = sorted(candidates, key=_boosted_score, reverse=True)
-    note = "cross-encoder rerank via reranker-service (FR-25)"
+    note = "cross-encoder reranking applied"
     if boosts:
         note += f", content-type boosts applied {boosts}"
     return ranked[:top_k], note

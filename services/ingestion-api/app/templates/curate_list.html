@@ -13,16 +13,16 @@
   <a class="{% if request.url.path == '/curate/list' %}active{% endif %}" href="/curate/list">List</a>
 </nav>
 {% if current_user.curatable_orgs %}
-<p>Every document across the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover
-(FR-12), any status -- not just what's waiting in the queue. Edit a document's metadata
+<p>Every document across the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover,
+any status -- not just what's waiting in the queue. Edit a document's metadata
 after it has already cleared curation, without going through supersession. Changes to
 Classification/Releasability/Access scope are re-checked against your own curator authority
 the same as an approval correction.</p>
 {% else %}
 <p>Every document in the system, any status -- <code>rag-purge</code> authority is not scoped
-by org, clearance, or releasability the way curation is (see
-<code>app/deps.require_purge</code>), so neither is this list. Delete is the only action
-available here; metadata editing requires a <code>rag-curate:&lt;org&gt;</code> role.</p>
+by org, clearance, or releasability the way curation is, so neither is this list. Delete is
+the only action available here; metadata editing requires a
+<code>rag-curate:&lt;org&gt;</code> role.</p>
 {% endif %}
 
 <div class="doc-toolbar">

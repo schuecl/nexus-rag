@@ -477,7 +477,7 @@ async def _run_rag_search(
             query_span.set_attribute("vector.candidates", len(hits))
         timings["retrieve"] = perf_counter() - retrieval_started
     except (VectorStoreUnavailable, httpx.HTTPError) as exc:
-        result["hybrid_retrieval"] = "dense+bm25 RRF fusion (FR-24)"
+        result["hybrid_retrieval"] = "combined semantic and keyword search"
         result["reranking"] = "skipped, no candidates"
         result["results"] = []
         # #214: no exception text in the note. It is returned to the caller
@@ -492,9 +492,8 @@ async def _run_rag_search(
             log_safe(exc),
         )
         result["note"] = (
-            f"the {backend_name()} vector collection is not queryable; it's "
-            "created lazily on first ingestion, so this is expected if no document "
-            "has been submitted yet"
+            "the search index is not queryable; it's created lazily on first "
+            "ingestion, so this is expected if no document has been submitted yet"
         )
         metrics.queries_total.labels(outcome="unavailable").inc()
         _audit(
@@ -511,7 +510,7 @@ async def _run_rag_search(
         )
         return result
 
-    result["hybrid_retrieval"] = f"dense+bm25 RRF fusion over {len(hits)} candidates (FR-24)"
+    result["hybrid_retrieval"] = f"combined semantic and keyword search over {len(hits)} candidates"
 
     if not hits:
         result["reranking"] = "skipped, no candidates"

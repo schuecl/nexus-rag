@@ -6,10 +6,10 @@
   <a class="{% if request.url.path == '/curate' %}active{% endif %}" href="/curate">Queue</a>
   <a class="{% if request.url.path == '/curate/list' %}active{% endif %}" href="/curate/list">List</a>
 </nav>
-<p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover (FR-12).
+<p>Scoped server-side to the orgs your <code>rag-curate:&lt;org&gt;</code> role(s) cover.
 Correct Classification/Releasability/Access scope below before approving if the uploader's
-tags need fixing (FR-13) -- corrections are re-checked against your own curator authority
-(FR-14) the same as the original tags.</p>
+tags need fixing -- corrections are re-checked against your own curator authority
+the same as the original tags.</p>
 <button onclick="loadQueue()">Refresh</button>
 <div id="queue"></div>
 <div id="result" class="msg" hidden></div>
