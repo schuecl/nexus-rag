@@ -15,7 +15,13 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- Notifications: the unread-row highlight was a hardcoded `#fff8e1` inline
+  style, so it stayed light-yellow under every portal theme — unreadable
+  against the near-white body text of the dark themes. Now a `.row.unread`
+  rule keyed off the same `--warning`/`--warning-soft` tokens every theme
+  keeps stable (#337, #338).
 
 ## [0.2.0] - 2026-08-01
 
