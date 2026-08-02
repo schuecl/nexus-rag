@@ -1567,6 +1567,15 @@ code {
   background: var(--surface);
 }
 
+/* Issue #337: was a hardcoded #fff8e1 inline style, so unread rows kept a
+   light-yellow background under every theme -- unreadable against the
+   near-white --text of the dark themes. --warning/--warning-soft are the
+   tokens every theme keeps stable, same family as .readiness-count. */
+.row.unread {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+}
+
 .msg {
   max-width: 900px;
   margin-top: 1rem;

@@ -24,8 +24,7 @@ async function loadNotifications() {
   }
   for (const n of notifications) {
     const row = document.createElement('div');
-    row.className = 'row';
-    row.style.background = n.read ? '' : '#fff8e1';
+    row.className = n.read ? 'row' : 'row unread';
 
     // Issue #207: n.message embeds the uploader's filename and the curator's
     // free-text rejection reason. Both were interpolated into innerHTML here,
