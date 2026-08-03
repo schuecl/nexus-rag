@@ -39,6 +39,12 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Fixed
 
+- `rag_search`'s audit-logged `applied_filter` reported `collections` as every
+  collection an allowed classification *could* resolve to, including ones
+  `hybrid_query` actually skips because they don't exist yet (no approved
+  documents at that level) — overstating what was searched in the one place
+  (FR-31 audit evidence) that overstatement is dangerous. Now reports both
+  `collections_eligible` and `collections_queried` (#272).
 - Notifications: the unread-row highlight was a hardcoded `#fff8e1` inline
   style, so it stayed light-yellow under every portal theme — unreadable
   against the near-white body text of the dark themes. Now a `.row.unread`

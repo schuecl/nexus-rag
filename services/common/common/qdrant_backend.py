@@ -169,11 +169,23 @@ class QdrantStore:
         # (issue #229) which collections those clauses are actually applied
         # against -- useful audit/observability evidence that the split is
         # real, not just the filter's classification clause.
+        #
+        # Issue #272: `collections_eligible` is every collection the caller's
+        # allowed classifications resolve to; `collections_queried` is the
+        # subset `hybrid_query` actually hits -- it skips a classification
+        # with no collection yet via the same `client.collection_exists`
+        # check used there. Keeping both, rather than silently narrowing the
+        # one `collections` key, means an audit row can't be misread either
+        # way -- what the caller was eligible for vs. what was actually
+        # searched.
         summary = build_access_filter(
             claims, allowed_classifications=allowed_classifications
         ).model_dump(exclude_none=True)
-        summary["collections"] = [
-            classification_collection_name(c) for c in allowed_classifications
+        client = get_qdrant_client()
+        eligible = [classification_collection_name(c) for c in allowed_classifications]
+        summary["collections_eligible"] = eligible
+        summary["collections_queried"] = [
+            name for name in eligible if client.collection_exists(name)
         ]
         return summary
 

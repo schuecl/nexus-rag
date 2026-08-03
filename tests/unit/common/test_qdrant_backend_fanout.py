@@ -257,13 +257,29 @@ class TestFindSimilarApproved:
 
 
 class TestAccessFilterSummary:
-    def test_collections_are_reported_for_every_allowed_classification(self, _client):
-        _client()
+    def test_eligible_lists_every_allowed_classification_regardless_of_existence(self, _client):
+        _client()  # nothing exists yet
         store = qdrant_backend.QdrantStore()
 
         summary = store.access_filter_summary(_claims(), ["CUI", "SECRET"])
 
-        assert summary["collections"] == [
+        assert summary["collections_eligible"] == [
             classification_collection_name("CUI"),
+            classification_collection_name("SECRET"),
+        ]
+
+    def test_queried_omits_a_classification_with_no_collection_yet(self, _client):
+        # Issue #272: SECRET is allowed but has never been ingested into, so
+        # hybrid_query's collection_exists check skips it -- the summary must
+        # not claim it was queried.
+        cui = classification_collection_name("CUI")
+        _client(existing={cui})
+        store = qdrant_backend.QdrantStore()
+
+        summary = store.access_filter_summary(_claims(), ["CUI", "SECRET"])
+
+        assert summary["collections_queried"] == [cui]
+        assert summary["collections_eligible"] == [
+            cui,
             classification_collection_name("SECRET"),
         ]

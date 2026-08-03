@@ -117,7 +117,11 @@ class VectorStore(Protocol):
 
     def access_filter_summary(self, claims: UserClaims, allowed_classifications: list[str]) -> dict:
         """The applied-filter description rag_search returns to callers and
-        writes to the FR-31 audit detail."""
+        writes to the FR-31 audit detail. Issue #272: for QdrantStore this
+        includes both `collections_eligible` (every collection the allowed
+        classifications resolve to) and `collections_queried` (the subset
+        that exists and was therefore actually hit by `hybrid_query`) -- the
+        two can differ when a classification has no approved documents yet."""
 
     def find_similar_approved(
         self, *, dense: list[float], limit: int, exclude_document_id: str | None = None
