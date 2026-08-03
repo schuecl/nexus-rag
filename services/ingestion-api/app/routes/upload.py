@@ -441,7 +441,15 @@ async def submit_documents_batch(
                 )
             )
             continue
-        results.append(BatchUploadItem(filename=doc.filename, accepted=True, document=doc))
+        # Issue #356 UI bug: pydantic passes an already-typed instance through
+        # by reference rather than copying it, so without model_copy() every
+        # earlier file's `doc` here still points at the live ORM object --
+        # the next file's session.commit() (expire_on_commit, the default)
+        # wipes its loaded attributes, and it serializes as `{}` in the
+        # response. A snapshot decouples it from later commits in this loop.
+        results.append(
+            BatchUploadItem(filename=doc.filename, accepted=True, document=doc.model_copy())
+        )
     return results
 
 

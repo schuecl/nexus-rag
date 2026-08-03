@@ -117,6 +117,32 @@ class TestBatchHappyPath:
             assert persisted.classification == "CUI"
             assert store.puts[persisted.original_object_key]
 
+    async def test_every_item_document_survives_json_serialization(self, session, store):
+        # Regression test: attribute access on item.document (as the other
+        # tests in this file do) transparently re-fetches expired attributes
+        # through the still-open session, so it can't see this bug. FastAPI's
+        # actual response path serializes with jsonable_encoder instead,
+        # which reads each SQLModel's __dict__ directly -- before this was
+        # fixed with .model_copy() in submit_documents_batch, every batch
+        # item but the last shared its `document` by reference with the live
+        # ORM object, so a later file's session.commit() (expire_on_commit)
+        # emptied the earlier ones' __dict__ and they serialized as `{}`.
+        from fastapi.encoders import jsonable_encoder
+
+        files = [
+            _file(b"first document body", "a.txt"),
+            _file(b"second document body", "b.txt"),
+            _file(b"third document body", "c.txt"),
+        ]
+
+        results = await _submit_batch(session, files)
+        encoded = jsonable_encoder(results)
+
+        assert len(encoded) == 3
+        for item in encoded:
+            assert item["document"]["id"], f"{item['filename']} serialized with an empty document"
+            assert item["document"]["status"] == "queued"
+
     async def test_each_accepted_file_gets_its_own_audit_entry(self, session, store):
         files = [_file(b"one", "one.txt"), _file(b"two", "two.txt")]
 
