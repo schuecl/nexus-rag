@@ -385,9 +385,9 @@ ingestionApi:
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
   # FR-34/issue #356: batch-submission file-count cap (POST /documents/batch).
-  # See the ingress.annotations comment below -- a batch's aggregate request
-  # body can be up to maxBatchFiles x maxUploadBytes, which the ingress
-  # proxy-body-size annotation does not currently account for.
+  # A batch's aggregate request body can be as large as
+  # maxBatchFiles x maxUploadBytes; the ingress template computes that
+  # product and injects it as the proxy-body-size annotation default.
   maxBatchFiles: 25
   service:
     type: ClusterIP

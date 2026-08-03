@@ -151,7 +151,7 @@ spec:
                   name: {{ .Values.qdrant.apiKey.existingSecret }}
                   key: {{ .Values.qdrant.apiKey.secretKey }}
             - name: MAX_UPLOAD_BYTES
-              value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
+              value: {{ .Values.ingestionApi.maxUploadBytes | int64 | quote }}
             # Issue #356: batch-submission file-count cap (POST /documents/batch).
             # Was hardcoded to the app's own default (25) with no Helm value --
             # this exposes it the same way maxUploadBytes is exposed above.
