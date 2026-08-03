@@ -51,7 +51,7 @@ from common.db import get_session
 from common.log_safety import log_safe
 from common.models import AuditLogEntry
 from common.sparse_embedding import embed_sparse
-from common.tracing import get_tracer
+from common.tracing import current_trace_id, get_tracer
 from common.vector_store import VectorStoreUnavailable, backend_name, get_store
 
 logger = logging.getLogger("orchestration-mcp")
@@ -121,8 +121,19 @@ def _audit_query_detail(query: str, **extra: object) -> dict:
     `query_chars` is kept because length is useful for the anomaly detection
     #127 wants (membership-inference probing is high-volume and
     structurally repetitive) and discloses essentially nothing on its own.
+
+    #363: also carries `trace_id` when a sampled span is in flight -- the
+    correlation key back to the #134 trace (embed/vector.query/rerank spans)
+    that produced this attempt, so an audit row is no longer a dead end.
+    Omitted rather than null when tracing is disabled or this request was not
+    sampled (#134 defaults to 5%): a field that is usually absent is a
+    weaker/less misleading side channel than one that is usually all zeroes.
     """
-    return {"query_chars": len(query), **extra}
+    detail = {"query_chars": len(query), **extra}
+    trace_id = current_trace_id()
+    if trace_id is not None:
+        detail["trace_id"] = trace_id
+    return detail
 
 
 # P1: see the module docstring. Delimits retrieved chunk text from anything
@@ -433,13 +444,10 @@ async def _run_rag_search(
         logger.error(mismatch)
         # Deliberately records the reason and the query's length, not its
         # text -- same shape #125 gives every other audit entry on this path.
-        # Written inline rather than via that PR's _audit_query_detail() helper
-        # so this change stays independent of it; collapse the two whichever
-        # lands second.
         _audit(
             claims,
             "query.failed",
-            {"query_chars": len(query), "reason": "embedding model mismatch"},
+            _audit_query_detail(query, reason="embedding model mismatch"),
         )
         result["error"] = mismatch
         result["results"] = []

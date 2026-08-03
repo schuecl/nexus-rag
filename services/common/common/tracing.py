@@ -132,6 +132,23 @@ def get_tracer(name: str) -> trace.Tracer:
     return trace.get_tracer(name)
 
 
+def current_trace_id() -> str | None:
+    """The active span's trace id, hex-encoded, or None with no recording span
+    in flight (tracing disabled, or this call landed outside any span).
+
+    #363: this is the correlation key between an FR-31 audit row and the
+    #134 trace that shows exactly which Qdrant queries, reranker call, and
+    Ollama embedding call produced it. Same `is_valid`/zero-padded-hex shape
+    as `logging_setup._trace_context` for the same reason -- Grafana and any
+    other tool matching this id against Tempo need the literal string, not a
+    value that dropped a leading zero.
+    """
+    context = trace.get_current_span().get_span_context()
+    if not context.is_valid:
+        return None
+    return format(context.trace_id, "032x")
+
+
 def inject_trace_context() -> dict[str, str] | None:
     """Serialize the current span context into a headers dict (W3C
     traceparent/tracestate) for the NATS message, or None when there is no

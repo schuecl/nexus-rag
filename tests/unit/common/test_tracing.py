@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from common import tracing
 from common.job_queue import INGESTION_SUBJECT, publish_ingestion_job
-from common.tracing import extract_trace_context, inject_trace_context
+from common.tracing import current_trace_id, extract_trace_context, inject_trace_context
 
 
 @pytest.fixture
@@ -81,6 +81,21 @@ class TestQueueBoundaryPropagation:
         document_id = "8ec9a2a6-0000-0000-0000-000000000002"
         await publish_ingestion_job(js, document_id)
         assert js.publish.await_args.kwargs["headers"] == {"Nats-Msg-Id": document_id}
+
+
+class TestCurrentTraceId:
+    """#363: the correlation key an audit row needs to point back at the
+    trace that produced it."""
+
+    def test_none_without_an_active_span(self):
+        assert current_trace_id() is None
+
+    def test_matches_the_active_span_hex_trace_id(self, recording_tracer):
+        tracer, _ = recording_tracer
+        with tracer.start_as_current_span("rag_search") as span:
+            found = current_trace_id()
+        assert found == format(span.get_span_context().trace_id, "032x")
+        assert len(found) == 32
 
 
 class TestSetup:

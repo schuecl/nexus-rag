@@ -63,18 +63,18 @@ def _trace_context() -> dict[str, str]:
     """
     try:
         from opentelemetry import trace
+
+        from common.tracing import current_trace_id
     except ImportError:  # pragma: no cover - opentelemetry is always installed
         return {}
-    context = trace.get_current_span().get_span_context()
-    if not context.is_valid:
+    trace_id = current_trace_id()
+    if trace_id is None:
         return {}
-    # Hex, zero-padded to the widths the OTLP/Tempo convention uses -- Grafana
+    # Hex, zero-padded to the width the OTLP/Tempo convention uses -- Grafana
     # matches on the literal string, so `format(id, "x")` would fail to link
     # any id with a leading zero.
-    return {
-        "trace_id": format(context.trace_id, "032x"),
-        "span_id": format(context.span_id, "016x"),
-    }
+    span_id = trace.get_current_span().get_span_context().span_id
+    return {"trace_id": trace_id, "span_id": format(span_id, "016x")}
 
 
 class _TextFormatter(logging.Formatter):

@@ -50,7 +50,7 @@ issue.
 | Document versioning | **Validated live** | FR-7 supersede chain |
 | Durability of source | **Validated live** | NFR-12 object store retains every original |
 | Embedding provenance | **Validated live** | Write+read stamp, refuse-on-mismatch ([#122](https://github.com/schuecl/nexus-rag/issues/122), [PR #130](https://github.com/schuecl/nexus-rag/pull/130)); re-embedding path (`python -m app.reembed`) fixes a detected mismatch ([#362](https://github.com/schuecl/nexus-rag/issues/362), `docs/dev-setup.md`) |
-| Query/response lineage | **Not done** | No correlation id between an audit query entry and the trace/retrieval that produced it ([#363](https://github.com/schuecl/nexus-rag/issues/363)) |
+| Query/response lineage | **Validated live** | Every FR-31 audit query row carries the #134 trace id as `trace_id` ([#363](https://github.com/schuecl/nexus-rag/issues/363)) |
 | Retention & destruction | **Partial** | Purge path implemented+validated ([#136](https://github.com/schuecl/nexus-rag/pull/136)); schedule proposed in [Retention and destruction](#retention-and-destruction), awaiting ratification ([#123](https://github.com/schuecl/nexus-rag/issues/123)) |
 | Query confidentiality | **Partial** | See [Query confidentiality](#query-confidentiality-and-user-privacy) |
 | Privacy threat model | **Implemented (docs)** | [threat-model.md](threat-model.md) ([#127](https://github.com/schuecl/nexus-rag/issues/127)) |
@@ -185,14 +185,24 @@ What is traceable today:
   the mismatch-then-fix-then-clears sequence
   ([#362](https://github.com/schuecl/nexus-rag/issues/362),
   `docs/dev-setup.md`).
+- **A query to the trace that produced it.** `common/tracing.py`'s
+  `current_trace_id()` reads the active span's trace id (32-char hex, the
+  same format `logging_setup._trace_context` already uses to link a log line
+  to Tempo), and every `rag_search` audit outcome — success, empty result,
+  unavailable backend, denied, and embedding-model mismatch — writes it into
+  the row as `trace_id` via `_audit_query_detail`. Absent (not written)
+  rather than a zeroed id when tracing is disabled or the request wasn't
+  sampled (#134 defaults to 5%), so a row never carries a correlation key
+  that looks real but resolves to nothing. Validated live: a `bob-query`
+  call against the real dev stack (`docker compose --profile observability
+  up`, `OTEL_EXPORTER_OTLP_ENDPOINT` set) wrote an audit row whose `trace_id`
+  decoded to the exact trace held in Tempo, containing the `rag_search` root
+  span and its `embed.query`/`vector.query`/`rerank` children plus the
+  `reranker-service` call they propagated into
+  ([#363](https://github.com/schuecl/nexus-rag/issues/363)).
 
 What is **not** traceable:
 
-- **A query to its answer.** Audit entries have no correlation id, so a
-  specific response cannot be tied to the specific retrieval that produced
-  it, even though #134 added OpenTelemetry tracing across the retrieval
-  fan-out — the trace id it generates is never written into the audit row
-  — see [#363](https://github.com/schuecl/nexus-rag/issues/363).
 - **Reranker version**, chunking parameters, or filter version at the time a
   chunk was written.
 
@@ -496,7 +506,6 @@ Stated so their absence reads as a decision rather than an oversight:
 
 | Gap | Issue |
 |---|---|
-| No correlation id linking an audit query entry to the retrieval/trace that produced it | [#363](https://github.com/schuecl/nexus-rag/issues/363) |
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
 | Retrieved content persists in the chat plane beyond purge's reach | [#286](https://github.com/schuecl/nexus-rag/issues/286) |
 | No detection/alerting on reconnaissance-shaped query patterns (metrics/SIEM substrate exists, no detection logic yet) | [threat-model.md](threat-model.md) |
