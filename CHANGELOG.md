@@ -30,6 +30,12 @@ changed in the running system, with the issue/PR reference for the trail.
   PII in prose), surfaced alongside the regex findings on the curation
   review page. Same flag-only posture as #342 — never redacts, blocks, or
   decides (#343).
+- Wired the sensitive-data-pattern advisories (#342 regex, #343 LLM-assisted)
+  into the existing curator-agreement calibration loop: finding kinds/counts
+  now ride along on the approve/reject audit entry, and
+  `calibrate_tagging_advisory.py` reports a `pii_regex`/`pii_llm`
+  "acted on vs. approved unchanged" rate for each, alongside the
+  classification-tag suggesters it already covered (#345).
 
 ### Fixed
 

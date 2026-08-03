@@ -138,6 +138,57 @@ def _llm_flagged_advisory(suggested_classification: str = "SECRET") -> dict:
     }
 
 
+def _pii_regex_flagged_advisory() -> dict:
+    return {
+        "assigned_classification": "CUI",
+        "detected_classification": None,
+        "under_classified": False,
+        "detected_caveats": [],
+        "unassigned_caveats": [],
+        "evidence": [],
+        "evidence_offsets": [],
+        "notes": [],
+        "markings_not_scanned": False,
+        "unscanned_reasons": [],
+        "pii_advisory": {
+            "findings": [
+                {
+                    "kind": "ssn",
+                    "detail": "US Social Security Number pattern",
+                    "context": "...[REDACTED]...",
+                    "offset": 12,
+                },
+                {
+                    "kind": "credit_card",
+                    "detail": "Credit card number pattern (Luhn-valid)",
+                    "context": "...[REDACTED]...",
+                    "offset": 40,
+                },
+            ]
+        },
+    }
+
+
+def _pii_llm_flagged_advisory() -> dict:
+    return {
+        "assigned_classification": "CUI",
+        "detected_classification": None,
+        "under_classified": False,
+        "detected_caveats": [],
+        "unassigned_caveats": [],
+        "evidence": [],
+        "evidence_offsets": [],
+        "notes": [],
+        "markings_not_scanned": False,
+        "unscanned_reasons": [],
+        "pii_advisory": {
+            "llm_findings": [
+                {"kind": "spelled-out SSN", "rationale": "Text spells out a nine-digit ID."},
+            ]
+        },
+    }
+
+
 def _decision_entry(session: Session, action: str) -> AuditLogEntry:
     entries = session.exec(select(AuditLogEntry).where(AuditLogEntry.action == action)).all()
     assert len(entries) == 1
@@ -262,6 +313,75 @@ class TestApproveLinksFlaggedAdvisory:
         curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
 
         entry = _decision_entry(session, "document.approve")
+        assert entry.detail["tagging_advisory"] is None
+
+
+class TestPiiAdvisoryLinkage:
+    """Issue #345: a sensitive-data-pattern finding (#342 regex / #343
+    LLM-assisted) links into the decision's audit entry the same way the
+    classification-tag suggesters above do, even with no marking-mismatch,
+    precedent, or LLM classification finding of its own."""
+
+    def test_approve_embeds_a_flagged_pii_regex_advisory(self, session: Session) -> None:
+        doc = _document(tagging_advisory=_pii_regex_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["pii_regex_kinds"] == ["credit_card", "ssn"]
+        assert outcome["pii_regex_count"] == 2
+        assert "pii_llm_kinds" not in outcome
+        # No marking-mismatch/precedent/LLM finding of its own.
+        assert outcome["marking_mismatch_flagged"] is False
+
+    def test_approve_embeds_a_flagged_pii_llm_advisory(self, session: Session) -> None:
+        doc = _document(tagging_advisory=_pii_llm_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["pii_llm_kinds"] == ["spelled-out SSN"]
+        assert outcome["pii_llm_count"] == 1
+        assert "pii_regex_kinds" not in outcome
+
+    def test_reject_embeds_a_flagged_pii_regex_advisory(self, session: Session) -> None:
+        doc = _document(tagging_advisory=_pii_regex_flagged_advisory())
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.reject(
+            doc.id,
+            curate.Rejection(reason="spillage risk per PII advisory"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+
+        entry = _decision_entry(session, "document.reject")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["pii_regex_kinds"] == ["credit_card", "ssn"]
+
+    def test_approve_of_no_pii_finding_document_has_no_pii_keys(self, session: Session) -> None:
+        advisory = _pii_regex_flagged_advisory()
+        advisory["pii_advisory"] = {"findings": []}
+        doc = _document(tagging_advisory=advisory)
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        # Nothing else flagged either, so no tagging_advisory link at all.
         assert entry.detail["tagging_advisory"] is None
 
 

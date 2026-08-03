@@ -317,6 +317,15 @@ flag plus the curator's final decision in that document's `document.approve`/
 that trail and reports, per suggester, how often the curator's final decision
 agreed with the flag vs. overrode it:
 
+Issue #345 extends this to the sensitive-data-pattern advisory family (#342's
+regex pass, #343's LLM-assisted pass): `pii_regex`/`pii_llm` in the report.
+Unlike the classification-tag suggesters above, a PII finding carries no
+classification/releasability target to rank-compare against, so "agreement"
+there means something different — see
+`scripts/calibrate_tagging_advisory.py`'s module docstring and `PiiTally` for
+the `acted_on_rate` definition (rejected or approved-with-a-changed-tag counts
+as acted on; approved-unchanged does not).
+
 ```bash
 # Persist each run under a timestamped filename and print a trend line
 # against the previous one.

@@ -866,6 +866,19 @@ the docs, not a silent "it works" — flag it if you find one.
   new outcome fields `assigned_classification`/`marking_mismatch_flagged` this needed) —
   the DB fetch itself, the new `nexus_rag_audit_reporting` role/grants, and the
   `calibration` compose profile have not been exercised against a live Postgres.
+- **PII-advisory calibration coverage (issue #345)** — the adaptive calibration loop
+  above didn't cover the sensitive-data-pattern advisory family (#342's regex pass,
+  #343's LLM-assisted pass): `curate.py`'s `_tagging_advisory_outcome` now also embeds
+  finding kinds/counts for `pii_advisory.findings` and `pii_advisory.llm_findings` into
+  the approve/reject audit entry, and `calibrate_tagging_advisory.py` reports them as
+  `pii_regex`/`pii_llm`. Unlike the classification-tag suggesters, a PII finding carries
+  no classification/releasability target to rank-compare against, so this uses a
+  different, purpose-built `PiiTally.acted_on_rate`: rejecting the document or approving
+  it with a changed classification counts as "acted on," approving it unchanged does
+  not — see the script's module docstring for the reasoning. **Tested against mocks
+  only** (extended `tests/unit/test_calibrate_tagging_advisory.py` and
+  `services/ingestion-api/tests/test_tagging_advisory_linkage.py`) — not yet exercised
+  against a live Postgres.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

@@ -32,6 +32,19 @@ by a batch job. The issue's "refresh precedent from the corrected/approved
 set" clause is therefore already true today; there is nothing to build for
 it, only to note.
 
+Issue #345: the sensitive-data-pattern advisory family (#342's regex pass,
+#343's LLM-assisted pass) has no classification/releasability target to
+rank-compare a curator's decision against the way every suggester above does
+-- a PII finding says "this text looks sensitive", not "this document should
+be tagged X". So `pii_regex`/`pii_llm` below use a different notion of
+"agreement" than `Tally.agreement_rate`: whether the curator visibly acted on
+the finding at all (rejected the document, or approved it with a changed
+classification) versus approved it with the ingestion-time classification
+left untouched. A low `acted_on_rate` is a signal worth looking at either way
+-- either the finding family is mostly noise curators learn to dismiss, or
+genuine spillage-adjacent content is being waved through -- this script only
+surfaces the rate, it doesn't judge which.
+
 Known limitation, not fixed here: the LLM suggester's `disagrees_with_assigned`
 flag (services/ingestion-worker/app/classification_suggestion.py via
 _apply_llm_suggestion_advisory) is one boolean covering *either* a
@@ -164,6 +177,61 @@ class Tally:
 
 
 @dataclass
+class PiiTally:
+    """Outcome counts for one sensitive-data-pattern advisory (#342 regex /
+    #343 LLM-assisted). No classification/releasability target exists to
+    rank-compare against (see module docstring), so "agreement" here is
+    whether the curator visibly acted on the finding: rejected the document,
+    or approved it with a changed classification, versus approving it with
+    the ingestion-time classification left untouched.
+
+    `unresolved` counts a flagged document missing `assigned_classification`
+    or `final_classification` (e.g. a pre-#345 audit row, or Phase 1's own
+    advisory failed to compute for this document) -- there's no way to tell
+    approved-unchanged apart from approved-corrected without both, so this
+    isn't folded into either bucket.
+    """
+
+    flagged: int = 0
+    approved_unchanged: int = 0
+    approved_corrected: int = 0
+    rejected: int = 0
+    unresolved: int = 0
+
+    def record(
+        self,
+        *,
+        action: str,
+        assigned_classification: str | None,
+        final_classification: str | None,
+    ) -> None:
+        self.flagged += 1
+        if action == "document.reject":
+            self.rejected += 1
+        elif assigned_classification is None or final_classification is None:
+            self.unresolved += 1
+        elif assigned_classification.upper() != final_classification.upper():
+            self.approved_corrected += 1
+        else:
+            self.approved_unchanged += 1
+
+    @property
+    def acted_on_rate(self) -> float | None:
+        resolved = self.approved_unchanged + self.approved_corrected + self.rejected
+        return (self.approved_corrected + self.rejected) / resolved if resolved else None
+
+    def to_dict(self) -> dict:
+        return {
+            "flagged": self.flagged,
+            "approved_unchanged": self.approved_unchanged,
+            "approved_corrected": self.approved_corrected,
+            "rejected": self.rejected,
+            "unresolved": self.unresolved,
+            "acted_on_rate": self.acted_on_rate,
+        }
+
+
+@dataclass
 class Report:
     since: str | None
     generated_at: str
@@ -174,6 +242,8 @@ class Report:
     precedent: Tally = field(default_factory=Tally)
     llm_classification: Tally = field(default_factory=Tally)
     llm_doc_type_flags: int = 0
+    pii_regex: PiiTally = field(default_factory=PiiTally)
+    pii_llm: PiiTally = field(default_factory=PiiTally)
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +256,8 @@ class Report:
             "precedent": self.precedent.to_dict(),
             "llm_classification": self.llm_classification.to_dict(),
             "llm_doc_type_flags": self.llm_doc_type_flags,
+            "pii_regex": self.pii_regex.to_dict(),
+            "pii_llm": self.pii_llm.to_dict(),
         }
 
 
@@ -251,6 +323,20 @@ def aggregate(decisions: list[dict], ranks: dict[str, int]) -> Report:
         if outcome.get("llm_suggested_doc_type"):
             report.llm_doc_type_flags += 1
 
+        if "pii_regex_kinds" in outcome:
+            report.pii_regex.record(
+                action=row.get("action") or "",
+                assigned_classification=outcome.get("assigned_classification"),
+                final_classification=outcome.get("final_classification"),
+            )
+
+        if "pii_llm_kinds" in outcome:
+            report.pii_llm.record(
+                action=row.get("action") or "",
+                assigned_classification=outcome.get("assigned_classification"),
+                final_classification=outcome.get("final_classification"),
+            )
+
     return report
 
 
@@ -291,6 +377,16 @@ def print_report(report: dict) -> None:
         f"  llm_doc_type_flags: {report['llm_doc_type_flags']} "
         "(descriptive count only -- no accept/override ground truth recorded)"
     )
+    for name in ("pii_regex", "pii_llm"):
+        tally = report[name]
+        rate = tally["acted_on_rate"]
+        rate_str = f"{rate:.2%}" if rate is not None else "n/a (nothing resolvable)"
+        print(
+            f"  {name}: flagged={tally['flagged']} "
+            f"approved_unchanged={tally['approved_unchanged']} "
+            f"approved_corrected={tally['approved_corrected']} rejected={tally['rejected']} "
+            f"unresolved={tally['unresolved']} acted_on_rate={rate_str}"
+        )
 
 
 def print_trend(previous: dict, current: dict) -> None:
@@ -298,6 +394,14 @@ def print_trend(previous: dict, current: dict) -> None:
     for name in ("marking_mismatch", "releasability_caveats", "precedent", "llm_classification"):
         prev_rate = previous.get(name, {}).get("agreement_rate")
         cur_rate = current[name]["agreement_rate"]
+        if prev_rate is None or cur_rate is None:
+            print(f"  {name}: not comparable")
+            continue
+        delta = cur_rate - prev_rate
+        print(f"  {name}: {cur_rate:.2%} vs {prev_rate:.2%} (delta {delta:+.2%})")
+    for name in ("pii_regex", "pii_llm"):
+        prev_rate = previous.get(name, {}).get("acted_on_rate")
+        cur_rate = current[name]["acted_on_rate"]
         if prev_rate is None or cur_rate is None:
             print(f"  {name}: not comparable")
             continue

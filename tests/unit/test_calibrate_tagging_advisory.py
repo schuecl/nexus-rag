@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from calibrate_tagging_advisory import (
+    PiiTally,
     Tally,
     aggregate,
     latest_prior_report,
@@ -252,6 +253,126 @@ class TestAggregateLlmClassification:
         ]
         report = aggregate(decisions, RANKS).to_dict()
         assert report["llm_classification"]["flagged"] == 0
+
+
+class TestPiiTally:
+    def test_acted_on_rate_is_none_with_nothing_resolved(self) -> None:
+        assert PiiTally().acted_on_rate is None
+
+    def test_rejected_and_corrected_count_as_acted_on(self) -> None:
+        tally = PiiTally()
+        tally.record(
+            action="document.reject", assigned_classification="CUI", final_classification="CUI"
+        )
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="SECRET",
+        )
+        tally.record(
+            action="document.approve", assigned_classification="CUI", final_classification="CUI"
+        )
+        assert tally.flagged == 3
+        assert tally.rejected == 1
+        assert tally.approved_corrected == 1
+        assert tally.approved_unchanged == 1
+        # Two of three resolved cases were acted on (rejected + corrected).
+        assert tally.acted_on_rate == pytest.approx(2 / 3)
+
+    def test_missing_classification_is_unresolved_not_scored(self) -> None:
+        tally = PiiTally()
+        tally.record(
+            action="document.approve", assigned_classification=None, final_classification="CUI"
+        )
+        assert tally.unresolved == 1
+        assert tally.acted_on_rate is None
+
+
+class TestAggregatePii:
+    def test_pii_regex_finding_approved_unchanged(self) -> None:
+        decisions = [
+            _decision(
+                "document.approve",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": False,
+                    "flagged_classification": None,
+                    "flagged_caveats": [],
+                    "final_classification": "CUI",
+                    "final_releasability": ["NONE"],
+                    "pii_regex_kinds": ["ssn"],
+                    "pii_regex_count": 1,
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        assert report["pii_regex"] == {
+            "flagged": 1,
+            "approved_unchanged": 1,
+            "approved_corrected": 0,
+            "rejected": 0,
+            "unresolved": 0,
+            "acted_on_rate": 0.0,
+        }
+        assert report["pii_llm"]["flagged"] == 0
+
+    def test_pii_llm_finding_approved_with_correction_counts_as_acted_on(self) -> None:
+        decisions = [
+            _decision(
+                "document.approve",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": False,
+                    "flagged_classification": None,
+                    "flagged_caveats": [],
+                    "final_classification": "SECRET",
+                    "final_releasability": ["NONE"],
+                    "pii_llm_kinds": ["spelled-out SSN"],
+                    "pii_llm_count": 1,
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        assert report["pii_llm"]["approved_corrected"] == 1
+        assert report["pii_llm"]["acted_on_rate"] == pytest.approx(1.0)
+
+    def test_pii_finding_rejected_counts_as_acted_on(self) -> None:
+        decisions = [
+            _decision(
+                "document.reject",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": False,
+                    "flagged_classification": None,
+                    "flagged_caveats": [],
+                    "final_classification": "CUI",
+                    "final_releasability": ["NONE"],
+                    "pii_regex_kinds": ["credit_card"],
+                    "pii_regex_count": 1,
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        assert report["pii_regex"]["rejected"] == 1
+        assert report["pii_regex"]["acted_on_rate"] == pytest.approx(1.0)
+
+    def test_no_pii_finding_is_not_counted(self) -> None:
+        decisions = [
+            _decision(
+                "document.approve",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": True,
+                    "flagged_classification": "SECRET",
+                    "flagged_caveats": [],
+                    "final_classification": "SECRET",
+                    "final_releasability": ["NATO"],
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        assert report["pii_regex"]["flagged"] == 0
+        assert report["pii_llm"]["flagged"] == 0
 
 
 class TestHistoryStore:

@@ -493,9 +493,10 @@ def _validate_supersede(user: UserClaims, new_doc: Document, session: Session) -
 def _tagging_advisory_outcome(doc: Document) -> dict | None:
     """Issue #306 gap 1: link the curator's decision back to the ingestion-time
     marking-mismatch advisory (issue #138), precedent advisory (issue #307
-    Phase 2), LLM classification suggestion (issue #308 Phase 3), and content
-    advisory (issue #284 item 2), if any was flagged for this document.
-    Without this,
+    Phase 2), LLM classification suggestion (issue #308 Phase 3), content
+    advisory (issue #284 item 2), and sensitive-data-pattern advisory (issue
+    #342 regex Phase 1 / #343 LLM-assisted Phase 2), if any was flagged for
+    this document. Without this,
     recovering "did the curator agree with the flag" means diffing the
     `document.tagging_advisory` and `document.approve`/`document.reject`
     audit rows by document ID after the fact -- embedding the flagged values
@@ -524,16 +525,40 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     marking at or below the assigned level (which also leaves
     `flagged_classification` non-None), and can rank-compare the curator's
     final decision against what was flagged without needing a second query.
+
+    Issue #345: also embeds counts/kinds for a sensitive-data-pattern finding
+    (`pii_advisory.findings` from #342's regex pass, `pii_advisory.llm_findings`
+    from #343's LLM-assisted pass), same "kinds only, never the finding's own
+    evidence" posture as `content_advisory_kinds` below. Unlike the
+    classification-tag suggesters above, a PII finding carries no
+    `disagrees_with_assigned`-style target to rank-compare against, so there is
+    no `*_flagged` boolean or accept/override verdict computed here --
+    `calibrate_tagging_advisory.py` derives its own "did the curator visibly
+    act on this" signal from `assigned_classification`/`final_classification`
+    plus which decision action produced this entry, since that's read off the
+    audit row itself, not something this function can see.
     """
     advisory = doc.tagging_advisory or {}
     precedent = advisory.get("precedent") or {}
     llm_suggestion = advisory.get("llm_suggestion") or {}
     content_findings = (advisory.get("content_advisory") or {}).get("findings") or []
+    pii_advisory = advisory.get("pii_advisory") or {}
+    pii_regex_findings = pii_advisory.get("findings") or []
+    pii_llm_findings = pii_advisory.get("llm_findings") or []
     flagged = bool(advisory.get("under_classified") or advisory.get("unassigned_caveats"))
     flagged_precedent = precedent.get("disagrees_with_assigned")
     flagged_llm = llm_suggestion.get("disagrees_with_assigned")
     flagged_content = bool(content_findings)
-    if not (flagged or flagged_precedent or flagged_llm or flagged_content):
+    flagged_pii_regex = bool(pii_regex_findings)
+    flagged_pii_llm = bool(pii_llm_findings)
+    if not (
+        flagged
+        or flagged_precedent
+        or flagged_llm
+        or flagged_content
+        or flagged_pii_regex
+        or flagged_pii_llm
+    ):
         return None
     outcome = {
         "assigned_classification": advisory.get("assigned_classification"),
@@ -556,6 +581,15 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
         # curator was shown a hidden-instruction flag, not a second copy of
         # the flagged content itself.
         outcome["content_advisory_kinds"] = sorted({f["kind"] for f in content_findings})
+    if flagged_pii_regex:
+        # Same "kinds/count only, never the finding's own context excerpt"
+        # posture as content_advisory_kinds above.
+        outcome["pii_regex_kinds"] = sorted({f["kind"] for f in pii_regex_findings})
+        outcome["pii_regex_count"] = len(pii_regex_findings)
+    if flagged_pii_llm:
+        # Same posture -- kinds only, never the model's own rationale text.
+        outcome["pii_llm_kinds"] = sorted({f["kind"] for f in pii_llm_findings})
+        outcome["pii_llm_count"] = len(pii_llm_findings)
     return outcome
 
 
