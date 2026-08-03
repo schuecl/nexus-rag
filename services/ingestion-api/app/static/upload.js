@@ -247,6 +247,15 @@
     progress.parentElement.setAttribute("aria-valuenow", String(completed));
   }
 
+  // Batch refactor (issue #356) dropped this without a replacement: file
+  // selection and releasability toggles call updateReadiness() explicitly,
+  // but classification/access_scope/source_originator/doc_type had nothing
+  // wiring them in, so 3 of the 5 checklist items went stale until the next
+  // unrelated trigger (e.g. submit).
+  ["input", "change"].forEach((eventName) => {
+    form.addEventListener(eventName, updateReadiness);
+  });
+
   const setResult = (kind, title, message, body = null) => {
     result.hidden = false;
     result.className = `submission-result ${kind}`;
