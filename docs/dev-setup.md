@@ -389,6 +389,18 @@ Grafana. See [observability.md](observability.md).
   are plain local Docker volumes with no encryption, fine for throwaway dev data — see
   `helm/nexus-rag/README.md`'s "Encryption at rest" section for the production posture.
 
+## Restrictive host umask (issue #192)
+
+If your host's default `umask` is restrictive (e.g. `077`, common on hardened/RHEL
+workstations), a fresh checkout used to create every git-tracked config file `0600`/`0700`
+(git only preserves the executable bit; the rest comes from `0666`/`0777 & ~umask`) --
+unreadable by the non-root users several bind-mounted images run as (Postgres, nats, the
+Prometheus/Grafana-stack images, Keycloak). This no longer needs a manual step: the
+`fix-config-perms` one-shot service normalizes permissions across `infra/` (except
+`infra/certs`, whose private keys are deliberately kept restrictive and are generated at
+runtime, not checked out from git) on every `docker compose up`, before any dependent
+service starts.
+
 ## One-time host setup for LibreChat OIDC (issue #75)
 
 LibreChat's own OIDC login needs two things a fresh checkout doesn't have yet:

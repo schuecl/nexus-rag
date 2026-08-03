@@ -27,6 +27,37 @@ volumes:
   nats-data:
 
 services:
+  # ------------------------------------------------------------ config perms
+  # Issue #192: git only records the executable bit -- on checkout, every
+  # other tracked file is created `0666 & ~umask`. On a restrictive host
+  # umask (0077, common on hardened/RHEL workstations) that's 0600,
+  # owner-only. Everything under infra/ is bind-mounted read-only into
+  # containers that run as non-root (postgres, nats, the
+  # Prometheus/Grafana-stack images, Keycloak, LibreChat), so those
+  # containers can't read their own config and crash outright -- except
+  # Grafana, which swallows the read error and silently provisions no
+  # datasources/dashboards instead of failing loudly.
+  #
+  # This runs on every `up`, before any dependent service starts, and
+  # re-normalizes perms on the whole infra/ tree regardless of host umask --
+  # the same idempotent-refresh shape as ensure-db-roles below.
+  # infra/certs is excluded: its private keys are deliberately generated
+  # 0600 by generate-dev-certs.sh and are gitignored, not checked out from
+  # git, so this bug never touches them.
+  fix-config-perms:
+    security_opt: ["no-new-privileges:true"]
+    image: alpine:3.22.2
+    volumes:
+      - ./infra:/infra
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        find /infra -path /infra/certs -prune -o -type d -print0 | xargs -0 chmod a+rx
+        find /infra -path /infra/certs -prune -o -type f -print0 | xargs -0 chmod a+r
+        find /infra -path /infra/certs -prune -o -type f -name '*.sh' -print0 | xargs -0 chmod a+rx
+    restart: "no"
+
   # ---------------------------------------------------------------- storage
   postgres:
     # NFR-16: pinned to a specific patch release, not the floating "16" tag
@@ -77,6 +108,9 @@ services:
       # (harmlessly, since it's idempotent -- but relying on "ensure" sorting
       # before "init" is not a property worth depending on).
       - ./infra/postgres/ensure-roles.sh:/ensure-roles.sh:ro
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus_rag}"]
       interval: 5s
@@ -137,6 +171,9 @@ services:
       # Bound to localhost only, same reasoning as qdrant's port binding
       # above -- other containers reach it via nats:4222 regardless.
       - "127.0.0.1:4222:4222"
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://localhost:8222/healthz || exit 1"]
       interval: 5s
@@ -203,6 +240,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fix-config-perms:
+        condition: service_completed_successfully
     healthcheck:
       # KC_HEALTH_ENABLED moves /health* onto Keycloak's separate management
       # interface (default port 9000) rather than the main HTTP port (8080)
@@ -677,6 +716,9 @@ services:
       - ./infra/observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     ports:
       - "127.0.0.1:9115:9115"
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
 
   nats-exporter:
     # #133: opt-in -- the observability stack starts only with
@@ -765,6 +807,8 @@ services:
     depends_on:
       alertmanager:
         condition: service_started
+      fix-config-perms:
+        condition: service_completed_successfully
 
   alertmanager:
     # #133: opt-in -- the observability stack starts only with
@@ -780,6 +824,9 @@ services:
       - ./infra/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "127.0.0.1:9093:9093"
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
 
   # Traces: services emit OTLP/HTTP to the collector, which batches and
   # forwards to Tempo. Grafana exposes the cross-service trace trees.
@@ -796,6 +843,9 @@ services:
       - tempo-data:/var/tempo
     ports:
       - "127.0.0.1:3200:3200"
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
 
   otel-collector:
     # #133: opt-in -- the observability stack starts only with
@@ -814,6 +864,8 @@ services:
     depends_on:
       tempo:
         condition: service_started
+      fix-config-perms:
+        condition: service_completed_successfully
 
   # Profiling: deployed the same way Tempo was in #169 -- the backend exists
   # before anything sends it data. #349 wired the four services to push it
@@ -862,6 +914,9 @@ services:
       - loki-data:/loki
     ports:
       - "127.0.0.1:3100:3100"
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
 
   docker-socket-proxy:
     # #133 review finding 3: Alloy used to bind-mount /var/run/docker.sock
@@ -987,6 +1042,8 @@ services:
         condition: service_started
       pyroscope:
         condition: service_started
+      fix-config-perms:
+        condition: service_completed_successfully
 
   syslog-collector:
     # #73/NFR-2 validation only: a stand-in SIEM that prints every syslog
@@ -1592,6 +1649,8 @@ services:
         condition: service_started
       orchestration-mcp:
         condition: service_started
+      fix-config-perms:
+        condition: service_completed_successfully
 
   # Issue #75: terminates TLS for LibreChat's browser-facing :3080 -- LibreChat
   # v0.8.7 (api/server/index.js) always calls a plain http app.listen(), so a
