@@ -15,6 +15,8 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### Added
 
 - Sensitive-data-pattern curator advisory: ingestion-time regex scan for
