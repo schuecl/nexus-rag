@@ -384,6 +384,11 @@ ingestionApi:
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
+  # FR-34/issue #356: batch-submission file-count cap (POST /documents/batch).
+  # See the ingress.annotations comment below -- a batch's aggregate request
+  # body can be up to maxBatchFiles x maxUploadBytes, which the ingress
+  # proxy-body-size annotation does not currently account for.
+  maxBatchFiles: 25
   service:
     type: ClusterIP
     port: 8001
@@ -402,6 +407,18 @@ ingestionApi:
     # Traefik or HAProxy, replace it with that controller's equivalent.
     # Keep the value at or above ingestionApi.maxUploadBytes, or the edge
     # will reject uploads the application would have accepted.
+    #
+    # FR-34/issue #356: POST /documents/batch sends every file in the batch
+    # as one multipart request, so its aggregate body can be as large as
+    # maxBatchFiles x maxUploadBytes (25 x 50MB = ~1.25GB at the defaults
+    # above) -- this annotation was sized only for a single file and was not
+    # revisited when the batch endpoint was added. A batch of more than
+    # roughly one file's worth of bytes will be rejected at the edge with a
+    # generic 413 today. Raising this to cover the batch case is a real
+    # increase in the largest request body the ingress will buffer before
+    # any application-level validation runs -- size it deliberately for your
+    # environment (or lower ingestionApi.maxBatchFiles instead) rather than
+    # just multiplying blindly.
     annotations:
       nginx.ingress.kubernetes.io/proxy-body-size: "50m"
   # Browser OIDC login callback URL (ARCHITECTURE.md Section 4.4), passed

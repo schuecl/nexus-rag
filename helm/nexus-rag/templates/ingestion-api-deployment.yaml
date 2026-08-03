@@ -152,6 +152,11 @@ spec:
                   key: {{ .Values.qdrant.apiKey.secretKey }}
             - name: MAX_UPLOAD_BYTES
               value: {{ .Values.ingestionApi.maxUploadBytes | quote }}
+            # Issue #356: batch-submission file-count cap (POST /documents/batch).
+            # Was hardcoded to the app's own default (25) with no Helm value --
+            # this exposes it the same way maxUploadBytes is exposed above.
+            - name: MAX_BATCH_FILES
+              value: {{ .Values.ingestionApi.maxBatchFiles | quote }}
             # Issue #279 (gap G3): see values.yaml's purgeTwoPersonRequired comment.
             - name: PURGE_TWO_PERSON_REQUIRED
               value: {{ .Values.ingestionApi.purgeTwoPersonRequired | quote }}
