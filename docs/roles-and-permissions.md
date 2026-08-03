@@ -308,12 +308,21 @@ token-refresh writes touch each row. Qdrant/NATS/Keycloak rotation stays
 config-level on those systems' own side (no code change proposed for them in
 the issue); `APP_DB_USER` remains open as a candidate not yet picked up.
 
-**G6 — `rag-query` retrieval has no per-document view audit granularity.**
-The audit row records the filter and result count, not *which* documents were
-returned (a deliberate privacy choice mirroring #125 — recording returned doc
-ids would rebuild query-content inference). Recorded here as a decision, so
-the next person asking "can we know who saw document X?" finds the answer
-("no, by design — only who *could* have") written down.
+**G6 — corrected (#364): `rag-query` retrieval *does* record per-document view
+audit granularity.** Every successful query's audit row carries
+`result_document_ids` (`services/orchestration-mcp/app/rag_search.py`,
+`_audit_query_detail`), not just the filter and result count — asserted as a
+required FR-26/FR-31 accountability field by
+`test_query_privacy.py::test_accountability_fields_survive`. This entry
+previously claimed the opposite, conflating it with a different, real
+decision: #125 dropped the *raw query text* from the audit row (see
+`governance.md`'s "model that was adopted" table), but `result_document_ids`
+was never part of that redaction — it's the evidence FR-26 needs to prove
+*which* documents a filter actually permitted, and has been recorded since
+audit logging was first added (`b81f964`, predating this document). So the
+honest answer to "can we know who saw document X?" is **yes** — scan
+`audit_log` for that document id — bounded by who can read the table at all
+(G2's residual: `nexus_rag_audit_reporting` and the bootstrap superuser only).
 
 ## 8. Reviewing a change against this document
 
