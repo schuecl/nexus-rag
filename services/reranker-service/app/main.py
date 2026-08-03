@@ -69,17 +69,24 @@ def _setup_profiling() -> None:
     invisible between the rerank span's start and end timestamps."""
     server_address = os.environ.get("PYROSCOPE_SERVER_ADDRESS", "").strip()
     if not server_address:
+        logging.getLogger("reranker-service").info(
+            "profiling disabled (PYROSCOPE_SERVER_ADDRESS is not set)"
+        )
         return
     try:
         rate = int(os.environ.get("PYROSCOPE_SAMPLE_RATE", "100"))
     except ValueError:
         rate = 100
+    rate = rate if rate > 0 else 100
     pyroscope.configure(
         application_name=os.environ.get("PYROSCOPE_APPLICATION_NAME", "nexus-rag-reranker-service"),
         server_address=server_address,
-        sample_rate=rate if rate > 0 else 100,
+        sample_rate=rate,
         cpu_enabled=True,
         mem_enabled=False,
+    )
+    logging.getLogger("reranker-service").info(
+        "profiling enabled: pushing to %s, %sHz CPU sampling (#349)", server_address, rate
     )
 
 
