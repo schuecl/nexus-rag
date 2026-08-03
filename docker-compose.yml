@@ -11,6 +11,7 @@ volumes:
   milvus-data:
   prometheus-data:
   postgres-data:
+  pyroscope-data:
   qdrant-data:
   tempo-data:
   ollama-data:
@@ -798,6 +799,28 @@ services:
       tempo:
         condition: service_started
 
+  # Profiling: deployed the same way Tempo was in #169 -- the backend exists
+  # before anything sends it data. #349 tracks instrumenting the four
+  # services with the Pyroscope SDK; until that lands, Grafana's profiling
+  # views are just empty, same as Tempo's traces were before #134.
+  pyroscope:
+    # #133: opt-in -- the observability stack starts only with
+    # `--profile observability`, not on a bare `docker compose up`.
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    profiles: ["observability"]
+    # v1, not the v2.x line: v2's segment-writer/metastore architecture
+    # gates /ready behind raft leader-election and compaction-scheduling
+    # state that (found by running it) never resolves as a single instance
+    # with no other replicas to form quorum with. v1's simpler ring-based
+    # ingester reports ready in ~30s single-node, which is what a dev/tuning
+    # profile needs.
+    image: grafana/pyroscope:1.21.1
+    volumes:
+      - pyroscope-data:/data
+    ports:
+      - "127.0.0.1:4040:4040"
+
   # Logs: Alloy discovers only containers in this Compose project and ships
   # their stdout/stderr to Loki. The Docker socket is read-only and this
   # collector is strictly a local-development component.
@@ -938,6 +961,8 @@ services:
       loki:
         condition: service_started
       tempo:
+        condition: service_started
+      pyroscope:
         condition: service_started
 
   syslog-collector:

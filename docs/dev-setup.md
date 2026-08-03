@@ -302,9 +302,13 @@ is lost as soon as a container is recreated from Docker Desktop or a plain
 startup that is easy to scroll past.
 
 - **Grafana** http://localhost:3000 (`admin` / `nexus-rag-admin`) -- dashboards
-  and datasources are auto-provisioned (Prometheus, Loki, Tempo).
+  and datasources are auto-provisioned (Prometheus, Loki, Tempo, Pyroscope).
 - **Prometheus** http://127.0.0.1:9090 scrapes every service's `/metrics`.
 - **Tempo** (traces) and **Loki** (logs) are wired as Grafana datasources.
+- **Pyroscope** http://127.0.0.1:4040 (continuous profiling) is deployed and
+  wired as a Grafana datasource, but nothing pushes it profiles yet --
+  no app-side instrumentation exists until #349 lands. It comes up empty, the
+  same way Tempo did before #134 added spans.
 - Every port except Grafana is published loopback-only.
 - **Trace-to-log correlation works**: with `LOG_FORMAT=json` and tracing
   enabled, every log line carries `trace_id`/`span_id`, which is what

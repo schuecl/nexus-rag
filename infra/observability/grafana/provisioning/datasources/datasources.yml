@@ -47,6 +47,17 @@ datasources:
       nodeGraph:
         enabled: true
 
+  # #133/#349: backend deployed, no data yet -- nothing in this repo pushes
+  # profiles to it until #349's instrumentation lands. Present so the
+  # datasource (and trace-to-profiles correlation, once #349 tags spans and
+  # profiles with the same service.name) exists without a manual click.
+  - name: Pyroscope
+    uid: pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    editable: false
+
   - name: Alertmanager
     uid: alertmanager
     type: alertmanager

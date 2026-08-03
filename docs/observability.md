@@ -93,6 +93,15 @@ The profile alone does not enable tracing or JSON logs — set
 `OTEL_EXPORTER_OTLP_ENDPOINT` and `LOG_FORMAT=json` too, or Tempo stays empty and
 the log→trace links never appear.
 
+Pyroscope (continuous profiling) is also in the profile, at
+<http://127.0.0.1:4040> and wired as a Grafana datasource — but empty. No
+service pushes it a profile yet; #349 tracks the app-side instrumentation,
+the same split #134 used for tracing (Tempo shipped in #169 before spans
+existed). Not (yet) part of `helm/observability`: adding the Kubernetes side
+before there is real profiling data to validate the deployment against would
+repeat the untested-config risk the confidence table below calls out for the
+rest of that chart.
+
 ## What is actually instrumented
 
 All four services expose `/metrics`, all `nexus_rag_*`, all with deliberately
@@ -113,6 +122,10 @@ Tracing is opt-in and off by default —
 `services/common/common/tracing.py` returns early when
 `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so a deployment with no collector pays
 nothing. Default head-sampling ratio is 0.05.
+
+Continuous profiling is **not** instrumented anywhere yet. Pyroscope is
+deployed (Compose profile, #133) but nothing in `services/` pushes it data —
+tracked as #349.
 
 ## Dashboards
 
@@ -171,7 +184,8 @@ would be worse, since it would look configured while delivering nowhere.
 Per CLAUDE.md's labelling:
 
 - **Validated against a live environment**: the Compose profile. Dashboards
-  render, trace correlation works, the service map populates.
+  render, trace correlation works, the service map populates, Pyroscope
+  reports ready and is reachable from Grafana (no profiles to show yet — #349).
 - **Implemented, configs validated against their upstream binaries**:
   `helm/observability`. `helm lint`/`helm template` render every component, the
   dashboards' datasource UIDs are asserted to match the generated provisioning
