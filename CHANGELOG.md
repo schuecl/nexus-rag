@@ -15,6 +15,15 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Added
+
+- Sensitive-data-pattern curator advisory: ingestion-time regex scan for
+  US SSN, Luhn-valid credit card numbers, checksum-valid bank routing
+  numbers, API keys/tokens, and private-key blocks, surfaced on the
+  curation review page alongside the existing marking-mismatch/
+  hidden-instruction advisories. Flag-only — never redacts, blocks, or
+  decides; a curator still makes the call (#342).
+
 ### Fixed
 
 - Notifications: the unread-row highlight was a hardcoded `#fff8e1` inline

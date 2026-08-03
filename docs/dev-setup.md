@@ -752,6 +752,27 @@ the docs, not a silent "it works" — flag it if you find one.
   `{% block scripts %}`, the pattern `admin.html`/`login.html`/`upload.html` already use
   correctly. The identical bug still affects `curate_list.html` and `notifications.html`
   (issue #323, filed rather than fixed here — out of scope for this change).
+- **Sensitive-data-pattern curator advisory (issue #342, Phase 1)** — the ingestion
+  worker's parse stage now also scans a document's own parsed text with
+  `common/pii_scan.py`, a dependency-free regex pass for US SSN, Luhn-valid credit card
+  numbers, checksum-valid bank routing numbers, well-known API-key/token prefixes
+  (AWS/GitHub/Slack), a generic `key/token/secret = "..."`-shaped assignment, and PEM
+  private-key block headers — folded into the same `document.tagging_advisory` JSON
+  column and `/curate` advisory box the rest of this family (#138/#284/#307/#308) shares,
+  under a `pii_advisory` key, same fail-safe/never-blocks posture. Findings never echo
+  the matched sensitive value: `detail` is a fixed label naming the kind of pattern, and
+  the context excerpt has the matched span itself replaced with `[REDACTED]`. Phone
+  numbers, email addresses, and passport/driver's-license numbers are deliberately out of
+  scope for this phase — see the module docstring. `docs/governance.md`'s Non-goals
+  section is amended alongside this change to distinguish this narrow, flag-only signal
+  from the PII redaction/data-subject-rights tooling that remains explicitly out of
+  scope. The issue's proposed second layer — an LLM-assisted pass for context-dependent
+  PII a regex can't catch — is deliberately deferred to a follow-on issue, not built here.
+  **Tested against mocks only** (`tests/unit/common/test_pii_scan.py` for the pure
+  detection logic, including that no finding ever echoes the matched value;
+  `services/ingestion-worker/tests/test_pii_advisory_processing.py` for the worker glue
+  against an in-memory SQLite session) — not yet exercised against a live
+  `docker compose up` stack or a browser.
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk

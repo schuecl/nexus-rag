@@ -429,9 +429,20 @@ Stated so their absence reads as a decision rather than an oversight:
   admin-managed controlled vocabulary; there is no knowledge graph to govern.
   Would become in scope if
   [#91](https://github.com/schuecl/nexus-rag/issues/91) is pursued.
-- **PII detection and redaction.** The corpus is organizational documents
-  under classification control, not personal data; the governing regime is
-  classification/releasability, not GDPR-style data-subject rights.
+- **PII redaction and GDPR-style data-subject-rights tooling.** The corpus
+  is organizational documents under classification control, not personal
+  data; the governing regime is classification/releasability, not
+  data-subject rights, and nothing in this system redacts, deletes-on-request,
+  or otherwise treats a document differently because it contains personal
+  data as such. **Narrower exception (issue #342):** a flag-only,
+  curator-facing regex scan for common sensitive-data patterns (SSN, credit
+  card, bank routing, API keys/secrets) was adopted as a spillage-adjacent
+  signal in the same family as the marking-mismatch and hidden-instruction
+  advisories (`common/pii_scan.py`) — it never redacts, blocks, or decides
+  anything, only surfaces a finding for the human curator who already
+  decides Classification/Releasability to weigh. This is decision support
+  for the existing classification/releasability gate, not a second,
+  PII-specific governance regime layered on top of it.
 - **Data sovereignty via region selection.** The deployment target is
   air-gapped (NFR-1), which is a stronger constraint than regional residency.
 - **Cross-organization data cataloging.** The metadata schema serves retrieval

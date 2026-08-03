@@ -135,6 +135,38 @@ function advisoryNode(doc) {
     });
   }
 
+  // Issue #342 Phase 1: sensitive-data-pattern findings (SSN, Luhn-valid
+  // credit card numbers, checksum-valid bank routing numbers, API keys/
+  // tokens, private-key blocks) in the document's own parsed text.
+  // `detail` is always a fixed label naming the kind of pattern matched,
+  // never the matched value itself, and `context` has the match itself
+  // replaced with a redaction marker -- see common/pii_scan.py's module
+  // docstring. textContent throughout regardless, same defense-in-depth
+  // posture as every other field on this page.
+  const piiFindings = (adv.pii_advisory && adv.pii_advisory.findings) || [];
+  let piiFindingsNode = null;
+  if (piiFindings.length) {
+    const kinds = [...new Set(piiFindings.map((f) => f.kind))];
+    findings.push([
+      document.createTextNode(`${piiFindings.length} sensitive-data-pattern finding(s) (`),
+      el('strong', { text: kinds.join(', ') }),
+      document.createTextNode(') in the document’s own text -- review before approving'),
+    ]);
+    piiFindingsNode = el('span', {
+      className: 'hint',
+      children: [
+        'PII advisory: ',
+        ...piiFindings.flatMap((f, i) => {
+          const parts = [
+            document.createTextNode(`${f.kind} — ${f.detail} (offset ${f.offset}): `),
+            el('code', { text: f.context }),
+          ];
+          return i === piiFindings.length - 1 ? parts : [...parts, el('br')];
+        }),
+      ],
+    });
+  }
+
   // Issue #306 gap 3: distinct from `findings` above -- this means some of the
   // document's content (a scanned page OCR couldn't recover) was never
   // checked for markings at all, not that it was checked and found clean.
@@ -163,6 +195,9 @@ function advisoryNode(doc) {
     }
     if (contentFindingsNode) {
       box.append(el('br'), contentFindingsNode);
+    }
+    if (piiFindingsNode) {
+      box.append(el('br'), piiFindingsNode);
     }
   }
   if (unscanned) {

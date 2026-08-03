@@ -41,6 +41,7 @@ from common.log_safety import log_safe
 from common.marking_detection import detect_markings, evaluate_markings
 from common.models import AuditLogEntry, ClassificationLevel, Document, ReleasabilityValue
 from common.object_store import get_object_store
+from common.pii_scan import detect_pii_risks
 from common.qdrant_store import EMBEDDING_MODEL_KEY
 from common.sparse_embedding import embed_sparse
 from common.tracing import extract_trace_context, get_tracer
@@ -283,6 +284,56 @@ def _apply_content_advisory(
     except Exception:
         logger.exception(
             "content advisory failed for document %s; continuing ingestion without it",
+            doc.id,
+        )
+
+
+def _apply_pii_advisory(
+    session: Session,
+    doc: Document,
+    sections: list[ParsedSection],
+) -> None:
+    """Issue #342 Phase 1: scan the document's own parsed text for common
+    sensitive-data patterns (SSN, Luhn-valid credit card numbers,
+    checksum-valid bank routing numbers, API keys/tokens, private-key
+    blocks) and merge the finding into the same `doc.tagging_advisory`
+    column/UI surface the other advisories use, under a `pii_advisory` key.
+
+    Flag-only, same as every other advisory in this family -- see
+    common/pii_scan.py's module docstring, and docs/governance.md's
+    Non-goals note on why this is scoped as a spillage-adjacent signal, not
+    PII redaction. Nothing here mutates, redacts, or blocks anything; a
+    curator decides what to do with a finding.
+
+    Same fail-safe posture as `_apply_content_advisory`: any error here is
+    swallowed and logged, leaving whatever `tagging_advisory` already held
+    untouched. A sensitive-pattern scan must never fail or delay ingestion.
+    """
+    try:
+        text = "\n".join(s.text for s in sections)[:_ADVISORY_SCAN_LIMIT]
+        advisory = detect_pii_risks(text)
+        doc.tagging_advisory = {
+            **(doc.tagging_advisory or {}),
+            "pii_advisory": advisory.to_dict(),
+        }
+        if advisory.has_findings:
+            logger.info(
+                "document %s PII advisory: %d finding(s)",
+                doc.id,
+                len(advisory.findings),
+            )
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.tagging_advisory",
+                    target_id=str(doc.id),
+                    detail={"pii_advisory": advisory.to_dict()},
+                )
+            )
+    except Exception:
+        logger.exception(
+            "PII advisory failed for document %s; continuing ingestion without it",
             doc.id,
         )
 
@@ -614,6 +665,10 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                 # look at what the uploader submitted, not at model-generated
                 # caption text.
                 _apply_content_advisory(session, doc, sections)
+                # Issue #342 Phase 1: same "before captions are added"
+                # reasoning -- a sensitive-pattern scan should look at what
+                # the uploader submitted, not at model-generated caption text.
+                _apply_pii_advisory(session, doc, sections)
                 # Issue #92: caption embedded images so figure content becomes
                 # retrievable. Degrade-on-failure by contract (never raises,
                 # never fails the document) and internally bounded well under
