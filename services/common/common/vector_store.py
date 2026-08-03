@@ -165,6 +165,18 @@ class VectorStore(Protocol):
         with no chunks yet rather than raising -- callers already know the
         document exists from Postgres by the time they call this."""
 
+    def replace_document_chunks(
+        self, document_id: str, classification: str, points: list[ChunkPoint]
+    ) -> None:
+        """Issue #362: re-embed a document -- overwrite its chunks with a
+        freshly re-parsed/re-chunked/re-embedded set (same deterministic
+        point-id scheme as ingestion, so matching chunk indices are replaced
+        in place with no old/new mix), then remove any old points beyond
+        `len(points)` left over from a document that re-chunked shorter than
+        before. `classification` selects which collection this touches
+        (issue #229) -- the one the document's chunks already live in; a
+        re-embed never changes classification, unlike a curator correction."""
+
 
 # Reciprocal Rank Fusion constant, matching the informal literature default
 # (and Qdrant's own FusionQuery(Fusion.RRF), which uses the same value) --

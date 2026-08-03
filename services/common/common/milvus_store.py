@@ -341,3 +341,36 @@ class MilvusStore:
         chunks = [dict(row.get("payload") or {}) for row in rows]
         chunks.sort(key=lambda payload: payload.get("chunk_index", 0))
         return chunks
+
+    def replace_document_chunks(
+        self, document_id: str, classification: str, points: list[ChunkPoint]
+    ) -> None:
+        """Issue #362. classification: unused, see module docstring (#229 not
+        implemented here).
+
+        `upsert` already replaces same-id rows in place (Milvus upserts by
+        primary key), so new-before-old here is really "upsert, then sweep
+        anything the new chunk count leaves behind" -- there's no typed
+        `chunk_index` column to filter a delete expression on (it lives only
+        in the JSON `payload`, like update_document_payload's fields), so the
+        stale ids are found the same way that method finds rows to patch:
+        query by document_id, inspect `payload` in Python, delete by id.
+        """
+        del classification
+        self.upsert(points)
+        new_count = len(points)
+        rows = _client().query(
+            collection_name=MILVUS_COLLECTION,
+            filter=f"document_id == {_quote(document_id)}",
+            output_fields=["id", "payload"],
+            limit=16384,
+        )
+        stale_ids = [
+            row["id"]
+            for row in rows
+            if (row.get("payload") or {}).get("chunk_index", 0) >= new_count
+        ]
+        if stale_ids:
+            _client().delete(
+                collection_name=MILVUS_COLLECTION, filter=f"id in {_string_list(stale_ids)}"
+            )

@@ -41,6 +41,7 @@ from common.qdrant_store import (
     existing_classification_collections,
     fetch_document_chunks,
     get_qdrant_client,
+    replace_document_chunks,
     update_document_payload,
     upsert_chunks,
 )
@@ -197,3 +198,16 @@ class QdrantStore:
 
     def fetch_document_chunks(self, document_id: str, classification: str) -> list[dict]:
         return fetch_document_chunks(get_qdrant_client(), document_id, classification)
+
+    def replace_document_chunks(
+        self, document_id: str, classification: str, points: list[ChunkPoint]
+    ) -> None:
+        replace_document_chunks(
+            get_qdrant_client(),
+            document_id=document_id,
+            classification=classification,
+            points=[
+                PointStruct(id=p.id, vector=chunk_vector(p.dense, p.sparse), payload=p.payload)
+                for p in points
+            ],
+        )

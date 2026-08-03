@@ -1451,6 +1451,34 @@ the docs, not a silent "it works" — flag it if you find one.
   `lock-down-db-grants` to redo real REVOKE/GRANT work each time (concurrently with
   `seed-sample-data`'s own traffic on one rep) — 0 denials across 1,300+ probes, 0 `500`s in
   `ingestion-api`'s logs, and `\dp` still matches the matrix exactly.
+- **Re-embedding path for a stale embedding-model collection (issue #362)** — #122/PR #130
+  detected an `EMBEDDING_MODEL` mismatch and refused retrieval, but the only remedy was a
+  full manual re-ingest. `python -m app.reembed` (run inside the `ingestion-worker`
+  container/image, e.g. `docker compose run --rm ingestion-worker python -m app.reembed
+  CUI`) re-parses, re-chunks, and re-embeds every `approved`/`pending_review` document in
+  the given classification(s) — or every classification with such a document, if none are
+  named — and writes the new chunks back in place via a new `replace_document_chunks`
+  vector-store method (upsert new points under the same deterministic ids first, then sweep
+  any old points a shorter re-chunking left behind — new-before-old, mirroring the FR-7
+  supersession ordering). Idempotent by construction: a document is skipped unless its
+  existing chunks' stamped model actually differs from the configured one (`--force`
+  overrides), so an interrupted or re-run pass only touches what still needs it.
+  Deliberately does not re-run the ingestion-time curation advisories (tagging/content/PII/
+  precedent/LLM-suggestion) — those are artifacts of the original ingestion decision, not
+  something a vector refresh should second-guess. **Validated against a live environment**
+  (2026-08-03): manually stamped every point in the `CUI` collection with a fake stale
+  `embedding_model`, confirmed `/debug/rag_search` then refused with the #122 mismatch error
+  for a `bob-query` token, ran `python -m app.reembed CUI` against the real stack and
+  confirmed it re-embedded the 3 `approved`/`pending_review` CUI documents (deliberately
+  leaving the one `rejected` CUI document's stale stamp untouched — out of scope by design),
+  confirmed the same query against `/debug/rag_search` then succeeded and returned the
+  expected chunk, and confirmed a second `--dry-run` pass reported nothing left to do
+  (0 to re-embed, 5 already current) — the skip-if-current check working as intended. Also
+  confirmed the `document.reembedded` audit entry landed in Postgres for each re-embedded
+  document. A stale `INGESTION_JOBS`/Postgres/Qdrant volume left over from an earlier session
+  surfaced separately during this validation (38 undeliverable JetStream messages blocking
+  fresh ones) — unrelated to this change, resolved by recreating those volumes, not a bug in
+  the re-embedding path itself.
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus

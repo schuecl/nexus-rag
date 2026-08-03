@@ -49,7 +49,7 @@ issue.
 | Auditability | **Validated live** | FR-31 audit log, append-only (NFR-2) |
 | Document versioning | **Validated live** | FR-7 supersede chain |
 | Durability of source | **Validated live** | NFR-12 object store retains every original |
-| Embedding provenance | **Tested against mocks** | Write+read stamp, refuse-on-mismatch ([#122](https://github.com/schuecl/nexus-rag/issues/122), [PR #130](https://github.com/schuecl/nexus-rag/pull/130)); the re-embedding path itself is still absent ([#362](https://github.com/schuecl/nexus-rag/issues/362)) |
+| Embedding provenance | **Validated live** | Write+read stamp, refuse-on-mismatch ([#122](https://github.com/schuecl/nexus-rag/issues/122), [PR #130](https://github.com/schuecl/nexus-rag/pull/130)); re-embedding path (`python -m app.reembed`) fixes a detected mismatch ([#362](https://github.com/schuecl/nexus-rag/issues/362), `docs/dev-setup.md`) |
 | Query/response lineage | **Not done** | No correlation id between an audit query entry and the trace/retrieval that produced it ([#363](https://github.com/schuecl/nexus-rag/issues/363)) |
 | Retention & destruction | **Partial** | Purge path implemented+validated ([#136](https://github.com/schuecl/nexus-rag/pull/136)); schedule proposed in [Retention and destruction](#retention-and-destruction), awaiting ratification ([#123](https://github.com/schuecl/nexus-rag/issues/123)) |
 | Query confidentiality | **Partial** | See [Query confidentiality](#query-confidentiality-and-user-privacy) |
@@ -177,14 +177,17 @@ What is traceable today:
   disagrees with what's configured
   ([#122](https://github.com/schuecl/nexus-rag/issues/122),
   [PR #130](https://github.com/schuecl/nexus-rag/pull/130)).
+- **A detected embedding-model mismatch can be remediated in place.**
+  `python -m app.reembed` (run inside the `ingestion-worker` image) re-parses,
+  re-chunks, and re-embeds every `approved`/`pending_review` document in a
+  mismatched classification and writes the corrected chunks back without a
+  full manual re-ingest — validated live against the real stack, including
+  the mismatch-then-fix-then-clears sequence
+  ([#362](https://github.com/schuecl/nexus-rag/issues/362),
+  `docs/dev-setup.md`).
 
 What is **not** traceable:
 
-- **A detected embedding-model mismatch has no remediation path.** The check
-  above stops a mismatched query rather than silently degrading it, but
-  there's still no way to re-embed a collection back into agreement short of
-  a full manual re-ingest — see
-  [#362](https://github.com/schuecl/nexus-rag/issues/362).
 - **A query to its answer.** Audit entries have no correlation id, so a
   specific response cannot be tied to the specific retrieval that produced
   it, even though #134 added OpenTelemetry tracing across the retrieval
@@ -493,7 +496,6 @@ Stated so their absence reads as a decision rather than an oversight:
 
 | Gap | Issue |
 |---|---|
-| No re-embedding path when an embedding-model provenance mismatch is detected | [#362](https://github.com/schuecl/nexus-rag/issues/362) |
 | No correlation id linking an audit query entry to the retrieval/trace that produced it | [#363](https://github.com/schuecl/nexus-rag/issues/363) |
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
 | Retrieved content persists in the chat plane beyond purge's reach | [#286](https://github.com/schuecl/nexus-rag/issues/286) |

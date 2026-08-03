@@ -48,6 +48,7 @@ from qdrant_client.models import (
     MatchValue,
     Modifier,
     PointStruct,
+    Range,
     SparseVector,
     SparseVectorParams,
     VectorParams,
@@ -492,3 +493,42 @@ def delete_document_chunks(client: QdrantClient, document_id: str, classificatio
     doc_filter = _document_filter(document_id)
     for name in existing_classification_collections(client):
         client.delete(collection_name=name, points_selector=FilterSelector(filter=doc_filter))
+
+
+def replace_document_chunks(
+    client: QdrantClient, document_id: str, classification: str, points: list[PointStruct]
+) -> None:
+    """Issue #362: re-embed a document's chunks in place, for the re-embedding
+    path #122/PR #130 shipped detection for but not a fix.
+
+    `points` is the caller's freshly re-parsed/re-chunked/re-embedded set for
+    this document, built with the same deterministic point-id scheme
+    ingestion uses (``uuid5(document_id, f"chunk:{chunk_index}")``,
+    processing.py) -- so upserting them overwrites the matching old points
+    directly, with no window where a still-current chunk index serves a
+    stale vector. New-before-old, mirroring
+    `_migrate_document_classification`'s ordering: the new points land first,
+    and only then are any *old* points beyond the new chunk count (the
+    document re-chunked shorter than it was before) swept. A failure between
+    the two steps therefore leaves at worst a few harmless extra stale
+    trailing chunks -- never fewer chunks than the new, correct count, and
+    never a partially-overwritten chunk.
+
+    `classification` selects the one collection this touches (issue #229) --
+    the same one the caller read the document's existing chunks from before
+    rebuilding them, since a re-embed does not change what collection a
+    document lives in (unlike a curator's classification correction).
+    """
+    name = classification_collection_name(classification)
+    client.upsert(collection_name=name, points=points)
+    client.delete(
+        collection_name=name,
+        points_selector=FilterSelector(
+            filter=Filter(
+                must=[
+                    FieldCondition(key="document_id", match=MatchValue(value=document_id)),
+                    FieldCondition(key="chunk_index", range=Range(gte=len(points))),
+                ]
+            )
+        ),
+    )
