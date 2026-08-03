@@ -8,7 +8,9 @@ Related: [REQUIREMENTS.md](../REQUIREMENTS.md) for the numbered requirements
 this cites, [ARCHITECTURE.md](../ARCHITECTURE.md) for component/flow diagrams,
 [testing.md](testing.md) for how the controls below are verified,
 [roles-and-permissions.md](roles-and-permissions.md) for the per-role
-authorization/privacy matrix and its least-privilege gap analysis, and
+authorization/privacy matrix and its least-privilege gap analysis,
+[threat-model.md](threat-model.md) for the adversary-based privacy threat
+model (what can be *inferred*, as distinct from what can be *accessed*), and
 [SECURITY.md](../SECURITY.md) for the vulnerability-reporting surface.
 
 ## Why this document exists
@@ -51,7 +53,7 @@ issue.
 | Query/response lineage | **Not done** | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
 | Retention & destruction | **Partial** | Purge path implemented+validated ([#136](https://github.com/schuecl/nexus-rag/pull/136)); schedule proposed in [Retention and destruction](#retention-and-destruction), awaiting ratification ([#123](https://github.com/schuecl/nexus-rag/issues/123)) |
 | Query confidentiality | **Partial** | See [Query confidentiality](#query-confidentiality-and-user-privacy) |
-| Privacy threat model | **Not done** | [#127](https://github.com/schuecl/nexus-rag/issues/127) |
+| Privacy threat model | **Implemented (docs)** | [threat-model.md](threat-model.md) ([#127](https://github.com/schuecl/nexus-rag/issues/127)) |
 | Observability of quality | **Partial** | FR-30 harness exists; not tracked over time ([#71](https://github.com/schuecl/nexus-rag/issues/71)) |
 | SIEM export | **Not done** | [#73](https://github.com/schuecl/nexus-rag/issues/73) |
 | Ontology / taxonomy management | **Out of scope** | Graph-RAG concern; see [Non-goals](#non-goals) |
@@ -266,13 +268,17 @@ reader of the vector store gets the corpus in cleartext because the chunk
 payload carries `text` alongside the vector.
 
 Authorization (FR-26) does not address either: it governs what is returned,
-not what the act of returning reveals. There is no articulated privacy threat
-model here yet, and two concrete leaks are already known — similarity scores
-are returned to callers, and every classification level shares one Qdrant
-collection. Tracked as
-[#127](https://github.com/schuecl/nexus-rag/issues/127), which maps this
-system against the OWASP RAG Security guidance and records which of those
-controls are already correct.
+not what the act of returning reveals. [`threat-model.md`](threat-model.md)
+is the articulated answer to this question — an adversary taxonomy (observer
+vs. insider, unaware vs. aware) crossed against three attack surfaces
+(membership inference, retrieved-content leakage, poisoning), naming which
+control answers which cell and which residuals are accepted rather than
+closed. The two leaks originally found here are both resolved: similarity
+scores are no longer returned to callers, and classification levels no
+longer share one Qdrant collection ([#229](https://github.com/schuecl/nexus-rag/issues/229)).
+Written for [#127](https://github.com/schuecl/nexus-rag/issues/127), which
+maps this system against the OWASP RAG Security guidance and records which
+of those controls are already correct.
 
 ## Lifecycle
 
@@ -458,7 +464,8 @@ Stated so their absence reads as a decision rather than an oversight:
 | Embedding-model provenance; no re-embedding path | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
 | Raw query text readable at the DB layer | [#125](https://github.com/schuecl/nexus-rag/issues/125) |
-| No privacy threat model; scores enable membership inference | [#127](https://github.com/schuecl/nexus-rag/issues/127) |
+| Retrieved content persists in the chat plane beyond purge's reach | [#286](https://github.com/schuecl/nexus-rag/issues/286) |
+| No detection/alerting on reconnaissance-shaped query patterns (metrics/SIEM substrate exists, no detection logic yet) | [threat-model.md](threat-model.md) |
 | Retrieval quality not tracked over time | [#71](https://github.com/schuecl/nexus-rag/issues/71) |
 | No runtime metrics or latency instrumentation | [#72](https://github.com/schuecl/nexus-rag/issues/72) |
 | NFR-2 SIEM export unimplemented | [#73](https://github.com/schuecl/nexus-rag/issues/73) |

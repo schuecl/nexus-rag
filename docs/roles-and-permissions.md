@@ -2,8 +2,10 @@
 
 Who can do what, per component, and where the code enforces it — plus an honest
 gap analysis of where least privilege currently stops (§7). Companion to
-[`governance.md`](governance.md), which covers lifecycle/curation/retention;
-this document covers **authorization and privacy** specifically.
+[`governance.md`](governance.md), which covers lifecycle/curation/retention,
+and [`threat-model.md`](threat-model.md), which covers what an adversary can
+*infer* rather than who is *authorized*; this document covers **authorization
+and privacy** specifically.
 
 Convention note: every cell in the matrices below names its enforcement point.
 If a claim here has no code reference, treat it as a documentation bug. This
@@ -105,9 +107,11 @@ users** and who can see that.
   outcome, applied filter, result count, and `query_chars` — not the question.
   Denied queries are the sharpest case (they record what someone tried to
   reach); they carry no text either.
-- **Similarity scores are never returned** (#127) — score access enables
-  membership inference against documents the caller cannot read. Latencies go
-  to the audit log, not the response, for the same reason.
+- **Similarity scores are never returned** (#127, see
+  [`threat-model.md`](threat-model.md#1-document-level-membership-inference)) —
+  score access enables membership inference against documents the caller
+  cannot read. Latencies go to the audit log, not the response, for the same
+  reason.
 - **Existence oracles closed** (#215): a curator outside the owning org gets
   404, indistinguishable from "no such document"; uploader lookups behave the
   same for foreign documents.
