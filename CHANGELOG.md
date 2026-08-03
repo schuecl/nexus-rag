@@ -36,6 +36,16 @@ changed in the running system, with the issue/PR reference for the trail.
   `calibrate_tagging_advisory.py` reports a `pii_regex`/`pii_llm`
   "acted on vs. approved unchanged" rate for each, alongside the
   classification-tag suggesters it already covered (#345).
+- Pyroscope, deployed in the opt-in `observability` Compose profile
+  (`docker compose --profile observability up -d`), the last piece of
+  #133's stack alongside Prometheus/Loki/Tempo/Alertmanager — wired as a
+  Grafana datasource, empty until the services push it data (#133).
+- All four services (`ingestion-api`, `ingestion-worker`,
+  `orchestration-mcp`, `reranker-service`) now push continuous, CPU-only
+  profiles to Pyroscope when `PYROSCOPE_SERVER_ADDRESS` is set — off by
+  default, same posture as tracing. `service_name` matches the
+  `service.name` tracing already uses, so Grafana can jump from a trace
+  straight to the flame graph for the same request (#349).
 
 ### Fixed
 
