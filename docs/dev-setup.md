@@ -789,10 +789,26 @@ the docs, not a silent "it works" — flag it if you find one.
   could ignore, not a code-enforced guarantee the way Phase 1's redacted `context`
   field is — `kind`/`rationale` must be treated as exactly as attacker/model-controlled
   as the LLM classification suggestion's `rationale` (textContent only, never
-  innerHTML, in `curate.html`). **Tested against mocks only**
+  innerHTML, in `curate.html`). Unit-level behavior is **tested against mocks**
   (`services/ingestion-worker/tests/test_pii_llm_advisory.py`, respx-mocked Ollama;
   `test_pii_llm_advisory_processing.py`, worker glue against an in-memory SQLite
-  session) — not yet exercised against a live `docker compose up` stack or a browser.
+  session); the enabled path is **validated against a live environment**: real
+  `docker compose up` (`PII_LLM_MODEL=qwen2.5:3b-instruct`, the model already pulled
+  for `GENERATION_MODEL`/`CLASSIFICATION_MODEL`), a document worded with a spelled-out
+  Social Security number in prose (no dashed `###-##-####` form, so Phase 1's regex
+  scan stayed clean) uploaded through the real `POST /documents` API tagged
+  `CUI`/`memo`, confirmed end to end: the worker's real Ollama call returned
+  `{"kind": "spelled-out SSN", "rationale": "Social Security number provided in a
+  written description rather than in a labeled field"}` — describing the finding
+  without repeating the actual digits — `GET /curate/queue` surfaced it under
+  `pii_advisory.llm_findings` alongside Phase 1's empty `findings` in the same
+  advisory object, `nexus_rag_ingestion_worker_pii_llm_findings_total{outcome=
+  "findings"}` incremented on `/metrics`, and approving the document preserved the
+  finding in the persisted `tagging_advisory`. (The seeded sample corpus itself
+  triggered 3 genuine findings / 5 clean runs on the same metric, purely as a side
+  effect of `PII_LLM_MODEL` being enabled during `seed-sample-data` — not a claim
+  about those documents' real content, just confirmation the pass runs unattended
+  across a realistic batch without error.)
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk
