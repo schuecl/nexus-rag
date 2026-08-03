@@ -441,6 +441,28 @@ async def submit_documents_batch(
                 )
             )
             continue
+        except Exception:
+            # An infra-level failure (object store, DB) partway through one
+            # file must not take the whole response down with it -- earlier
+            # files in this loop are already committed and queued, and an
+            # uncaught exception here would return a bare 500 that loses
+            # every one of those results, contradicting this endpoint's own
+            # "one file's rejection doesn't fail the rest of the batch"
+            # contract. Mirrors the queue-publish failure handling above:
+            # log the real error, don't leak internals to the client.
+            session.rollback()
+            logger.exception(
+                "unexpected error ingesting %r as part of a batch submission",
+                file.filename,
+            )
+            results.append(
+                BatchUploadItem(
+                    filename=file.filename or "unnamed",
+                    accepted=False,
+                    detail="an unexpected error occurred while processing this file",
+                )
+            )
+            continue
         # Issue #356 UI bug: pydantic passes an already-typed instance through
         # by reference rather than copying it, so without model_copy() every
         # earlier file's `doc` here still points at the live ORM object --

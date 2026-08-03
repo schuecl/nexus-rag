@@ -200,6 +200,48 @@ class TestBatchPartialFailure:
         assert by_name["good.txt"].accepted
         assert not by_name["bad.exe"].accepted
 
+    async def test_infra_failure_on_one_file_does_not_lose_earlier_results(
+        self, session, monkeypatch
+    ):
+        # Regression test: only HTTPException (empty file, unsupported type)
+        # was isolated per-file. An infra-level failure -- object store,
+        # here -- used to propagate uncaught out of submit_documents_batch,
+        # returning a bare 500 and losing the response for files already
+        # committed and queued earlier in the same loop.
+        class _FlakyStore:
+            def __init__(self):
+                self.calls = 0
+                self.puts: dict[str, bytes] = {}
+
+            def put(self, key, content):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("object store unreachable (simulated)")
+                self.puts[key] = content
+
+        flaky = _FlakyStore()
+        monkeypatch.setattr(upload, "get_object_store", lambda: flaky)
+
+        files = [
+            _file(b"first document body", "a.txt"),
+            _file(b"second document body", "b.txt"),
+            _file(b"third document body", "c.txt"),
+        ]
+
+        results = await _submit_batch(session, files)
+
+        assert len(results) == 3
+        by_name = {item.filename: item for item in results}
+        assert by_name["a.txt"].accepted
+        assert by_name["c.txt"].accepted
+        assert not by_name["b.txt"].accepted
+        assert by_name["b.txt"].document is None
+
+        # a.txt was committed before the failure -- it must still be
+        # reported, not silently dropped along with the exception.
+        assert session.get(Document, by_name["a.txt"].document.id) is not None
+        assert session.get(Document, by_name["c.txt"].document.id) is not None
+
 
 class TestBatchSharedMetadataValidation:
     async def test_metadata_rejected_by_claims_fails_the_whole_batch_before_any_file_is_touched(
