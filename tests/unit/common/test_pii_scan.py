@@ -70,7 +70,12 @@ class TestBankRouting:
 
 class TestApiKeysAndTokens:
     def test_aws_access_key_is_flagged(self):
-        adv = detect_pii_risks("Key: AKIAABCDEFGHIJKLMNOP in config.")
+        # Built via concatenation, not a literal 20-char AKIA-shaped string --
+        # secret-scanners (gitleaks, GitHub push protection) match the same
+        # public key-ID shape our own detector does and would otherwise flag
+        # this fixture as a real leaked credential.
+        fake_key = "AKIA" + "A" * 16
+        adv = detect_pii_risks(f"Key: {fake_key} in config.")
         assert [f.kind for f in adv.findings] == ["api_key"]
         assert "AWS" in adv.findings[0].detail
 
