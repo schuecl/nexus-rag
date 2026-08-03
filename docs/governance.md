@@ -434,11 +434,14 @@ Stated so their absence reads as a decision rather than an oversight:
   data; the governing regime is classification/releasability, not
   data-subject rights, and nothing in this system redacts, deletes-on-request,
   or otherwise treats a document differently because it contains personal
-  data as such. **Narrower exception (issue #342):** a flag-only,
-  curator-facing regex scan for common sensitive-data patterns (SSN, credit
-  card, bank routing, API keys/secrets) was adopted as a spillage-adjacent
-  signal in the same family as the marking-mismatch and hidden-instruction
-  advisories (`common/pii_scan.py`) — it never redacts, blocks, or decides
+  data as such. **Narrower exception (issue #342, extended by #343):** a
+  flag-only, curator-facing regex scan for common sensitive-data patterns
+  (SSN, credit card, bank routing, API keys/secrets) was adopted as a
+  spillage-adjacent signal in the same family as the marking-mismatch and
+  hidden-instruction advisories (`common/pii_scan.py`), plus an opt-in
+  LLM-assisted follow-on pass (`app/pii_llm_advisory.py`, off by default)
+  that looks for context-dependent sensitive personal/financial information
+  the regex pass can't catch — it never redacts, blocks, or decides
   anything, only surfaces a finding for the human curator who already
   decides Classification/Releasability to weigh. This is decision support
   for the existing classification/releasability gate, not a second,

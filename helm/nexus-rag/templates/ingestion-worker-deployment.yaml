@@ -140,6 +140,14 @@ spec:
             - name: CLASSIFICATION_MODEL
               value: {{ .Values.ingestionWorker.classificationModel | quote }}
             {{- end }}
+            {{- if .Values.ingestionWorker.piiLlmModel }}
+            # Issue #343 (Phase 2 of #342): opt-in LLM-assisted PII/
+            # sensitive-info advisory at ingestion. Absent (not just empty)
+            # when unset, matching the code's empty-means-disabled default
+            # in app/pii_llm_advisory.py.
+            - name: PII_LLM_MODEL
+              value: {{ .Values.ingestionWorker.piiLlmModel | quote }}
+            {{- end }}
             # FR-4: chunking target size (words) and overlap ratio.
             - name: CHUNK_TARGET_WORDS
               value: {{ .Values.ingestionWorker.chunkTargetWords | quote }}

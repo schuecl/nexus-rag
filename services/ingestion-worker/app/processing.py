@@ -34,6 +34,7 @@ from app.chunking import chunk_sections
 from app.classification_suggestion import suggest_classification, suggestion_enabled
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
+from app.pii_llm_advisory import pii_llm_enabled, suggest_pii_llm_findings
 from common.content_advisory import detect_content_risks
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
@@ -527,6 +528,62 @@ async def _apply_llm_suggestion_advisory(
         )
 
 
+async def _apply_pii_llm_advisory(
+    session: Session,
+    doc: Document,
+    sections: list[ParsedSection],
+) -> None:
+    """Issue #343, Phase 2 of #342: ask the in-cluster LLM to look for
+    context-dependent sensitive personal/financial information Phase 1's
+    regex pass can't catch (spelled-out SSNs, foreign ID formats, freeform
+    PII in prose). Merged into the same `doc.tagging_advisory` column/UI
+    surface the rest of this family uses, under `pii_advisory.llm_findings`
+    -- a sibling of Phase 1's `pii_advisory.findings`, not a fourth advisory
+    surface.
+
+    A no-op (not even a model call) unless PII_LLM_MODEL is set -- see
+    app/pii_llm_advisory.py. Same posture as `_apply_llm_suggestion_advisory`:
+    advisory only, never redacts/decides/gates anything, and fail-safe by
+    construction -- any error, including the model being unreachable, is
+    swallowed and logged, leaving whatever `tagging_advisory` already held
+    untouched.
+    """
+    if not pii_llm_enabled():
+        return
+    try:
+        text = "\n".join(s.text for s in sections)
+        findings = await suggest_pii_llm_findings(text)
+        if findings is None:
+            metrics.pii_llm_findings_total.labels(outcome="unavailable").inc()
+            return
+
+        pii_advisory = dict((doc.tagging_advisory or {}).get("pii_advisory") or {})
+        pii_advisory["llm_findings"] = [f.to_dict() for f in findings]
+        doc.tagging_advisory = {**(doc.tagging_advisory or {}), "pii_advisory": pii_advisory}
+        metrics.pii_llm_findings_total.labels(outcome="findings" if findings else "clean").inc()
+        if findings:
+            logger.info(
+                "document %s PII LLM advisory: %d finding(s)",
+                doc.id,
+                len(findings),
+            )
+            session.add(
+                AuditLogEntry(
+                    actor_sub=doc.uploader_sub,
+                    actor_username=doc.uploader_username,
+                    action="document.tagging_advisory",
+                    target_id=str(doc.id),
+                    detail={"pii_advisory": {"llm_findings": pii_advisory["llm_findings"]}},
+                )
+            )
+    except Exception:
+        metrics.pii_llm_findings_total.labels(outcome="error").inc()
+        logger.exception(
+            "PII LLM advisory failed for document %s; continuing ingestion without it",
+            doc.id,
+        )
+
+
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
@@ -784,6 +841,24 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                     span.set_attribute(
                         "document.llm_suggestion_present",
                         bool((doc.tagging_advisory or {}).get("llm_suggestion")),
+                    )
+
+            # Issue #343 (Phase 2 of #342): same "outside PROCESSING_TIMEOUT_SECONDS"
+            # rationale as the classification suggestion above -- an LLM generate
+            # call is a slower, external-service-dependent op, and its own
+            # PII_LLM_REQUEST_TIMEOUT_SECONDS already caps it. A no-op (no await,
+            # no model call) unless PII_LLM_MODEL is set.
+            if pii_llm_enabled():
+                with (
+                    metrics.stage_seconds.labels(stage="pii_llm_advisory").time(),
+                    tracer.start_as_current_span("pii_llm_advisory") as span,
+                ):
+                    await _apply_pii_llm_advisory(session, doc, sections)
+                    span.set_attribute(
+                        "document.pii_llm_findings_present",
+                        bool(
+                            (doc.tagging_advisory or {}).get("pii_advisory", {}).get("llm_findings")
+                        ),
                     )
 
             doc.status = "embedded"

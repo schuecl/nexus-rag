@@ -773,6 +773,26 @@ the docs, not a silent "it works" — flag it if you find one.
   `services/ingestion-worker/tests/test_pii_advisory_processing.py` for the worker glue
   against an in-memory SQLite session) — not yet exercised against a live
   `docker compose up` stack or a browser.
+- **LLM-assisted PII/sensitive-info advisory (issue #343, Phase 2 of #342)** — the
+  deferred second layer #342 itself proposed: an opt-in pass (`PII_LLM_MODEL`, empty
+  by default) that asks a text-generation model on the stack's Ollama to look for
+  context-dependent sensitive personal/financial information the regex pass
+  structurally can't catch (a spelled-out or differently-formatted SSN, a non-US
+  national ID number, freeform personal/financial detail embedded in prose). Folded
+  into the same `document.tagging_advisory` JSON column and `/curate` advisory box
+  as a sibling of Phase 1's `pii_advisory.findings` — `pii_advisory.llm_findings` —
+  not a fourth advisory surface. Same fail-safe posture as every other suggester in
+  this family: any error, including an unreachable/misconfigured model, is swallowed
+  and logged (`nexus_rag_ingestion_worker_pii_llm_findings_total{outcome=...}`), never
+  blocking or delaying ingestion. The prompt asks the model not to repeat the
+  sensitive value itself in its answer, but that is a prompt instruction the model
+  could ignore, not a code-enforced guarantee the way Phase 1's redacted `context`
+  field is — `kind`/`rationale` must be treated as exactly as attacker/model-controlled
+  as the LLM classification suggestion's `rationale` (textContent only, never
+  innerHTML, in `curate.html`). **Tested against mocks only**
+  (`services/ingestion-worker/tests/test_pii_llm_advisory.py`, respx-mocked Ollama;
+  `test_pii_llm_advisory_processing.py`, worker glue against an in-memory SQLite
+  session) — not yet exercised against a live `docker compose up` stack or a browser.
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk

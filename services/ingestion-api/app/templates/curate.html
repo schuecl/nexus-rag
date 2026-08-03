@@ -167,6 +167,41 @@ function advisoryNode(doc) {
     });
   }
 
+  // Issue #343 (Phase 2 of #342): context-dependent sensitive-info findings
+  // from the in-cluster LLM pass (spelled-out SSNs, foreign ID formats,
+  // freeform PII in prose) that the deterministic regex scan above can't
+  // catch -- a sibling of `pii_advisory.findings` under `llm_findings`, not
+  // a fourth advisory surface. `kind`/`rationale` are model-generated text
+  // derived from uploaded document content, exactly as attacker-controlled
+  // as the LLM classification suggestion above -- textContent only, never
+  // innerHTML. The model is instructed not to repeat the sensitive value
+  // itself, but that is a prompt instruction, not a guarantee -- same
+  // "advisory only, never trusted to redact/decide/gate" posture as every
+  // other LLM signal on this page.
+  const piiLlmFindings = (adv.pii_advisory && adv.pii_advisory.llm_findings) || [];
+  let piiLlmFindingsNode = null;
+  if (piiLlmFindings.length) {
+    const llmKinds = [...new Set(piiLlmFindings.map((f) => f.kind))];
+    findings.push([
+      document.createTextNode(`${piiLlmFindings.length} LLM-flagged sensitive-info finding(s) (`),
+      el('strong', { text: llmKinds.join(', ') }),
+      document.createTextNode(') -- review before approving'),
+    ]);
+    piiLlmFindingsNode = el('span', {
+      className: 'hint',
+      children: [
+        'PII advisory (LLM): ',
+        ...piiLlmFindings.flatMap((f, i) => {
+          const parts = [
+            el('strong', { text: f.kind }),
+            document.createTextNode(f.rationale ? ` — ${f.rationale}` : ''),
+          ];
+          return i === piiLlmFindings.length - 1 ? parts : [...parts, el('br')];
+        }),
+      ],
+    });
+  }
+
   // Issue #306 gap 3: distinct from `findings` above -- this means some of the
   // document's content (a scanned page OCR couldn't recover) was never
   // checked for markings at all, not that it was checked and found clean.
@@ -198,6 +233,9 @@ function advisoryNode(doc) {
     }
     if (piiFindingsNode) {
       box.append(el('br'), piiFindingsNode);
+    }
+    if (piiLlmFindingsNode) {
+      box.append(el('br'), piiLlmFindingsNode);
     }
   }
   if (unscanned) {

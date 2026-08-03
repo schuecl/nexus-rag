@@ -508,6 +508,13 @@ ingestionWorker:
   # calls). Must be provisioned on that Ollama instance separately, same
   # caveat as visionModel above.
   classificationModel: ""
+  # Issue #343 (Phase 2 of #342): model for the LLM-assisted PII/
+  # sensitive-info advisory pass at ingestion, served by the same Ollama
+  # instance as embeddings/captioning/classification. Empty disables the
+  # feature entirely (no env var injected, no extra LLM calls). Must be
+  # provisioned on that Ollama instance separately, same caveat as
+  # visionModel/classificationModel above.
+  piiLlmModel: ""
   service:
     port: 8004
   resources:

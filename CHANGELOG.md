@@ -23,6 +23,13 @@ changed in the running system, with the issue/PR reference for the trail.
   curation review page alongside the existing marking-mismatch/
   hidden-instruction advisories. Flag-only — never redacts, blocks, or
   decides; a curator still makes the call (#342).
+- LLM-assisted follow-on pass for the sensitive-data-pattern advisory above:
+  off by default (`PII_LLM_MODEL`), asks the in-cluster model to flag
+  context-dependent sensitive personal/financial information the regex
+  scan can't catch (a spelled-out SSN, a foreign national ID, freeform
+  PII in prose), surfaced alongside the regex findings on the curation
+  review page. Same flag-only posture as #342 — never redacts, blocks, or
+  decides (#343).
 
 ### Fixed
 

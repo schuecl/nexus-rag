@@ -56,6 +56,14 @@ llm_suggestions_total = Counter(
     "LLM zero-shot classification suggestion attempts, by outcome.",
     ["outcome"],
 )
+# Issue #343 (Phase 2 of #342): the LLM-assisted PII/sensitive-info pass is
+# also degrade-on-failure (app/pii_llm_advisory.py) -- same visibility
+# rationale as llm_suggestions_total above.
+pii_llm_findings_total = Counter(
+    "nexus_rag_ingestion_worker_pii_llm_findings_total",
+    "LLM-assisted PII/sensitive-info advisory attempts, by outcome.",
+    ["outcome"],
+)
 delivery_attempts = Histogram(
     "nexus_rag_ingestion_worker_delivery_attempts",
     "JetStream delivery number observed by the worker.",

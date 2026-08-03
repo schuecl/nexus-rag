@@ -247,12 +247,16 @@ services:
       # suggestion is an extra per-document model call, so pulling its model
       # must be an explicit deployment decision, not a side effect of `up`.
       CLASSIFICATION_MODEL: ${CLASSIFICATION_MODEL:-}
+      # #343 (Phase 2 of #342): same opt-in reasoning as CLASSIFICATION_MODEL
+      # -- the LLM-assisted PII advisory is an extra per-document model call.
+      PII_LLM_MODEL: ${PII_LLM_MODEL:-}
     entrypoint: ["sh", "-c"]
     command:
       - |
         ollama pull "$$EMBEDDING_MODEL" && ollama pull "$$GENERATION_MODEL" \
           && { [ -z "$$VISION_MODEL" ] || ollama pull "$$VISION_MODEL"; } \
-          && { [ -z "$$CLASSIFICATION_MODEL" ] || ollama pull "$$CLASSIFICATION_MODEL"; }
+          && { [ -z "$$CLASSIFICATION_MODEL" ] || ollama pull "$$CLASSIFICATION_MODEL"; } \
+          && { [ -z "$$PII_LLM_MODEL" ] || ollama pull "$$PII_LLM_MODEL"; }
     restart: "no"
 
   reranker-service:
@@ -504,6 +508,10 @@ services:
       # empty-disables convention as VISION_MODEL. ollama-model-init pulls
       # this model when set.
       CLASSIFICATION_MODEL: ${CLASSIFICATION_MODEL:-}
+      # #343 (Phase 2 of #342): LLM-assisted PII/sensitive-info advisory,
+      # opt-in -- same empty-disables convention as CLASSIFICATION_MODEL.
+      # ollama-model-init pulls this model when set.
+      PII_LLM_MODEL: ${PII_LLM_MODEL:-}
       CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
       CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
       OBJECT_STORE_BACKEND: filesystem
