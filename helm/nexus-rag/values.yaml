@@ -402,25 +402,18 @@ ingestionApi:
     # MAX_UPLOAD_BYTES check (app/routes/upload.py) can only run after
     # Starlette has already consumed and spooled the whole request body, so
     # it bounds that service's memory, not bytes transferred or written to
-    # disk. Rendered as annotations rather than a typed field because the key
-    # is ingress-controller specific -- the default below is nginx's; for
-    # Traefik or HAProxy, replace it with that controller's equivalent.
-    # Keep the value at or above ingestionApi.maxUploadBytes, or the edge
-    # will reject uploads the application would have accepted.
+    # disk.
     #
-    # FR-34/issue #356: POST /documents/batch sends every file in the batch
-    # as one multipart request, so its aggregate body can be as large as
-    # maxBatchFiles x maxUploadBytes (25 x 50MB = ~1.25GB at the defaults
-    # above) -- this annotation was sized only for a single file and was not
-    # revisited when the batch endpoint was added. A batch of more than
-    # roughly one file's worth of bytes will be rejected at the edge with a
-    # generic 413 today. Raising this to cover the batch case is a real
-    # increase in the largest request body the ingress will buffer before
-    # any application-level validation runs -- size it deliberately for your
-    # environment (or lower ingestionApi.maxBatchFiles instead) rather than
-    # just multiplying blindly.
-    annotations:
-      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # nginx.ingress.kubernetes.io/proxy-body-size is deliberately *not* set
+    # here as a static value -- POST /documents/batch (FR-34/#356) sends
+    # every file in a batch as one multipart request, so the aggregate body
+    # can be as large as maxBatchFiles x maxUploadBytes, not just
+    # maxUploadBytes. The ingress template computes that product and injects
+    # it as the default; set it explicitly in this map only to override that
+    # computed value for your environment (e.g. a different ingress
+    # controller needs its own annotation key). See
+    # templates/ingestion-api-ingress.yaml.
+    annotations: {}
   # Browser OIDC login callback URL (ARCHITECTURE.md Section 4.4), passed
   # through as OIDC_REDIRECT_URI. Empty (default) derives it from
   # ingress.host above -- https if ingress.tls is set, http otherwise (see

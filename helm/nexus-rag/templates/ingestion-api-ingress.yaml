@@ -6,10 +6,21 @@ metadata:
   labels:
     {{- include "nexus-rag.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingestion-api
-  {{- with .Values.ingestionApi.ingress.annotations }}
+  {{- /*
+  Issue #356: a batch's whole multipart body lands in one request
+  (POST /documents/batch), so the aggregate body can be as large as
+  maxBatchFiles x maxUploadBytes -- computed here rather than left as a
+  static annotation so it can't drift from those two values the way the
+  single-file case already had (#107). An explicit
+  nginx.ingress.kubernetes.io/proxy-body-size in
+  ingestionApi.ingress.annotations still wins, for a deployer who wants a
+  different tradeoff for their environment.
+  */}}
+  {{- $bodyBytes := mul (.Values.ingestionApi.maxUploadBytes | int64) (.Values.ingestionApi.maxBatchFiles | int64) }}
+  {{- $defaultAnnotations := dict "nginx.ingress.kubernetes.io/proxy-body-size" (toString $bodyBytes) }}
+  {{- $annotations := merge (deepCopy .Values.ingestionApi.ingress.annotations) $defaultAnnotations }}
   annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- toYaml $annotations | nindent 4 }}
 spec:
   {{- with .Values.ingestionApi.ingress.className }}
   ingressClassName: {{ . }}
