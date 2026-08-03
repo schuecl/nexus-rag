@@ -201,6 +201,21 @@ Implementation notes:
 - **Qdrant credentials:** `ingestion-worker` now holds the full read/write Qdrant key
   (it's the one that calls `ensure_collection`/`upsert_chunks`); `ingestion-api` keeps
   its own full key too, since curation (§4.2) still updates/deletes points directly.
+- **Batch submission (FR-34, issue #356):** `POST /documents/batch` accepts N files
+  sharing one Classification/Releasability/Access-scope/Source-Originator/Doc-type
+  payload, validated against the caller's claims (FR-18) exactly once rather than per
+  file. Each file then runs the identical sequence above independently (its own object-
+  store write, its own `Document` row, its own JetStream publish, its own curator
+  review) through the same `_ingest_one_file` helper `POST /documents` uses, so the two
+  paths can't drift on what "submitted" means. A per-file failure — bad type, empty,
+  over the per-file size limit, or an infra-level error (object store, DB) — is reported
+  against that file only and does not fail the rest of the batch; files already
+  committed before the failure keep their result in the response. Supersession
+  (`supersedes_document_id`) stays on the single-file endpoint, since it's inherently
+  one document replacing one other. The endpoint's own aggregate request body (every
+  file in one multipart request) is bounded by `MAX_UPLOAD_BYTES x MAX_BATCH_FILES`, not
+  `MAX_UPLOAD_BYTES` alone — see the ingress `proxy-body-size` note in
+  `helm/nexus-rag/values.yaml` and the tmpfs note in `docs/dev-setup.md`.
 
 ### 4.2 Curation (FR-10..FR-16)
 

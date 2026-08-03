@@ -18,11 +18,13 @@ claims through one shared library, never trusted from the client.
 
 ## What it does
 
-- **Ingestion (FR-1..FR-9):** upload UI for PDF/DOCX/PPTX/XLSX/TXT/MD/HTML with mandatory,
-  server-side-enforced Classification/Releasability/Access-scope tagging; structure-aware
-  parsing and chunking; embedding via a self-hosted model; and durable async processing
-  with real `queued → processing → embedded → pending_review` progress. Corrupt,
-  password-protected, oversized, and zip-bomb-shaped files are rejected.
+- **Ingestion (FR-1..FR-9, FR-34):** upload UI for PDF/DOCX/PPTX/XLSX/TXT/MD/HTML with
+  mandatory, server-side-enforced Classification/Releasability/Access-scope tagging;
+  structure-aware parsing and chunking; embedding via a self-hosted model; and durable
+  async processing with real `queued → processing → embedded → pending_review` progress.
+  Corrupt, password-protected, oversized, and zip-bomb-shaped files are rejected.
+  Selecting more than one file submits them as a batch sharing one set of tags, each
+  still stored/embedded/reviewed independently (FR-34).
 - **Curation (FR-10..FR-16):** every submission stays excluded from retrieval until a
   curator approves it — scoped to the org(s) they hold curator authority for and capped by
   their own clearance *and* releasability. Approve, reject-with-reason, or correct-the-tags,
@@ -141,7 +143,7 @@ nexus-rag/
 ## Project status
 
 The full ingest → tag → curate → retrieve flow works end to end against every functional
-requirement (FR-1..FR-32), with claims-based access control enforced server-side at every
+requirement (FR-1..FR-34), with claims-based access control enforced server-side at every
 stage through one shared library.
 
 Confidence is labeled honestly throughout the docs as *implemented*, *tested against mocks*,

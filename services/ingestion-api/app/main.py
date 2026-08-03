@@ -352,4 +352,9 @@ def kb_page(
     prose, not a document or an action."""
     if current_user is None:
         return _login_page(request, session)
-    return templates.TemplateResponse(request, "kb.html", _page_context(session, current_user))
+    # Issue #356: the ingest-role article references the batch file-count cap,
+    # same reasoning as upload_page below -- can't drift from what
+    # POST /documents/batch enforces.
+    ctx = _live_controlled_vocab(session)
+    ctx.update(_page_context(session, current_user))
+    return templates.TemplateResponse(request, "kb.html", ctx)

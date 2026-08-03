@@ -265,6 +265,20 @@ equivalent bound is the ingress `proxy-body-size` annotation (#107) — Compose
 has no proxy in front of `ingestion-api`, so this is the closest available
 substitute, not a like-for-like replacement.
 
+**FR-34/#356's `POST /documents/batch` compounds this gap**: a batch sends every
+file as one multipart request, so the bytes the parser spools before any
+`MAX_UPLOAD_BYTES`/`MAX_BATCH_FILES` check runs scale with the whole batch, not
+one file. A batch whose combined size clears `size=64m` fails with a generic
+`400 "There was an error parsing the body"` rather than a clear per-file error
+-- reproduced locally with three 25MB files. The Helm chart's ingress template
+now sizes `proxy-body-size` as `maxBatchFiles x maxUploadBytes` for exactly
+this reason (`templates/ingestion-api-ingress.yaml`); Compose's `tmpfs` has no
+equivalent per-request scaling and is left at its single-file-sized `64m`,
+since bumping a RAM-backed dev mount to match the full batch ceiling
+(1.25GB at the chart's defaults) isn't worth the tradeoff for a local loop --
+keep batches modest in Compose, or raise `size=` yourself if you need to
+exercise a larger one.
+
 `cap_drop: ["ALL"]` also applies to Qdrant, NATS, and Ollama. Postgres and
 Keycloak keep their default capability set: both drop privileges from root at
 startup and need `CAP_CHOWN`/`SETUID`/`SETGID` to do it.
@@ -650,6 +664,32 @@ message triggers the tool — driving that specific path hit a separate LibreCha
 tracked as a follow-up rather than chased down inline. See the "What's stubbed vs working"
 list below and `REQUIREMENTS.md`'s P1 list.
 
+**FR-34/#356's `POST /documents/batch` was validated live against a real `docker compose
+up`** (curl, `alice-ingest` token, 2-3 file batches), which surfaced three real bugs the
+PR's own mocked/in-process test suite (`services/ingestion-api/tests/test_upload_batch.py`)
+did not catch:
+
+1. Every file but the last in a batch response serialized with `"document": {}`. Pydantic
+   passes an already-typed model instance through by reference rather than copying it, so
+   `BatchUploadItem.document` held the live SQLAlchemy-tracked `Document` -- each
+   subsequent file's `session.commit()` (`expire_on_commit`, the default) wiped the
+   earlier ones' loaded attributes. Existing tests accessed `item.document` as a plain
+   Python attribute, which transparently re-fetches through the still-open session and
+   never exercised the actual JSON-serialization path (`jsonable_encoder`) that FastAPI
+   uses for the real response. Fixed with `document.model_copy()`; the regression test
+   added for this asserts on `jsonable_encoder(results)` specifically so it can't recur
+   unnoticed. This is also *why* the reported UI symptom existed: the frontend's per-row
+   poll only starts when `document.id` is present.
+2. The upload page's batch refactor deleted the blanket form `input`/`change` listener
+   that drove the readiness checklist, without a replacement -- classification, access
+   scope, and source-originator/doc-type stopped updating live. Restored.
+3. Only `HTTPException` (empty file, unsupported type) was isolated per-file in the batch
+   loop. An object-store or DB failure partway through one file propagated uncaught,
+   returning a bare 500 that silently dropped every already-committed, already-queued
+   file's result from the response -- reproduced with a flaky object-store stub that fails
+   on the second of three files. Now isolated the same way validation failures already
+   were.
+
 ## What's stubbed vs working
 
 **Status-label convention (P1, REQUIREMENTS.md Section 11):** a bare "works" claim conflates
@@ -964,7 +1004,11 @@ the docs, not a silent "it works" — flag it if you find one.
   the *compressed* upload) files land here instead of a synchronous 4xx like before this
   change. `MAX_UPLOAD_BYTES` itself is env-configurable (FR-9's "configurable size
   limit"), default 50MB -- see `.env.example`/`docker-compose.yml` here,
-  `ingestionApi.maxUploadBytes` in the Helm chart. `GET /documents/{id}` (scoped to the
+  `ingestionApi.maxUploadBytes` in the Helm chart. `POST /documents/batch` (FR-34/#356)
+  shares the same per-file `MAX_UPLOAD_BYTES` limit and adds its own `MAX_BATCH_FILES`
+  file-count cap (default 25, `ingestionApi.maxBatchFiles` in the chart) -- see the
+  tmpfs/ingress note above for the aggregate-body-size interaction between the two.
+  `GET /documents/{id}` (scoped to the
   uploader) polls current status; the ingestion UI polls it automatically after upload.
   A crash or restart of `ingestion-worker` mid-processing does not strand the document:
   `process_document` only acks the JetStream message on a terminal outcome (success or

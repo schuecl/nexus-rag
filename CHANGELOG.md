@@ -15,6 +15,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Added
+
+- Bulk document upload: the ingestion UI and `POST /documents/batch` accept
+  multiple files sharing one Classification/Releasability/Access-scope/
+  Source-Originator/Doc-type payload, validated once against the submitter's
+  claims rather than per file. Each file is still stored, embedded, and
+  curator-reviewed independently, so one file's rejection doesn't fail the
+  rest of the batch -- including an infra-level failure (object store, DB)
+  partway through, not just a bad file type or empty file. `MAX_BATCH_FILES`
+  (default 25) is configurable the same way `MAX_UPLOAD_BYTES` already was
+  (`ingestionApi.maxBatchFiles` in the Helm chart). The chart's ingress now
+  sizes `proxy-body-size` as `maxBatchFiles x maxUploadBytes` rather than a
+  static single-file value, since a batch's whole multipart body lands in
+  one request (FR-34, #356).
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

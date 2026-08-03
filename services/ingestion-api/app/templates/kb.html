@@ -53,13 +53,18 @@
 
   <h3>What this role can do</h3>
   <ul class="kb-list">
-    <li>Upload PDF, DOCX, PPTX, XLSX, TXT/Markdown, or HTML, up to 50&nbsp;MB.</li>
+    <li>Upload PDF, DOCX, PPTX, XLSX, TXT/Markdown, or HTML, up to 50&nbsp;MB per file.</li>
+    <li>Select more than one file to submit them as a batch sharing one set of tags — up
+      to {{ max_batch_files }} files at once. Each file is still stored, embedded, and
+      reviewed independently, so one bad file in a batch doesn't block the rest.</li>
     <li>Tag Classification, Releasability, and Access scope yourself — the choices offered
       are already constrained to what your own clearance authorizes; the UI won't even
       show you a level above your clearance.</li>
     <li>Track your own submissions and get notified of the curator's decision, including the
       reason if rejected.</li>
-    <li>Supersede an existing approved document instead of creating a duplicate.</li>
+    <li>Supersede an existing approved document instead of creating a duplicate — a
+      single-file submission only, since supersession is one document replacing one
+      other.</li>
   </ul>
 
   <h3>Walkthrough</h3>
@@ -68,7 +73,8 @@
       <span>1</span>
       <div>
         <strong>Open <a href="/">Upload</a></strong>
-        <small>Drag a file onto the drop zone, or browse for it from your device.</small>
+        <small>Drag one or more files onto the drop zone, or browse for them from your
+          device. Selecting more than one submits them as a batch sharing the tags below.</small>
       </div>
     </li>
     <li>
@@ -98,16 +104,18 @@
         <strong>Optional: link a supersession</strong>
         <small>Paste an existing approved document's ID in "Supersedes document" to submit
           this as a new version. Checked at approval time against both your own
-          authority and the prior document's.</small>
+          authority and the prior document's. Not available when more than one file is
+          selected.</small>
       </div>
     </li>
     <li>
       <span>5</span>
       <div>
         <strong>Submit</strong>
-        <small>Accepted immediately into processing — check the status badge on the Upload
-          page or watch <a href="/notifications">Notifications</a> for the curator's
-          decision.</small>
+        <small>A single file is accepted immediately into processing — check the status
+          badge on the Upload page or watch <a href="/notifications">Notifications</a> for
+          the curator's decision. A batch shows each file's own accepted/rejected outcome
+          and status as it moves through processing.</small>
       </div>
     </li>
   </ol>
@@ -118,7 +126,9 @@
       <strong>Not retrievable yet</strong>
       <p>A submitted document is parsed, chunked, and embedded right away, but stays
         invisible to search until a curator in your org approves it — that's the
-        control against a mis-tagged document ever reaching a query.</p>
+        control against a mis-tagged document ever reaching a query. In a batch, each
+        file goes through this independently: shared tags are a submission-time
+        convenience, never a shared curation decision.</p>
     </div>
   </div>
 </article>
