@@ -213,7 +213,7 @@ sequenceDiagram
 
     C->>I: GET /curate (queue, scoped to curatable orgs)
     I->>PG: select Document where status=pending_review, org in curatable_orgs
-    I-->>C: queue rows, inline correction fields
+    I-->>C: queue rows, inline correction fields,<br/>tagging_advisory box (see §4.6)
     C->>I: POST /curate/{id}/approve (optionally corrected tags)
     I->>I: re-check claims against (possibly corrected) tags — cap by clearance & releasability
     I->>Q: update chunk payload (status=approved, corrected tags if any)
@@ -276,6 +276,14 @@ The access filter (`status=approved` + `classification` at-or-below clearance +
 `releasability` match + `access_scope` match) is built entirely server-side from the
 verified token — never from anything the client/LibreChat supplies — which is what makes
 FR-26 non-bypassable.
+
+**Issue #272:** the audited `applied_filter` reports both `collections_eligible` (every
+per-classification Qdrant collection §3's collection split says the caller's clearance
+*could* resolve to) and `collections_queried` (the subset `hybrid_query` actually fanned
+out over, skipping any level with no `approved` documents yet). Reporting only the former,
+as the audit entry did before #272, overstated what a query actually searched — the one
+place that overstatement is dangerous, since FR-31 audit evidence is what an operator
+reconstructs a retrieval decision from after the fact.
 
 `orchestration-mcp` also exposes this same logic as a plain REST endpoint,
 `POST /debug/rag_search`, for curl-based testing without an MCP client (§4.4's ingestion
@@ -405,6 +413,63 @@ authority over the old document specifically, not just the new one) before any o
 runs. That's what guarantees there's never a window where neither version is retrievable:
 worst case, both are briefly retrievable at once, which REQUIREMENTS.md's NFR-13 calls out
 as the acceptable, preferable outcome over the alternative.
+
+### 4.6 Tagging advisory pipeline (issue #138 family)
+
+Curation (§4.2) is a human decision, but the human doesn't decide blind: `ingestion-worker`
+runs a family of advisory suggesters against a document's own parsed text and its own
+computed embeddings while it's still `processing`, folding every finding into one JSON
+column, `Document.tagging_advisory`, that `/curate`'s queue page renders as an advisory box
+next to the approve/reject controls. Every suggester shares the same posture — advisory
+only (never mutates a tag, never blocks, never delays ingestion), fail-safe (any error,
+including an unreachable model or vector store, is swallowed and logged, leaving whatever
+`tagging_advisory` already held) — because FR-11's spillage control stays the curator's
+call, not a signal's.
+
+```mermaid
+flowchart TD
+    text["Document's own parsed text<br/>(app/parsing.py output)"]
+    vec["Document's own chunk embeddings<br/>(already computed for storage)"]
+
+    text --> s1["Marking-mismatch (#138 Phase 1)<br/>always on -- regex-detected classification/<br/>caveat markings vs. assigned tags"]
+    text --> s2["Hidden-instruction / content risk (#284)<br/>always on -- invisible Unicode,<br/>prompt-injection trigger phrases"]
+    text --> s3["PII regex scan (#342 Phase 1)<br/>always on -- SSN, credit card, bank routing,<br/>API keys, private-key blocks;<br/>matched span redacted before storage"]
+    text -.->|opt-in, PII_LLM_MODEL| s4["PII LLM-assisted pass (#343 Phase 2)<br/>context-dependent PII a regex can't catch"]
+    text -.->|opt-in, CLASSIFICATION_MODEL| s5["LLM classification suggestion (#308 Phase 3)<br/>zero-shot vs. configured vocabulary"]
+    vec --> s6["Precedent kNN (#307 Phase 2)<br/>always on -- nearest approved documents'<br/>classification/releasability"]
+
+    s1 & s2 & s3 & s4 & s5 & s6 --> col[("Document.tagging_advisory<br/>(JSON column, merged by key)")]
+    col --> ui["/curate queue + detail pages<br/>advisory box, per-finding"]
+    ui --> dec{"curator decision"}
+    dec -->|approve / reject / correct| audit["audit_log entry<br/>tagging_advisory outcome embedded (#345):<br/>flagged vs. acted-on, per suggester"]
+    audit --> calib["scripts/calibrate_tagging_advisory.py<br/>(profile: calibration)<br/>nexus_rag_audit_reporting role,<br/>SELECT-only on audit_log"]
+    calib --> report["per-suggester agreement rate<br/>(marking_mismatch / precedent /<br/>llm_classification / pii_regex / pii_llm)"]
+```
+
+What to note:
+
+- **Two enforcement-vs-advisory boundaries stay separate on purpose.** The mandatory
+  claims-based checks in §5's table (what a user may tag, what a curator may approve, what
+  a query may retrieve) are hard gates; everything in this section is a hint layered on top
+  of, never instead of, that human curation step (FR-11/FR-12 unchanged).
+- **PII findings never echo the sensitive value.** #342's regex pass records a fixed label
+  naming the kind of pattern and a context excerpt with the matched span replaced by
+  `[REDACTED]`; #343's LLM pass is prompted not to repeat the value either, but — unlike
+  Phase 1's code-enforced redaction — that's a prompt instruction the model could ignore,
+  so its `kind`/`rationale` fields are treated as untrusted (textContent-only rendering in
+  `curate.html`, same as the LLM classification suggestion's `rationale`).
+- **`calibrate_tagging_advisory.py` reads through a dedicated, SELECT-only-on-`audit_log`
+  role** (`nexus_rag_audit_reporting`) rather than any of the four services' own
+  credentials — NFR-2/NFR-3 keep every application role INSERT-only on `audit_log`, so
+  reading the curation trail back out has to be its own attributable identity, not a
+  services credential doing double duty.
+- **Reporting only, not a gate**: a curator override is not, by itself, proof a suggester
+  was wrong, so the calibration report has no CI-enforced accuracy floor by default
+  (`--min-agreement` is opt-in for a deployment that wants one).
+- **Confidence varies by phase** — see `docs/dev-setup.md`'s "What's stubbed vs working"
+  for the current, authoritative per-issue label; several phases (#308, #343, #345) have
+  been validated against a real `docker compose up` with a real Ollama call and a real
+  curator decision round-trip, others remain tested against mocks only.
 
 ## 5. Security model
 

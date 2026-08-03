@@ -9,10 +9,11 @@ diagram and the code disagree, the code wins and the diagram has a bug; please
 file it.
 
 Feature references: table extraction (#88), content-type tagging (#89),
-image captioning (#92), OCR (#241), and the durable queue hand-off (#164)
-are drawn as they exist on their branches/PRs at the time of writing — the
-per-feature issue numbers in node labels are the pointer to their exact
-status.
+image captioning (#92), OCR (#241), the durable queue hand-off (#164), the
+tagging-advisory family (#138/#284/#307/#308/#342/#343/#345), and continuous
+CPU profiling (#349) are drawn as they exist on their branches/PRs at the
+time of writing — the per-feature issue numbers in node labels are the
+pointer to their exact status.
 
 `ARCHITECTURE.md` remains the prose source of truth; this page is the visual
 companion.
@@ -56,6 +57,7 @@ flowchart LR
         graf["Grafana dashboards"]
         loki["Loki + Alloy (logs)"]
         tempo["Tempo + otel-collector (traces)"]
+        pyro["Pyroscope<br/>continuous CPU profiling (#349)"]
         bb["blackbox-exporter (probes)"]
     end
 
@@ -81,7 +83,9 @@ flowchart LR
     mcp -- "X-Reranker-Shared-Secret (#216)" --> rr
 
     prom -.-> rag
+    rag -. "continuous CPU profiles, opt-in<br/>PYROSCOPE_SERVER_ADDRESS (#349)" .-> pyro
     graf -.-> prom
+    graf -.-> pyro
 ```
 
 What to note:
@@ -102,6 +106,14 @@ What to note:
   `provision-metrics-view`, `lock-down-db-grants`, `eval-retrieval` under
   `--profile eval`) run to completion and exit; they are omitted above for
   legibility.
+- Tracing and continuous profiling share one off-by-default posture: both
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (traces, to `tempo`) and
+  `PYROSCOPE_SERVER_ADDRESS` (profiles, to `pyro`, #349) are unset by
+  default, so a deployment with no collector pays nothing either way. When
+  set, all four RAG-plane services push continuously for the life of the
+  process — not sampled/triggered — and share one `service_name`
+  (`nexus-rag-<service>`) across both signals, which is what lets Grafana
+  jump from a trace span to the matching flame graph.
 
 ---
 
@@ -171,6 +183,54 @@ What to note:
 - Superseding a document (FR-7): on approval of the new version, the new
   chunks flip to `approved` *before* the old version's chunks are deleted —
   never a window where neither version is retrievable.
+
+### 2.1 Tagging advisory pipeline (issue #138 family)
+
+While a document is still `processing`, the worker also runs a family of
+curator-facing advisory suggesters against the document's own parsed text
+and its own already-computed chunk embeddings — decision support layered on
+top of curation, never a substitute for it (FR-11/FR-12 stay a human call).
+
+```mermaid
+flowchart TD
+    text["parsed text<br/>(this document only)"]
+    vec["chunk embeddings<br/>(already computed for storage)"]
+
+    text --> s1["Marking-mismatch<br/>always on -- #138 Phase 1"]
+    text --> s2["Hidden-instruction / content risk<br/>always on -- #284"]
+    text --> s3["PII regex scan<br/>always on -- #342 Phase 1<br/>matched span redacted before storage"]
+    text -.->|"opt-in<br/>PII_LLM_MODEL"| s4["PII LLM-assisted pass<br/>#343 Phase 2"]
+    text -.->|"opt-in<br/>CLASSIFICATION_MODEL"| s5["LLM classification suggestion<br/>#308 Phase 3"]
+    vec --> s6["Precedent kNN over approved corpus<br/>always on -- #307 Phase 2"]
+
+    s1 & s2 & s3 & s4 & s5 & s6 --> col[("Document.tagging_advisory<br/>JSON column, merged by key")]
+    col --> ui["/curate advisory box<br/>(queue + list + detail pages)"]
+    ui --> dec{"curator: approve /<br/>reject / correct"}
+    dec --> audit["audit_log entry --<br/>advisory outcome embedded (#345)"]
+    audit --> calib["calibrate_tagging_advisory.py<br/>(profile: calibration)<br/>nexus_rag_audit_reporting role,<br/>SELECT-only on audit_log"]
+    calib --> report["per-suggester agreement rate:<br/>marking_mismatch / precedent /<br/>llm_classification / pii_regex / pii_llm"]
+```
+
+What to note:
+
+- Every suggester is **advisory only and fail-safe**: none mutates a tag,
+  blocks, or delays ingestion, and any error (including an unreachable
+  model or vector store) is swallowed, logged, and leaves whatever
+  `tagging_advisory` already held untouched.
+- PII findings never echo the sensitive value — #342's regex pass records a
+  fixed label plus a context excerpt with the matched span replaced by
+  `[REDACTED]`; #343's LLM pass is prompted the same way, but that's a
+  prompt instruction the model could ignore, not a code-enforced guarantee,
+  so its output is rendered `textContent`-only in `curate.html`, same as
+  the LLM classification suggestion's `rationale`.
+- `calibrate_tagging_advisory.py` reads `audit_log` through its own
+  SELECT-only role rather than any service's own credentials — NFR-2/NFR-3
+  keep every application role INSERT-only on that table.
+- Calibration is reporting only by default (`--min-agreement` is an opt-in
+  floor) — a curator override is not, by itself, proof a suggester was
+  wrong.
+- Confidence varies by phase; see `docs/dev-setup.md`'s "What's stubbed vs
+  working" for the current, authoritative per-issue label.
 
 ---
 
@@ -398,6 +458,7 @@ What to note:
   prompt-injection *mitigations*, not guarantees (REQUIREMENTS.md §11).
 - Encryption at rest relies on an encrypted StorageClass; PyKMIP integration
   was deferred.
-- Captioning (#92) and OCR (#241) reference their issues in the diagrams;
-  check those issues/PRs for merge status when reading this page at a
-  distance from its last update.
+- Captioning (#92), OCR (#241), the tagging-advisory family (#138/#284/#307/
+  #308/#342/#343/#345), and continuous profiling (#349) reference their
+  issues in the diagrams; check those issues/PRs for merge status when
+  reading this page at a distance from its last update.

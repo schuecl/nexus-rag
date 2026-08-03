@@ -192,8 +192,13 @@ would be worse, since it would look configured while delivering nowhere.
 Per CLAUDE.md's labelling:
 
 - **Validated against a live environment**: the Compose profile. Dashboards
-  render, trace correlation works, the service map populates, Pyroscope
-  reports ready and is reachable from Grafana (no profiles to show yet — #349).
+  render, trace correlation works, the service map populates, and Pyroscope
+  itself comes up and is reachable from Grafana as a datasource. **Not
+  independently re-confirmed live since #349 landed the actual profile
+  push** — that run predates #349; `setup_profiling()` itself is
+  unit-tested (`tests/unit/common/test_profiling.py`), but whether flame
+  graphs actually populate end to end for all four services against a real
+  Pyroscope instance has not yet been re-validated against a live stack.
 - **Implemented, configs validated against their upstream binaries**:
   `helm/observability`. `helm lint`/`helm template` render every component, the
   dashboards' datasource UIDs are asserted to match the generated provisioning

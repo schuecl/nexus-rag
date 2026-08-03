@@ -26,7 +26,10 @@ claims through one shared library, never trusted from the client.
 - **Curation (FR-10..FR-16):** every submission stays excluded from retrieval until a
   curator approves it — scoped to the org(s) they hold curator authority for and capped by
   their own clearance *and* releasability. Approve, reject-with-reason, or correct-the-tags,
-  all through the UI; every decision is audited and notifies the uploader.
+  all through the UI; every decision is audited and notifies the uploader. Curators also see
+  an advisory box (never a gate) surfacing marking-mismatch, precedent, hidden-instruction,
+  and PII/sensitive-data findings — some regex-based, some opt-in LLM-assisted — next to the
+  approve/reject controls (see [ARCHITECTURE.md §4.6](ARCHITECTURE.md#46-tagging-advisory-pipeline-issue-138-family)).
 - **Metadata & tagging (FR-17..FR-23):** Classification and Releasability are single values
   from admin-configurable controlled lists; Access-scope is an independent
   org/group/user/`ALL_AUTHENTICATED` dimension checked *in addition to* them; identity
