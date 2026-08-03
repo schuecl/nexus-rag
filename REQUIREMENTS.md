@@ -1,7 +1,7 @@
 # REQUIREMENTS.md — MPNexus RAG Pipeline
 
 **Project:** Enterprise Retrieval-Augmented Generation (RAG) capability for MPNexus
-**Status:** Adopted — FR-1 through FR-33 implemented; see README.md for current build status
+**Status:** Adopted — FR-1 through FR-34 implemented; see README.md for current build status
 **Owner:** [Corey / MPNexus platform]
 **Last updated:** 2026-07-26
 
@@ -55,6 +55,7 @@ These apply to every component in this project, not just the ones explicitly nam
 - FR-7: Support re-ingestion / versioning — replacing an outdated document's vectors without leaving orphaned or duplicate entries, and preserving an audit trail of what was replaced and by whom.
 - FR-8: Provide ingestion status/progress feedback in the UI (queued, processing, embedded, pending review, approved, rejected-with-reason).
 - FR-9: Reject or quarantine files that fail parsing, are password-protected, or exceed a configurable size limit, with a clear error surfaced to the uploader.
+- FR-34: Extends FR-1's "one or more documents" — support submitting a batch of files that share one set of Classification/Releasability/Access-scope/Source-Originator/Doc-type metadata in a single UI action, so tagging organizational documentation in bulk does not require re-entering identical metadata per file. Each file's tagging is still validated against the submitter's claims (FR-18) — validated once against the shared payload, not per file — and each resulting document is stored, embedded, and reviewed independently (FR-6, FR-11–FR-14): a shared batch is a submission-time convenience only, never a shared curation or storage unit, and one file's rejection does not affect the rest of the batch. Version replacement (FR-7) is out of scope for batch submission, since supersession is inherently one document replacing one other (issue #356).
 
 ### 4.2 Curation & Review Workflow
 - FR-10: Submission is self-service — any user holding the `rag-ingest` role (Section 6.2) can submit documents without needing prior approval to begin processing.

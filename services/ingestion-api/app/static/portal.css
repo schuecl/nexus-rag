@@ -578,6 +578,18 @@ h1 {
   border-bottom: 1px solid var(--line-strong);
 }
 
+/* Issue #356: the version-relationship section doesn't apply to a
+   multi-file batch (supersession is one document replacing one other) --
+   dimmed and non-interactive rather than removed, so the layout doesn't
+   jump as files are added/removed. */
+.form-section.disabled {
+  opacity: 0.5;
+}
+
+.form-section.disabled input {
+  pointer-events: none;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-start;
@@ -730,11 +742,22 @@ h1 {
   display: none;
 }
 
+.selected-files:not(:empty) {
+  margin-top: 12px;
+}
+
+.selected-files .selected-file + .selected-file {
+  margin-top: 8px;
+}
+
+#clearFiles {
+  margin-top: 10px;
+}
+
 .selected-file {
   display: flex;
   align-items: center;
   gap: 13px;
-  margin-top: 12px;
   padding: 13px;
   border: 1px solid rgba(74, 222, 128, 0.4);
   border-radius: 12px;
@@ -1169,6 +1192,56 @@ code {
   background: var(--code-bg);
   font-size: 0.68rem;
   white-space: pre-wrap;
+}
+
+/* Issue #356: per-file outcome rows for a batch submission -- one file
+   failing shouldn't read as the whole submission having failed, so each
+   row carries its own status colour rather than only the summary line
+   above doing so. */
+.batch-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.batch-result-list[hidden] {
+  display: none;
+}
+
+.batch-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.75rem;
+}
+
+.batch-result-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-result-status {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.batch-result-row.accepted .batch-result-status {
+  color: var(--success);
+}
+
+.batch-result-row.error .batch-result-status {
+  color: var(--danger);
 }
 
 .submission-sidebar {

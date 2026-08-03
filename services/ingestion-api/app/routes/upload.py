@@ -68,6 +68,13 @@ tracer = get_tracer("ingestion-api")
 # unchanged (50MB).
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
+# Issue #356 (FR-1's "one or more documents"): caps how many files one
+# shared-metadata batch submission can carry. Per-file size is still bounded
+# by MAX_UPLOAD_BYTES above -- this only guards against a single request
+# fanning out into an unbounded number of DB rows/object-store writes/queue
+# publishes.
+MAX_BATCH_FILES = int(os.environ.get("MAX_BATCH_FILES", "25"))
+
 # How much to pull off the upload at a time in _read_bounded below. Only
 # matters as the overshoot allowance on the memory ceiling: peak usage is
 # MAX_UPLOAD_BYTES + this, not the size of whatever was sent.
@@ -123,42 +130,24 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def submit_document(
-    request: Request,
-    file: UploadFile = File(...),
-    classification: str = Form(...),
-    releasability: str = Form(..., description="JSON array of strings"),
-    access_scope: str = Form(..., description="JSON array of strings"),
-    source_originator: str = Form(...),
-    doc_type: str = Form(...),
-    program_community: str | None = Form(None),
-    effective_date: str | None = Form(None),
-    supersedes_document_id: str | None = Form(None),
-    user: UserClaims = Depends(require_ingest),
-    session: Session = Depends(get_session),
-    _csrf: None = Depends(verify_csrf),
-) -> Document:
-    contents = await _read_bounded(file, MAX_UPLOAD_BYTES)
-    if not contents:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
-    metrics.upload_bytes.observe(len(contents))
-    # Issue #285: tamper-evidence anchor -- ingestion-worker re-hashes the
-    # bytes it fetches back from the object store and refuses to process a
-    # mismatch (processing.py), so this digest is the thing that check is
-    # verified against, not just a stored fingerprint.
-    content_sha256 = hashlib.sha256(contents).hexdigest()
-
-    # Issue #211: reject here rather than at parse time. parse_document
-    # dispatches on the filename extension, which the uploader chooses, so
-    # without this a caller picks which parser runs on their bytes. Rejecting
-    # synchronously also means the uploader gets an actionable error now
-    # instead of an asynchronous `failed` status minutes later (FR-8).
-    try:
-        validate_upload(file.filename or "", contents[:SNIFF_BYTES])
-    except UnsupportedUpload as exc:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
-
+def _validate_metadata(
+    *,
+    session: Session,
+    user: UserClaims,
+    classification: str,
+    releasability: str,
+    access_scope: str,
+    source_originator: str,
+    doc_type: str,
+    program_community: str | None,
+    effective_date: str | None,
+    supersedes_document_id: str | None,
+) -> tuple[DocumentMetadataIn, list[str]]:
+    """Parse + FR-18 claims validation, shared by submit_document (one file)
+    and submit_documents_batch (N files, this same payload applied once).
+    Returns the validated metadata and the caller's allowed-classifications
+    list, since the supersede-target check (single-file only) needs the
+    latter too."""
     try:
         metadata = DocumentMetadataIn(
             classification=classification,
@@ -182,30 +171,43 @@ async def submit_document(
         )
     except MetadataValidationError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
+    return metadata, allowed
 
-    # FR-7: if this submission claims to be a new version of an existing
-    # document, re-validate the target server-side -- not just that it
-    # exists, but that this uploader is actually authorized to act on it.
-    superseded_doc: Document | None = None
-    if metadata.supersedes_document_id:
-        try:
-            target_id = uuid.UUID(metadata.supersedes_document_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "supersedes_document_id is not a valid UUID"
-            ) from exc
-        superseded_doc = session.get(Document, target_id)
-        if superseded_doc is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "supersedes_document_id not found")
-        try:
-            validate_supersede_target(
-                superseded_doc,
-                new_owner_org=user.org or "unknown",
-                allowed_classifications=allowed,
-                user_releasability=user.releasability,
-            )
-        except SupersedeValidationError as exc:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
+
+async def _ingest_one_file(
+    *,
+    request: Request,
+    file: UploadFile,
+    metadata: DocumentMetadataIn,
+    superseded_doc: Document | None,
+    user: UserClaims,
+    session: Session,
+) -> Document:
+    """Everything after metadata is validated against the caller's claims:
+    read/hash/sniff the bytes, store the original, create the Document row +
+    audit entry, and hand off to the durable queue. Shared by submit_document
+    (one file) and submit_documents_batch (N files, issue #356) so the two
+    paths can't drift on what "submitted" means.
+    """
+    contents = await _read_bounded(file, MAX_UPLOAD_BYTES)
+    if not contents:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty file")
+    metrics.upload_bytes.observe(len(contents))
+    # Issue #285: tamper-evidence anchor -- ingestion-worker re-hashes the
+    # bytes it fetches back from the object store and refuses to process a
+    # mismatch (processing.py), so this digest is the thing that check is
+    # verified against, not just a stored fingerprint.
+    content_sha256 = hashlib.sha256(contents).hexdigest()
+
+    # Issue #211: reject here rather than at parse time. parse_document
+    # dispatches on the filename extension, which the uploader chooses, so
+    # without this a caller picks which parser runs on their bytes. Rejecting
+    # synchronously also means the uploader gets an actionable error now
+    # instead of an asynchronous `failed` status minutes later (FR-8).
+    try:
+        validate_upload(file.filename or "", contents[:SNIFF_BYTES])
+    except UnsupportedUpload as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
 
     doc = Document(
         filename=file.filename or "unnamed",
@@ -289,6 +291,158 @@ async def submit_document(
         metrics.queue_publish_total.labels(source="request", outcome="failed").inc()
         metrics.submissions_total.labels(outcome="queued_for_recovery").inc()
     return doc
+
+
+@router.post("", status_code=status.HTTP_202_ACCEPTED)
+async def submit_document(
+    request: Request,
+    file: UploadFile = File(...),
+    classification: str = Form(...),
+    releasability: str = Form(..., description="JSON array of strings"),
+    access_scope: str = Form(..., description="JSON array of strings"),
+    source_originator: str = Form(...),
+    doc_type: str = Form(...),
+    program_community: str | None = Form(None),
+    effective_date: str | None = Form(None),
+    supersedes_document_id: str | None = Form(None),
+    user: UserClaims = Depends(require_ingest),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
+    metadata, allowed = _validate_metadata(
+        session=session,
+        user=user,
+        classification=classification,
+        releasability=releasability,
+        access_scope=access_scope,
+        source_originator=source_originator,
+        doc_type=doc_type,
+        program_community=program_community,
+        effective_date=effective_date,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+    # FR-7: if this submission claims to be a new version of an existing
+    # document, re-validate the target server-side -- not just that it
+    # exists, but that this uploader is actually authorized to act on it.
+    superseded_doc: Document | None = None
+    if metadata.supersedes_document_id:
+        try:
+            target_id = uuid.UUID(metadata.supersedes_document_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "supersedes_document_id is not a valid UUID"
+            ) from exc
+        superseded_doc = session.get(Document, target_id)
+        if superseded_doc is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "supersedes_document_id not found")
+        try:
+            validate_supersede_target(
+                superseded_doc,
+                new_owner_org=user.org or "unknown",
+                allowed_classifications=allowed,
+                user_releasability=user.releasability,
+            )
+        except SupersedeValidationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "; ".join(exc.errors)) from exc
+
+    return await _ingest_one_file(
+        request=request,
+        file=file,
+        metadata=metadata,
+        superseded_doc=superseded_doc,
+        user=user,
+        session=session,
+    )
+
+
+class BatchUploadItem(BaseModel):
+    """One file's outcome within a POST /documents/batch call (issue #356,
+    FR-1's "one or more documents"). Metadata is shared and validated once
+    by the caller; this only reports what happened to storing/queuing this
+    particular file -- a per-file failure (bad type, empty, over the
+    per-file size limit) does not fail the rest of the batch."""
+
+    filename: str
+    accepted: bool
+    document: Document | None = None
+    detail: str | None = None
+
+
+@router.post("/batch")
+async def submit_documents_batch(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    classification: str = Form(...),
+    releasability: str = Form(..., description="JSON array of strings"),
+    access_scope: str = Form(..., description="JSON array of strings"),
+    source_originator: str = Form(...),
+    doc_type: str = Form(...),
+    program_community: str | None = Form(None),
+    effective_date: str | None = Form(None),
+    user: UserClaims = Depends(require_ingest),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> list[BatchUploadItem]:
+    """FR-1's "one or more documents" path: N files sharing one metadata
+    payload, for a batch of organizational documents that all carry the same
+    Classification/Releasability/Access-scope/Source-Originator/Doc-type
+    (issue #356). Deliberately does not accept supersedes_document_id -- that
+    relationship is one old document to one new document, which a
+    shared-metadata batch has no sound way to express; version replacement
+    stays on POST /documents.
+
+    Metadata is validated against the caller's claims exactly once -- no new
+    trust surface over the single-file path. Each file is then stored,
+    recorded, and queued independently through the same _ingest_one_file path
+    submit_document uses, and each resulting document still goes through its
+    own curator review (FR-11..FR-14): "shared metadata" is the uploader's
+    claim, not verified truth, so curation cannot be batched along with it.
+    """
+    if not files:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no files provided")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"batch exceeds the {MAX_BATCH_FILES}-file limit",
+        )
+
+    metadata, _allowed = _validate_metadata(
+        session=session,
+        user=user,
+        classification=classification,
+        releasability=releasability,
+        access_scope=access_scope,
+        source_originator=source_originator,
+        doc_type=doc_type,
+        program_community=program_community,
+        effective_date=effective_date,
+        supersedes_document_id=None,
+    )
+
+    results: list[BatchUploadItem] = []
+    for file in files:
+        try:
+            doc = await _ingest_one_file(
+                request=request,
+                file=file,
+                metadata=metadata,
+                superseded_doc=None,
+                user=user,
+                session=session,
+            )
+        except HTTPException as exc:
+            session.rollback()
+            results.append(
+                BatchUploadItem(
+                    filename=file.filename or "unnamed",
+                    accepted=False,
+                    detail=str(exc.detail),
+                )
+            )
+            continue
+        results.append(BatchUploadItem(filename=doc.filename, accepted=True, document=doc))
+    return results
 
 
 @router.get("/mine")

@@ -140,6 +140,9 @@ def _live_controlled_vocab(session: Session) -> dict:
         "classifications": [(c.value, c.rank) for c in classifications],
         "releasability": [r.value for r in releasability],
         "no_releasability_restriction": NO_RELEASABILITY_RESTRICTION,
+        # Issue #356: surfaced on the upload page so the batch-file cap shown
+        # to the uploader can't drift from what POST /documents/batch enforces.
+        "max_batch_files": upload.MAX_BATCH_FILES,
     }
 
 

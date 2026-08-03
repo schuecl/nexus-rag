@@ -24,8 +24,11 @@
       <div class="section-heading">
         <span class="section-number">1</span>
         <div>
-          <h2 id="file-section-title">File <span class="required">*</span></h2>
-          <p>Drag and drop one file, or browse from your device.</p>
+          <h2 id="file-section-title">Files <span class="required">*</span></h2>
+          <p>
+            Drag and drop one or more files, or browse from your device. Selecting more
+            than one submits them as a batch sharing the metadata below.
+          </p>
         </div>
       </div>
 
@@ -42,11 +45,12 @@
             <path d="M5 14v4.25A1.75 1.75 0 0 0 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V14"></path>
           </svg>
         </span>
-        <strong>Drop your document here</strong>
-        <span>or choose it manually from your computer</span>
+        <strong>Drop your documents here</strong>
+        <span>or choose them manually from your computer</span>
         <button class="browse-button" id="browseFile" type="button">Browse files</button>
         <small id="fileSupport">
-          PDF, DOCX, PPTX, XLSX, TXT, Markdown, or HTML · Maximum 50 MB
+          PDF, DOCX, PPTX, XLSX, TXT, Markdown, or HTML · Maximum 50 MB per file, up to
+          {{ max_batch_files }} files per batch
         </small>
       </div>
       <input
@@ -54,22 +58,31 @@
         id="fileInput"
         name="file"
         type="file"
+        multiple
         accept=".pdf,.docx,.pptx,.xlsx,.txt,.md,.markdown,.html,.htm,.png,.jpg,.jpeg,.tif,.tiff"
         aria-required="true"
       />
       <p class="field-error" id="fileError" role="alert"></p>
 
-      <div class="selected-file" id="selectedFile" hidden>
-        <span class="file-extension" id="fileExtension">FILE</span>
-        <span class="file-details">
-          <strong id="fileName"></strong>
-          <small id="fileMeta"></small>
-        </span>
-        <span class="file-actions">
-          <button class="text-button" id="replaceFile" type="button">Replace</button>
-          <button class="text-button danger-button" id="removeFile" type="button">Remove</button>
-        </span>
-      </div>
+      <div class="selected-files" id="selectedFiles"></div>
+      <button class="text-button danger-button" id="clearFiles" type="button" hidden>
+        Remove all files
+      </button>
+
+      <template id="selectedFileTemplate">
+        <div class="selected-file">
+          <span class="file-extension">FILE</span>
+          <span class="file-details">
+            <strong class="file-name"></strong>
+            <small class="file-meta"></small>
+          </span>
+          <span class="file-actions">
+            <button class="text-button danger-button" type="button" data-action="remove-file">
+              Remove
+            </button>
+          </span>
+        </div>
+      </template>
     </section>
 
     <section class="form-section" aria-labelledby="security-section-title">
@@ -196,12 +209,14 @@
       </div>
     </section>
 
-    <section class="form-section" aria-labelledby="version-section-title">
+    <section class="form-section" id="versionSection" aria-labelledby="version-section-title">
       <div class="section-heading">
         <span class="section-number">4</span>
         <div>
           <h2 id="version-section-title">Version relationship</h2>
-          <p>Complete this only when the upload replaces an approved document.</p>
+          <p id="versionSectionHint">
+            Complete this only when the upload replaces an approved document.
+          </p>
         </div>
       </div>
 
@@ -239,6 +254,7 @@
       <div>
         <strong id="resultTitle"></strong>
         <p id="resultMessage"></p>
+        <ul class="batch-result-list" id="batchResultList" hidden></ul>
         <details id="resultDetails" hidden>
           <summary>Technical details</summary>
           <pre id="resultBody"></pre>
@@ -286,7 +302,7 @@
         <span id="readinessProgress"></span>
       </div>
       <ul class="check-list">
-        <li data-check="file"><span>✓</span>Document file selected</li>
+        <li data-check="file"><span>✓</span>One or more files selected</li>
         <li class="done" data-check="classification"><span>✓</span>Classification assigned</li>
         <li class="done" data-check="releasability"><span>✓</span>Releasability assigned</li>
         <li data-check="scope"><span>✓</span>Access scope defined</li>
@@ -337,7 +353,8 @@
 <script>
   window.portalUploadConfig = {
     noReleasabilityRestriction: {{ no_releasability_restriction | tojson }},
-    maxUploadBytes: 52428800
+    maxUploadBytes: 52428800,
+    maxBatchFiles: {{ max_batch_files | tojson }}
   };
 </script>
 <script src="{{ url_for('static', path='/upload.js') }}" defer></script>
