@@ -8,11 +8,25 @@
 # trips it. Allowlisting the literal known placeholder value (not a broad
 # pattern) keeps the scan's ability to catch an actually-leaked secret
 # elsewhere intact.
+#
+# Issue #342's tests/unit/common/test_pii_scan.py needs a fixture matching
+# AWS's real access-key-ID shape (AKIA + 16 chars) to exercise
+# common/pii_scan.py's own aws-access-token-shaped detector -- gitleaks'
+# default `aws-access-token` rule matches the identical shape and flags it,
+# even after the fixture was rewritten to build the string at runtime
+# (c6e4e09) rather than as a literal, since gitleaks scans full PR commit
+# history and the original literal-fixture commit is still in it. Never a
+# real credential -- allowlisted by exact literal value, same posture as the
+# entry above.
 title = "nexus-rag gitleaks config"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Documented dev-only default for SESSION_TOKEN_ENCRYPTION_KEY (issue #213) -- see .env.example's header and common/token_crypto.py's comment"
-regexes = ['''VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=''']
+description = "Documented dev-only default for SESSION_TOKEN_ENCRYPTION_KEY (issue #213, see .env.example's header and common/token_crypto.py's comment) and issue #342's fake AWS-access-key-shaped test fixture (tests/unit/common/test_pii_scan.py, never a real credential)"
+regexes = [
+  '''VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=''',
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''AKIAAAAAAAAAAAAAAAAA''',
+]
