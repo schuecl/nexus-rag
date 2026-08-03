@@ -875,10 +875,22 @@ the docs, not a silent "it works" — flag it if you find one.
   no classification/releasability target to rank-compare against, so this uses a
   different, purpose-built `PiiTally.acted_on_rate`: rejecting the document or approving
   it with a changed classification counts as "acted on," approving it unchanged does
-  not — see the script's module docstring for the reasoning. **Tested against mocks
-  only** (extended `tests/unit/test_calibrate_tagging_advisory.py` and
-  `services/ingestion-api/tests/test_tagging_advisory_linkage.py`) — not yet exercised
-  against a live Postgres.
+  not — see the script's module docstring for the reasoning. Unit-level behavior is
+  **tested against mocks** (extended `tests/unit/test_calibrate_tagging_advisory.py` and
+  `services/ingestion-api/tests/test_tagging_advisory_linkage.py`); the full path is
+  **validated against a live environment**: real `docker compose up`, four documents
+  uploaded through the real `POST /documents` API each carrying a dashed SSN (one also
+  worded to trip the LLM-assisted pass), curated through the real `/curate/.../approve`
+  and `/curate/.../reject` APIs across all three outcomes (approved unchanged, approved
+  with a corrected classification, rejected) — confirmed the audit role's
+  INSERT-only-on-`audit_log` grant actually rejects a read with the application role
+  (`psycopg.errors.InsufficientPrivilege` querying as `nexus_rag_ingestion_api`), the
+  `pii_regex_kinds`/`pii_llm_kinds`/`*_count` fields round-trip through the real
+  Postgres JSON column, and `docker compose --profile calibration run --rm
+  calibrate-tagging-advisory` (rebuilt image) reported `pii_regex`/`pii_llm` with
+  `flagged=4 approved_unchanged=2 approved_corrected=1 rejected=1 acted_on_rate=50.00%`
+  — the exact tally the four decisions above should produce — including a correct
+  `--history-dir` trend line on a second run.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason
