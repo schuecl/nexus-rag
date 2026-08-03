@@ -468,15 +468,17 @@ measured. The full stack that consumes them — Prometheus, Loki, Tempo,
 Alertmanager, 13 Grafana dashboards, 10 alert rules — ships as a Compose profile
 (`docs/dev-setup.md`) and, for clusters with no monitoring stack of their own, as
 the separately-installed `helm/observability` chart (#257, `docs/observability.md`).
-Pyroscope also ships in the Compose profile, deployed empty the way Tempo was
-before #134 — no service pushes it a profile yet (#349).
+Pyroscope also ships in the Compose profile; all four services push it
+continuous CPU profiles once `PYROSCOPE_SERVER_ADDRESS` is set (#349),
+correlated to Tempo traces via the shared `service.name`/`service_name`
+convention.
 
 Still open: NFR-4's end-to-end latency budget remains an open question in
 REQUIREMENTS.md, so the retrieval alert rule's 5 s p95 threshold is a provisional
 stand-in rather than an agreed target — the instrumentation to answer it with data
 now exists, the number to compare against does not. Continuous profiling (#349)
-would sharpen "which stage" once it lands, but is not needed to answer NFR-4
-itself.
+sharpens "which stage" beyond what per-stage span durations already show, but
+is not needed to answer NFR-4 itself.
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based

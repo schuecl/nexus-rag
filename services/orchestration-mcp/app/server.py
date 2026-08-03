@@ -43,6 +43,7 @@ from app.rag_search import (
 )
 from common.claims import OIDC_ISSUERS
 from common.logging_setup import setup_logging
+from common.profiling import setup_profiling
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -57,6 +58,9 @@ enable_siem_export("orchestration-mcp")
 # OTEL_EXPORTER_OTLP_ENDPOINT is set.
 setup_tracing("orchestration-mcp")
 HTTPXClientInstrumentor().instrument()
+# #349: continuous CPU profiling. Disabled unless PYROSCOPE_SERVER_ADDRESS
+# is set.
+setup_profiling("orchestration-mcp")
 
 # FastMCP's default DNS-rebinding protection only allows Host headers of
 # 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),

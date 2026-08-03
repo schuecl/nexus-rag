@@ -89,18 +89,19 @@ pre-provisioned. Every other port is loopback-only. See
 [dev-setup.md](dev-setup.md#observability-stack-optional-133) for the socket-proxy
 rationale, the Postgres monitoring role, and the trace-correlation walkthrough.
 
-The profile alone does not enable tracing or JSON logs — set
-`OTEL_EXPORTER_OTLP_ENDPOINT` and `LOG_FORMAT=json` too, or Tempo stays empty and
-the log→trace links never appear.
+The profile alone does not enable tracing, JSON logs, or profiling — set
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT=json`, and `PYROSCOPE_SERVER_ADDRESS`
+too, or Tempo/Pyroscope stay empty and the correlation links never appear.
 
-Pyroscope (continuous profiling) is also in the profile, at
-<http://127.0.0.1:4040> and wired as a Grafana datasource — but empty. No
-service pushes it a profile yet; #349 tracks the app-side instrumentation,
-the same split #134 used for tracing (Tempo shipped in #169 before spans
-existed). Not (yet) part of `helm/observability`: adding the Kubernetes side
-before there is real profiling data to validate the deployment against would
-repeat the untested-config risk the confidence table below calls out for the
-rest of that chart.
+Pyroscope (continuous CPU profiling, #349) is also in the profile, at
+<http://127.0.0.1:4040> and wired as a Grafana datasource with
+trace-to-profiles correlation on the Tempo datasource. All four services push
+100Hz CPU samples once `PYROSCOPE_SERVER_ADDRESS` is set — continuous, not
+triggered, matching Prometheus/Tempo's always-on posture in this stack. Memory
+profiling stays off. Not (yet) part of `helm/observability`: that's a
+separate, larger surface (StatefulSet/Service topology, NetworkPolicy,
+dashboard-sync script) worth its own change now that there's real data to
+validate a deployment against, rather than folding it into this one.
 
 ## What is actually instrumented
 
@@ -123,9 +124,16 @@ Tracing is opt-in and off by default —
 `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so a deployment with no collector pays
 nothing. Default head-sampling ratio is 0.05.
 
-Continuous profiling is **not** instrumented anywhere yet. Pyroscope is
-deployed (Compose profile, #133) but nothing in `services/` pushes it data —
-tracked as #349.
+Continuous CPU profiling is opt-in and off by default, same posture as
+tracing — `services/common/common/profiling.py`'s `setup_profiling()`
+(and reranker-service's inline equivalent, which doesn't depend on
+`services/common`) is a no-op when `PYROSCOPE_SERVER_ADDRESS` is unset. When
+set, all four services push 100Hz CPU-only samples continuously for the life
+of the process (#349) — memory profiling is off. `application_name` is
+deliberately the same string tracing uses for `service.name`
+(`nexus-rag-<service>`), which Pyroscope stores as the `service_name` label —
+that agreement is what lets Grafana jump from a trace span straight to the
+flame graph for the same service.
 
 ## Dashboards
 

@@ -13,6 +13,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "prometheus-client>=0.20",
     "sentence-transformers>=3.0",
+    # #349: inline profiling setup (app/main.py's _setup_profiling), same
+    # split as the inline _setup_tracing -- this service has no dependency
+    # on services/common.
+    "pyroscope-io>=1.2",
 ]
 
 [build-system]
@@ -28,7 +32,7 @@ include = ["app*"]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-# sentence-transformers ships no stubs; fastapi/pydantic/opentelemetry do and
-# stay fully checked.
-module = ["sentence_transformers.*"]
+# sentence-transformers and pyroscope-io ship no stubs; fastapi/pydantic/
+# opentelemetry do and stay fully checked.
+module = ["sentence_transformers.*", "pyroscope.*"]
 ignore_missing_imports = true

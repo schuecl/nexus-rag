@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
+import pyroscope
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -60,7 +61,30 @@ def _setup_tracing() -> None:
     trace.set_tracer_provider(provider)
 
 
+def _setup_profiling() -> None:
+    """#349: minimal inline equivalent of common/profiling.py's setup (this
+    service doesn't depend on services/common). Same posture: disabled
+    unless PYROSCOPE_SERVER_ADDRESS is set, continuous CPU-only sampling --
+    this is the service where a slow cross-encoder batch is otherwise
+    invisible between the rerank span's start and end timestamps."""
+    server_address = os.environ.get("PYROSCOPE_SERVER_ADDRESS", "").strip()
+    if not server_address:
+        return
+    try:
+        rate = int(os.environ.get("PYROSCOPE_SAMPLE_RATE", "100"))
+    except ValueError:
+        rate = 100
+    pyroscope.configure(
+        application_name=os.environ.get("PYROSCOPE_APPLICATION_NAME", "nexus-rag-reranker-service"),
+        server_address=server_address,
+        sample_rate=rate if rate > 0 else 100,
+        cpu_enabled=True,
+        mem_enabled=False,
+    )
+
+
 _setup_tracing()
+_setup_profiling()
 tracer = trace.get_tracer("reranker-service")
 
 MODEL_NAME = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")

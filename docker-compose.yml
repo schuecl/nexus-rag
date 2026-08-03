@@ -294,6 +294,10 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # #349: continuous CPU profiling -- disabled unless a Pyroscope server
+      # address is set (e.g. the observability profile's pyroscope service).
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
       # Issue #216: /rerank otherwise has no authorization model of its own.
       # Same value as orchestration-mcp's RERANKER_SHARED_SECRET below --
       # dev default matches the QDRANT_API_KEY pattern (a real deployment
@@ -355,6 +359,10 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # #349: continuous CPU profiling -- disabled unless a Pyroscope server
+      # address is set (e.g. the observability profile's pyroscope service).
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
       QUEUE_RECONCILE_INTERVAL_SECONDS: ${QUEUE_RECONCILE_INTERVAL_SECONDS:-15}
       QUEUE_RECONCILE_BATCH_SIZE: ${QUEUE_RECONCILE_BATCH_SIZE:-100}
       # Issue #279 (gap G3): code defaults this true (production-safe); the
@@ -492,6 +500,10 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # #349: continuous CPU profiling -- disabled unless a Pyroscope server
+      # address is set (e.g. the observability profile's pyroscope service).
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
       # NFR-3 / #278: the worker's own role -- SELECT/UPDATE on documents,
       # SELECT on the vocabulary tables, INSERT on audit_log. It never sees a
       # browser, so it has no access to user_sessions or oauth_states at all.
@@ -597,6 +609,10 @@ services:
       # samples everything when enabled; production should stay low.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      # #349: continuous CPU profiling -- disabled unless a Pyroscope server
+      # address is set (e.g. the observability profile's pyroscope service).
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
       # NFR-3 / #278: the narrowest of the three. SELECT on
       # classification_levels (to build the FR-26 access filter) and INSERT on
       # audit_log. It cannot read documents -- chunk payloads come from Qdrant
@@ -800,9 +816,9 @@ services:
         condition: service_started
 
   # Profiling: deployed the same way Tempo was in #169 -- the backend exists
-  # before anything sends it data. #349 tracks instrumenting the four
-  # services with the Pyroscope SDK; until that lands, Grafana's profiling
-  # views are just empty, same as Tempo's traces were before #134.
+  # before anything sends it data. #349 wired the four services to push it
+  # continuous CPU profiles (opt-in via PYROSCOPE_SERVER_ADDRESS, same as
+  # tracing).
   pyroscope:
     # #133: opt-in -- the observability stack starts only with
     # `--profile observability`, not on a bare `docker compose up`.
@@ -816,6 +832,13 @@ services:
     # ingester reports ready in ~30s single-node, which is what a dev/tuning
     # profile needs.
     image: grafana/pyroscope:1.21.1
+    # #349: without this, startup fails outright on this project's custom
+    # bridge network -- "no useable address found for interfaces [eth0
+    # en0]" from the anonymous usage-stats reporter's instance-id lookup,
+    # unrelated to the actual profile ingest path (found by running it on
+    # nexus-rag-net; the default bridge network doesn't trip it). Also the
+    # right default for an air-gapped stack regardless.
+    command: ["-usage-stats.enabled=false"]
     volumes:
       - pyroscope-data:/data
     ports:

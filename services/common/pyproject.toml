@@ -9,6 +9,9 @@ dependencies = [
     "opentelemetry-api>=1.30",
     "opentelemetry-sdk>=1.30",
     "opentelemetry-exporter-otlp-proto-http>=1.30",
+    # #349: continuous CPU profiling (common/profiling.py); the agent only
+    # starts when PYROSCOPE_SERVER_ADDRESS is set.
+    "pyroscope-io>=1.2",
     "pydantic>=2.7",
     "PyJWT>=2.8",
     "cryptography>=42.0",

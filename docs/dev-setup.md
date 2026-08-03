@@ -287,28 +287,32 @@ Off by default. Bring it up alongside the app stack:
 docker compose --profile observability up -d
 ```
 
-**The profile alone does not enable tracing or JSON logs.** Uncomment both of
-these in `.env` first, or Tempo stays empty and the trace-to-logs links have
-nothing to match on:
+**The profile alone does not enable tracing, JSON logs, or profiling.**
+Uncomment these in `.env` first, or Tempo/Pyroscope stay empty and the
+trace-to-logs and trace-to-profiles links have nothing to match on:
 
 ```
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 LOG_FORMAT=json
+PYROSCOPE_SERVER_ADDRESS=http://pyroscope:4040
 ```
 
 Put them in `.env` rather than inline on the `up` command — an inline variable
 is lost as soon as a container is recreated from Docker Desktop or a plain
-`docker compose up`, and the only symptom is a `tracing disabled` line at
-startup that is easy to scroll past.
+`docker compose up`, and the only symptom is a `tracing disabled` /
+`profiling disabled` line at startup that is easy to scroll past.
 
 - **Grafana** http://localhost:3000 (`admin` / `nexus-rag-admin`) -- dashboards
   and datasources are auto-provisioned (Prometheus, Loki, Tempo, Pyroscope).
 - **Prometheus** http://127.0.0.1:9090 scrapes every service's `/metrics`.
 - **Tempo** (traces) and **Loki** (logs) are wired as Grafana datasources.
-- **Pyroscope** http://127.0.0.1:4040 (continuous profiling) is deployed and
-  wired as a Grafana datasource, but nothing pushes it profiles yet --
-  no app-side instrumentation exists until #349 lands. It comes up empty, the
-  same way Tempo did before #134 added spans.
+- **Pyroscope** http://127.0.0.1:4040 (continuous CPU profiling, #349) is
+  wired as a Grafana datasource. All four services (`ingestion-api`,
+  `ingestion-worker`, `orchestration-mcp`, `reranker-service`) push it
+  100Hz CPU samples once `PYROSCOPE_SERVER_ADDRESS` is set -- continuous,
+  not triggered, the same always-on posture Prometheus and Tempo already
+  have in this stack. Memory profiling is off (nothing has asked for heap
+  data yet).
 - Every port except Grafana is published loopback-only.
 - **Trace-to-log correlation works**: with `LOG_FORMAT=json` and tracing
   enabled, every log line carries `trace_id`/`span_id`, which is what

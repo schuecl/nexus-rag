@@ -46,11 +46,20 @@ datasources:
         datasourceUid: prometheus
       nodeGraph:
         enabled: true
+      # #349: jump from a trace span straight to the flame graph for the
+      # same request window. tags maps the span's service.name attribute to
+      # Pyroscope's service_name label -- common/profiling.py's
+      # application_name (nexus-rag-<service>) is deliberately the same
+      # string setup_tracing() uses for service.name, so the two always
+      # agree without per-service configuration here.
+      tracesToProfiles:
+        datasourceUid: pyroscope
+        tags: [{ key: "service.name", value: "service_name" }]
+        profileTypeId: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 
-  # #133/#349: backend deployed, no data yet -- nothing in this repo pushes
-  # profiles to it until #349's instrumentation lands. Present so the
-  # datasource (and trace-to-profiles correlation, once #349 tags spans and
-  # profiles with the same service.name) exists without a manual click.
+  # #133/#349: backend deployed; #349 wired the four services to push it CPU
+  # profiles (common/profiling.py + reranker-service's inline equivalent),
+  # opt-in via PYROSCOPE_SERVER_ADDRESS same as tracing.
   - name: Pyroscope
     uid: pyroscope
     type: grafana-pyroscope-datasource

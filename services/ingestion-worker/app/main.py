@@ -35,6 +35,7 @@ from app import metrics, processing
 from app.processing import consume_forever
 from common.db import init_db
 from common.logging_setup import setup_logging
+from common.profiling import setup_profiling
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -49,6 +50,9 @@ enable_siem_export("ingestion-worker")
 # (no-op spans) unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
 setup_tracing("ingestion-worker")
 HTTPXClientInstrumentor().instrument()
+# #349: continuous CPU profiling. Disabled unless PYROSCOPE_SERVER_ADDRESS
+# is set.
+setup_profiling("ingestion-worker")
 
 
 def _log_consumer_exit(task: asyncio.Task) -> None:

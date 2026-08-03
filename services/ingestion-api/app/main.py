@@ -22,6 +22,7 @@ from common.job_queue import ensure_stream, get_nats_connection
 from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, PortalSettings, ReleasabilityValue
+from common.profiling import setup_profiling
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -36,6 +37,9 @@ enable_siem_export("ingestion-api")
 # whose context rides the NATS headers to ingestion-worker. Disabled unless
 # OTEL_EXPORTER_OTLP_ENDPOINT is set.
 setup_tracing("ingestion-api")
+# #349: continuous CPU profiling. Disabled unless PYROSCOPE_SERVER_ADDRESS
+# is set.
+setup_profiling("ingestion-api")
 
 DEFAULT_CLASSIFICATIONS = [
     ("UNCLASSIFIED", 0),
