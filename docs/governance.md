@@ -49,13 +49,13 @@ issue.
 | Auditability | **Validated live** | FR-31 audit log, append-only (NFR-2) |
 | Document versioning | **Validated live** | FR-7 supersede chain |
 | Durability of source | **Validated live** | NFR-12 object store retains every original |
-| Embedding provenance | **Not done** | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
-| Query/response lineage | **Not done** | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
+| Embedding provenance | **Tested against mocks** | Write+read stamp, refuse-on-mismatch ([#122](https://github.com/schuecl/nexus-rag/issues/122), [PR #130](https://github.com/schuecl/nexus-rag/pull/130)); the re-embedding path itself is still absent ([#362](https://github.com/schuecl/nexus-rag/issues/362)) |
+| Query/response lineage | **Not done** | No correlation id between an audit query entry and the trace/retrieval that produced it ([#363](https://github.com/schuecl/nexus-rag/issues/363)) |
 | Retention & destruction | **Partial** | Purge path implemented+validated ([#136](https://github.com/schuecl/nexus-rag/pull/136)); schedule proposed in [Retention and destruction](#retention-and-destruction), awaiting ratification ([#123](https://github.com/schuecl/nexus-rag/issues/123)) |
 | Query confidentiality | **Partial** | See [Query confidentiality](#query-confidentiality-and-user-privacy) |
 | Privacy threat model | **Implemented (docs)** | [threat-model.md](threat-model.md) ([#127](https://github.com/schuecl/nexus-rag/issues/127)) |
-| Observability of quality | **Partial** | FR-30 harness exists; not tracked over time ([#71](https://github.com/schuecl/nexus-rag/issues/71)) |
-| SIEM export | **Not done** | [#73](https://github.com/schuecl/nexus-rag/issues/73) |
+| Observability of quality | **Validated live** | FR-30/FR-32 baseline regression gate over time ([#71](https://github.com/schuecl/nexus-rag/issues/71), [PR #157](https://github.com/schuecl/nexus-rag/pull/157)) |
+| SIEM export | **Validated live** | RFC 5424 syslog export, validated against the dev `syslog-collector` on all three transports; not yet against a production SIEM appliance ([#73](https://github.com/schuecl/nexus-rag/issues/73), [PR #158](https://github.com/schuecl/nexus-rag/pull/158)) |
 | Ontology / taxonomy management | **Out of scope** | Graph-RAG concern; see [Non-goals](#non-goals) |
 
 ## Access control
@@ -170,15 +170,26 @@ What is traceable today:
   Postgres and Qdrant, so the source of any chunk can be re-examined.
 - Every ingestion, curation decision, and query attempt is recorded in the
   audit log keyed on OIDC identity (FR-31).
+- **Which embedding model produced a stored vector, and whether it still
+  agrees with the configured one.** Every chunk payload carries
+  `embedding_model`/`embedded_at`, and retrieval refuses with an actionable
+  error rather than silently degrading if the collection's stamped model
+  disagrees with what's configured
+  ([#122](https://github.com/schuecl/nexus-rag/issues/122),
+  [PR #130](https://github.com/schuecl/nexus-rag/pull/130)).
 
 What is **not** traceable:
 
-- **Which embedding model produced a stored vector.** Nothing records it, and
-  the ingestion and query paths resolve `EMBEDDING_MODEL` independently. A
-  model change silently breaks the comparability of query and document vectors
-  with no error — see [#122](https://github.com/schuecl/nexus-rag/issues/122).
+- **A detected embedding-model mismatch has no remediation path.** The check
+  above stops a mismatched query rather than silently degrading it, but
+  there's still no way to re-embed a collection back into agreement short of
+  a full manual re-ingest — see
+  [#362](https://github.com/schuecl/nexus-rag/issues/362).
 - **A query to its answer.** Audit entries have no correlation id, so a
-  specific response cannot be tied to the specific retrieval that produced it.
+  specific response cannot be tied to the specific retrieval that produced
+  it, even though #134 added OpenTelemetry tracing across the retrieval
+  fan-out — the trace id it generates is never written into the audit row
+  — see [#363](https://github.com/schuecl/nexus-rag/issues/363).
 - **Reranker version**, chunking parameters, or filter version at the time a
   chunk was written.
 
@@ -213,51 +224,72 @@ So an application administrator cannot read another user's queries or
 documents through the application. That is the intended property and it holds
 today.
 
-### Where the property does not hold
+### Where the property used to not hold, and what changed
 
-**At the database layer.** `audit_log.detail` stores the **raw query text**
-verbatim, plus the retrieved `result_document_ids` and the applied filter —
-which itself embeds the user's `sub`, groups, and org. Anyone holding
-`APP_DB_USER` credentials can `SELECT * FROM audit_log` and read every user's
-query history; the bootstrap superuser can do the same.
+This section originally described two problems. Both are now resolved, and
+are recorded past-tense here rather than deleted, so a reader who remembers
+the old gap can see what actually changed and where.
 
-The NFR-2 hardening makes that table append-only *for the application role*
-(`GRANT SELECT, INSERT`, ownership moved away) — it prevents tampering, which
-is what it was designed for. It does **not** restrict reading, and nothing
-documents who is entitled to hold those credentials.
+**The query text itself is no longer stored, anywhere, full stop.**
+`orchestration-mcp/app/rag_search.py`'s `_audit_query_detail()` writes
+`query_chars` (the length) into `audit_log.detail` and never the query
+string — of the "omit / hash / break-glass table" options the original
+version of this section weighed, **omit** is the one that shipped
+([#125](https://github.com/schuecl/nexus-rag/issues/125),
+[PR #128](https://github.com/schuecl/nexus-rag/pull/128)). This isn't an
+access-control fix layered on top of stored text — the text was never
+written in the first place, so there is no privileged credential that could
+read it after the fact. Tested against mocked sessions
+(`services/orchestration-mcp/tests/test_query_privacy.py`), not yet
+exercised against a live Postgres instance.
 
-Two consequences worth naming:
+**The database-layer credential model changed underneath this too.** The
+original concern — "anyone holding `APP_DB_USER` can `SELECT * FROM
+audit_log`" — described a single shared application credential that no
+longer exists. Per-service Postgres roles
+([#278](https://github.com/schuecl/nexus-rag/issues/278),
+[PR #292](https://github.com/schuecl/nexus-rag/pull/292), detailed in
+`roles-and-permissions.md` gap G2, **validated live**) mean **no application
+role can `SELECT` `audit_log` at all** — every service's role is
+insert-only on that table. The only role that can read it is
+`nexus_rag_audit_reporting`, a narrow, offline-only credential used solely
+by `scripts/calibrate_tagging_advisory.py` and never wired into any
+service's request path.
 
-1. **A DBA or platform administrator has a surveillance capability** that the
-   application deliberately denies to `rag-admin`. The control boundary the
-   application draws is not mirrored at the storage layer.
-2. **The audit log is an aggregation risk.** Query text about classified
-   material is plausibly classified itself, and it is being written to a table
-   with weaker access control than the documents it describes — and, per
-   [#123](https://github.com/schuecl/nexus-rag/issues/123), one that cannot be
-   selectively expunged.
+What's left, and it's a smaller, named residual rather than the original
+open-ended one:
 
-### The intended model
+1. **The bootstrap superuser (`POSTGRES_USER`) can still read everything.**
+   That's inherent to having a bootstrap role at all, stated plainly in
+   `roles-and-permissions.md` gap G2 rather than presented as solved — the
+   boundary it protects is operational access, not application compromise.
+2. **`applied_filter` and `result_document_ids` are still recorded** — the
+   filter shape embeds the caller's `sub`/groups/org, and `result_document_ids`
+   is the FR-26 accountability evidence (proving *which* documents a filter
+   actually permitted). This is deliberate, not a leftover of the old gap:
+   without content or query text, knowing *that* user X's query matched
+   document Y is the accountability property FR-31 exists for, not a privacy
+   regression. It does mean "which documents has a user's query history
+   touched" is answerable from the audit log by anyone who can read it — see
+   the residual-credential point above for who that actually is today.
 
-Accountability and content confidentiality are separable, and should be
-separated:
+### The model that was adopted
 
-| Data | Purpose | Who should see it |
+Accountability and content confidentiality turned out to be separable, and
+the split below is what actually ships today, not a proposal:
+
+| Data | Purpose | Who can see it |
 |---|---|---|
-| Actor, timestamp, action | Accountability (FR-31) | Auditors, admins |
-| Allow/deny outcome + reason | FR-26 verification | Auditors, admins |
-| Applied filter *shape* | Proving the filter was enforced | Auditors, admins |
-| Result count | Anomaly detection | Auditors, admins |
-| **Raw query text** | Investigation only | **Break-glass, itself audited** |
+| Actor, timestamp, action | Accountability (FR-31) | `nexus_rag_audit_reporting`, bootstrap superuser |
+| Allow/deny outcome + reason | FR-26 verification | Same |
+| Applied filter *shape* (embeds sub/groups/org) | Proving the filter was enforced | Same |
+| Result count + `result_document_ids` | Accountability / anomaly detection | Same |
+| **Raw query text** | — | **Nobody — never written** |
 | **Document content** | — | **Nobody, via audit** |
 
-The first four answer every accountability question FR-31 exists for —
-*did the filter apply, to whom, and what did it permit* — without disclosing
-what anyone asked. Options for the query text are to omit it, store a hash
-(preserving repeat-query correlation without content), or hold it in a
-separately-granted table behind an audited break-glass path.
-
-Tracked as [#125](https://github.com/schuecl/nexus-rag/issues/125).
+The first four answer every accountability question FR-31 exists for — *did
+the filter apply, to whom, and what did it permit* — without disclosing what
+anyone asked or what they read.
 
 ### Inference, as distinct from access
 
@@ -332,7 +364,7 @@ are the only destruction that happens.
 | Notifications | **90 days** after creation, read or not | A reaper on the #108 pattern (scheduled sweep in-app; the app role may DELETE its own notifications) | **Proposed** |
 | `oauth_states` / `user_sessions` | Bounded lifetimes, reaped continuously | #108 (merged) | **Implemented** |
 | `audit_log` | Local minimum **1 year** (configurable, `AUDIT_RETENTION_DAYS`), then eligible for administrative expiry — **except** destruction-evidence entries (`document.purged`, `audit.expired`), retained **7 years** | The audited-expiry process below; never the application role | **Proposed** |
-| SIEM copy of audit events | Governed by the environment's SIEM retention schedule, not this system | #73 export (in review) hands custody off; the SIEM is the long-term audit store | Out of this system's control — stated, not assumed |
+| SIEM copy of audit events | Governed by the environment's SIEM retention schedule, not this system | #73 export (merged, validated live against the dev `syslog-collector`) hands custody off; the SIEM is the long-term audit store | Out of this system's control — stated, not assumed |
 | Traces / metrics / process logs | Backend-governed (Tempo/Prometheus/Loki retention). Carry ids, counts, and sizes only — no corpus content or query text by construction (#125's rule, enforced in #132/#134/#158) | Observability backend configuration | Out of scope for this schedule |
 
 ### Destruction authority and evidence
@@ -461,13 +493,9 @@ Stated so their absence reads as a decision rather than an oversight:
 
 | Gap | Issue |
 |---|---|
-| Embedding-model provenance; no re-embedding path | [#122](https://github.com/schuecl/nexus-rag/issues/122) |
+| No re-embedding path when an embedding-model provenance mismatch is detected | [#362](https://github.com/schuecl/nexus-rag/issues/362) |
+| No correlation id linking an audit query entry to the retrieval/trace that produced it | [#363](https://github.com/schuecl/nexus-rag/issues/363) |
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
-| Raw query text readable at the DB layer | [#125](https://github.com/schuecl/nexus-rag/issues/125) |
 | Retrieved content persists in the chat plane beyond purge's reach | [#286](https://github.com/schuecl/nexus-rag/issues/286) |
 | No detection/alerting on reconnaissance-shaped query patterns (metrics/SIEM substrate exists, no detection logic yet) | [threat-model.md](threat-model.md) |
-| Retrieval quality not tracked over time | [#71](https://github.com/schuecl/nexus-rag/issues/71) |
-| No runtime metrics or latency instrumentation | [#72](https://github.com/schuecl/nexus-rag/issues/72) |
-| NFR-2 SIEM export unimplemented | [#73](https://github.com/schuecl/nexus-rag/issues/73) |
 | No generation-side (Q→C→A) evaluation | [#74](https://github.com/schuecl/nexus-rag/issues/74) |
-| No NetworkPolicy; storage reachable in-namespace | [#110](https://github.com/schuecl/nexus-rag/issues/110) |
