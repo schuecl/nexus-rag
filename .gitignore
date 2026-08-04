@@ -23,3 +23,6 @@ htmlcov/
 infra/certs/*.crt
 infra/certs/*.key
 infra/certs/*.srl
+
+# Private per-user Claude instructions -- never committed.
+CLAUDE.local.md
