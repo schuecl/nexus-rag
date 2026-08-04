@@ -86,9 +86,9 @@ docker compose --profile eval run --rm eval-retrieval
   `docker compose build` of all custom images.
 - **`.github/workflows/e2e.yml`** (nightly, manual, and a PR labeled
   `needs-e2e`): full-stack golden-query e2e; browser-verify (issue #187,
-  same gating as golden-query -- see above); mutation testing (advisory,
-  nightly/manual only regardless of label, see below). Reports uploaded as
-  artifacts.
+  same gating as golden-query -- see above); mutation testing (enforced
+  ≥80% kill rate as of issue #78, nightly/manual only regardless of label,
+  see below). Reports uploaded as artifacts.
 - **`.github/workflows/security.yml`** (PR + weekly): `bandit`,
   `pip-audit` against the shipped dependency tree (the test toolchain is
   dev-only and excluded), `helm lint` + `helm template`, Trivy filesystem
