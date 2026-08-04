@@ -4,7 +4,9 @@ How this repo verifies itself: the local/CI test pyramid, what each GitHub
 Actions workflow enforces, and the honest current state of each gate. Related:
 [docs/dev-setup.md](dev-setup.md) for the live-stack walkthrough, and
 [scripts/evaluate_retrieval.py](../scripts/evaluate_retrieval.py) for the
-golden-query harness the e2e workflow reuses.
+golden-query harness the e2e workflow reuses, and
+[scripts/evaluate_rag_quality.py](../scripts/evaluate_rag_quality.py) for the
+manual local-judge Q→C→A evaluation.
 
 ## The pyramid
 
@@ -14,6 +16,7 @@ golden-query harness the e2e workflow reuses.
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
 | Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
+| Q→C→A quality (issue #74) | `scripts/evaluate_rag_quality.py` + `golden_queries.json` | Manual, host-side; not a CI gate | Real LibreChat Agent generation plus ordered `/debug/rag_search` contexts, scored by the local Ollama judge for contextual relevance/recall/precision, faithfulness, answer relevance/correctness, citation validity, and abstention behavior |
 | Browser CSRF + logout (issue #187) | `scripts/verify_browser_csrf_logout.py` | `e2e.yml` job `browser-verify` (same `needs-e2e` gating as golden-query) | Real Chromium against a real `docker compose up`: HttpOnly/readable cookie attributes, missing/mismatched/matching `X-CSRF-Token` (NFR-14), and a full Keycloak RP-initiated logout actually ending the SSO session (issue #254) rather than just the server-side logic `services/ingestion-api/tests` already covers with `TestClient` |
 | Tagging-advisory calibration | `scripts/calibrate_tagging_advisory.py` | Manual or scheduled (`docker compose --profile calibration run`), not in any CI workflow | Suggester-vs-curator agreement over time for Phase 1-3's advisories (FR-13/FR-16/FR-30/FR-32) — reporting only, no pass/fail gate by default |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **enforced ≥80% kill rate**, issue #78) | Test-suite strength on claims/access-filter/metadata/versioning |
@@ -76,6 +79,31 @@ helm lint helm/nexus-rag                # chart gate
 docker compose up -d --wait
 docker compose --profile eval run --rm eval-retrieval
 ```
+
+The Q→C→A evaluator is deliberately host-side because LibreChat's dev OAuth
+redirect is `https://localhost:3080`. After completing the CA/hosts setup and
+logging the evaluation user into LibreChat once (see
+[querying-the-corpus.md](querying-the-corpus.md)), create the per-user agent and
+pass its printed ID to the evaluator:
+
+```bash
+scripts/create_librechat_agent.sh dave-admin
+python scripts/evaluate_rag_quality.py \
+  --agent-id <agent-id> --history-dir .eval-history/qca
+```
+
+The script refreshes the agent's MCP connection and the direct-retrieval bearer
+before every case unless `--skip-connect` is given; this keeps a slow CPU run
+from outliving Keycloak's 900-second dev token. It calls the real LibreChat →
+LiteLLM/Ollama → `rag_search` path for each golden query and exits non-zero if
+generation omitted the tool or any case could not be scored. Its local 3B/7B
+judge is useful for comparing two
+configurations, not for an absolute quality claim. Baselines are therefore
+rejected when the judge model, judge-prompt version, or golden-set hash differs.
+Reports contain hashes, aggregate counts, and scores by default—not query,
+source names, context, reference-answer, or generated-answer text.
+`--include-content` is an explicit diagnostic option whose output must be
+handled at the corpus's classification.
 
 ## Workflows
 

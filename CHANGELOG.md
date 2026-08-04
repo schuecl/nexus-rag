@@ -15,6 +15,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Added
+
+- A host-side Q→C→A quality evaluator now drives the real LibreChat Agent
+  generation path and scores its ordered retrieval contexts with the local Ollama
+  judge: contextual relevance/recall/precision, faithfulness, answer
+  relevance/correctness, citation validity, and abstention behavior. Reports omit
+  corpus text by default and baseline comparisons require the same judge, prompt,
+  and golden set (#74).
+- Governance now adapts the relevant digital controls from DoDM 5200.01
+  Volumes 1 and 2 and 32 CFR Part 2001 into an explicit classified-information
+  profile. “Adaptive classification” is constrained to human-authorized,
+  fail-closed handling; the profile separately lists the marking, authority,
+  compilation, special-category, and chat-output gaps that remain before a
+  deployment could claim the profile is operational.
+
 ## [0.4.0] - 2026-08-04
 
 ### Changed

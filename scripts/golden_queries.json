@@ -1,37 +1,51 @@
 [
   {
+    "id": "password-rotation",
     "query": "how often should passwords be rotated",
     "expect": ["password-policy.md"],
+    "reference_answer": "Passwords must be rotated every 90 days, contain uppercase, lowercase, and numeric characters, and must not reuse any of the previous 12 passwords.",
     "top_k": 5
   },
   {
+    "id": "cafeteria-renovation",
     "query": "cafeteria closed for renovations",
     "expect": ["public-notice.md"],
+    "reference_answer": "The cafeteria will close for renovations starting next month, and alternate dining options will be posted on the intranet.",
     "top_k": 5
   },
   {
+    "id": "vpn-access-v2",
     "query": "VPN access hardware token requirements",
     "expect": ["network-access-sop-v2.md"],
     "forbid": ["network-access-sop-v1.md"],
+    "reference_answer": "VPN access requires a hardware token, manager approval, and completion of the annual security awareness course.",
     "top_k": 5,
     "note": "v1 was superseded by v2 (FR-7) -- only the current version should ever be found"
   },
   {
+    "id": "network-intrusion-response",
     "query": "network intrusion notification procedure",
     "expect": ["incident-response-plan.md"],
+    "reference_answer": "Notify the Signal Corps duty officer within 15 minutes of detecting a network intrusion and isolate the affected segment.",
     "top_k": 5
   },
   {
+    "id": "travel-policy-abstention",
     "query": "TDY travel reimbursement procedures",
     "expect": [],
     "forbid": ["draft-travel-policy.md"],
+    "reference_answer": "No approved document covering TDY travel reimbursement procedures was found.",
+    "expected_abstention": true,
     "top_k": 5,
     "note": "pending_review and never approved -- must not be retrievable (FR-11/FR-26) regardless of clearance"
   },
   {
+    "id": "vpn-guide-abstention",
     "query": "deprecated VPN client setup guide",
     "expect": [],
     "forbid": ["outdated-vpn-guide.md"],
+    "reference_answer": "No approved document covering the deprecated VPN client setup guide was found.",
+    "expected_abstention": true,
     "top_k": 5,
     "note": "rejected -- must not be retrievable (FR-11/FR-26) regardless of clearance"
   }

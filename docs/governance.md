@@ -24,7 +24,9 @@ governed?"* This document assembles that answer, and gives the remaining gaps
 somewhere to live.
 
 It is deliberately a map of existing behaviour, not a policy aspiration. Every
-"implemented" row below points at code.
+"implemented" row below points at code. The DoD control profile is the one
+explicit extension: it separates the controls already present from deployment
+authorization gates and residuals, and does not present either as implemented.
 
 ## Status convention
 
@@ -45,6 +47,7 @@ issue.
 |---|---|---|
 | Access control (RBAC) | **Validated live** | Keycloak client roles → OIDC claims → server-side filter |
 | Metadata management | **Validated live** | Section 6.3 schema + admin-configurable vocabulary (C9) |
+| DoD classified-information marking/lifecycle profile | **Partial** | Human curation, advisory marking detection, access filtering, system banner, and audited retagging exist; formal portion/control marking, authority/declassification metadata, compilation review, and chat-output marking do not |
 | Data quality | **Validated live** | Mandatory curation queue (FR-10..FR-16) |
 | Auditability | **Validated live** | FR-31 audit log, append-only (NFR-2) |
 | Document versioning | **Validated live** | FR-7 supersede chain |
@@ -156,6 +159,158 @@ governed centrally and values cannot drift per-uploader.
 Uploader tagging is re-validated server-side against the submitter's own
 claims (FR-18) — the UI constrains the dropdown, but the constraint is
 enforced again in `common/metadata.py`, which is what actually holds.
+
+## DoD classified-information control profile
+
+This section adapts the digital-information controls relevant to this RAG
+system from:
+
+- [DoDM 5200.01, Volume 1, Change 3 (January 17, 2025)](https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodm/520001m_vol1.pdf),
+  covering classification, declassification, challenges, and lifecycle
+  authority;
+- [DoDM 5200.01, Volume 2, Change 4 (July 28, 2020)](https://www.esd.whs.mil/Portals/54/Documents/DD/issuances/dodm/520001m_vol2.pdf),
+  covering markings, electronic information, dynamic documents, and special
+  control markings; and
+- [32 CFR Part 2001](https://www.ecfr.gov/current/title-32/subtitle-B/chapter-XX/part-2001),
+  the government-wide implementing direction for classified national security
+  information.
+
+It is an implementation profile, not a substitute for those authorities and
+not a representation that this repository, by itself, is accredited or
+authorized to process classified information. It does not confer original or
+derivative classification authority, declassification authority, foreign
+disclosure authority, eligibility for access, or approval to process SCI,
+SAP, Restricted Data (RD), Formerly Restricted Data (FRD), NATO, or foreign
+government information (FGI). The authorizing official, security manager,
+applicable security classification guide (SCG), agency/component rules,
+contracts, and information-system authorization remain controlling. CUI also
+requires its separate governing profile; a `CUI` value in this system is not
+proof of compliance with DoD's CUI requirements.
+
+### What “adaptive classification” means here
+
+Adaptive classification is **adaptive handling of authoritative human
+decisions**, not classification by AI. The safe sequence is:
+
+```text
+source markings / SCG
+        │
+        ▼
+advisory detection ── conflict or uncertainty ──▶ pending review / quarantine
+        │                                              │
+        ▼                                              ▼
+authorized human decision ─────────────────────▶ system handling label
+                                                       │
+                                                       ▼
+                                     access filter, display, output, audit
+```
+
+The three labels in that sequence must not be conflated:
+
+1. **Authoritative classification and control markings** come from an OCA,
+   derivative classifier applying an SCG or source document, or another
+   authorized official. A model, regex, uploader, curator role, or vocabulary
+   administrator does not acquire that authority from this application.
+2. **The effective system handling label** is structured metadata used to
+   route, filter, and protect data. It must be at least as restrictive as the
+   authoritative source markings and applicable controls. It may become more
+   restrictive after an authorized compilation review; it may never become
+   less restrictive merely because an automated detector failed to find a
+   marking.
+3. **The deployment banner** identifies the system/enclave marking selected by
+   the authorizing authority. It is not a document-level classification
+   decision and must not be derived from the viewer's clearance.
+
+Today, `Document.classification` collapses much of (1) and (2) into one
+human-assigned value. `PortalSettings` holds (3). The rule-based scan in
+[`marking_detection.py`](../services/common/common/marking_detection.py) and
+the optional LLM suggestion are curator-facing advisories only. An ingestion
+remains `pending_review` until a human approves it. Later metadata edits are
+audited and propagated to stored chunks; an edit outside the editor's own
+clearance/releasability returns the document to `pending_review`. Those are
+useful safeguards, but a production deployment must additionally bind each
+human workflow role to real, documented classification authority. An
+application role alone is not that evidence.
+
+When a source marking is missing, conflicting, unsupported, or higher than the
+assigned label, the required behavior for this profile is fail-closed:
+withhold it from retrieval, preserve the original, surface the discrepancy to
+an authorized reviewer, and apply the system-high handling rule until the
+reviewer records a supported decision. Automatic downgrade or
+declassification is prohibited.
+
+### Control mapping and current residuals
+
+| Adapted control | System rule | Current implementation | Residual before classified use |
+|---|---|---|---|
+| Classification decisions have accountable human authority and trace to authoritative guidance | Record who decided, their authority, the SCG/source, reason where required, date, and downgrade/declassification instruction | Human curation and audit identity exist | The schema does not record OCA/derivative-classifier authority, source-list/SCG citation, reason, or declassification/downgrade instructions |
+| Markings identify the highest level, controlled portions, origin, special controls, and duration | Preserve the marked original; normalize only from approved markings; keep enough provenance to reconstruct the decision | Original bytes are retained; banner/portion-like strings are detected as an advisory; chunks carry document/source metadata | Portion markings and classification-authority blocks are not normalized; parser or OCR loss may make detection incomplete; the portal banner is system-level, not a document or answer marking |
+| Access requires eligibility, need-to-know, and all applicable access/dissemination approvals | Derive enforcement attributes from verified identity, never from a prompt or caller-supplied tool argument | OIDC claims drive clearance, releasability, and access-scope filters on both retrieval legs | Keycloak roles are technical enforcement claims, not proof of clearance adjudication, an executed nondisclosure agreement, briefing, or an authoritative need-to-know determination |
+| The most restrictive applicable protection governs the whole output; compilation can raise classification | Compute a monotonic effective label from contributing sources and controls; route uncertain compilations to human review | Classification-separated vector collections and citations expose each source's document classification | No portion-level roll-up, control-marking union, or compilation classifier exists; `[filename, classification]` citations are provenance, **not** banner or portion markings |
+| Electronic query results, messages, and retained chats remain conspicuously marked | Apply overall/portion markings and authority information when known; otherwise display system-high and warn that the dynamic output is not a derivative-classification source | The portal displays an admin-set top/bottom system banner; `rag_search` returns source classifications and a security notice | LibreChat answers, transcripts, print/export, and attached/generated artifacts are not formally marked by this repo; the chat plane must implement the system-high fallback and retention/printing rules |
+| Classification changes are controlled, propagated, and auditable | Only an authorized decision may upgrade, downgrade, declassify, or reclassify; update every controlled copy and notify holders as required | Metadata edits update Postgres and stored chunks and write an audit event; purge can remove local source/chunk copies | No signed decision artifact or holder-notification workflow; chat-plane copies remain outside the update path; declassification review and public-release review are not implemented |
+| Special control regimes retain their own syntax and handling semantics | Reject or quarantine unsupported controls rather than flattening them into a generic tag | Classification and releasability vocabularies are administrator-configurable | The flat lists cannot safely represent the ordered CAPCO marking structure or all SCI/SAP/RD/FRD/FGI/NATO/ORCON/NOFORN/REL TO semantics; multiple releasability values use application-specific match semantics |
+| Classification management is inspected and corrected over time | Review representative source documents, electronic output, original/derivative decisions, access denials, changes, spills, and training evidence | Append-only events, SIEM export, access tests, and Q→C→A evaluation provide evidence | They are not an agency self-inspection program; classification anomalies and recurrent query-pattern detection remain incomplete |
+
+### Output and evaluation handling rule
+
+A generated answer is a new electronic product, not merely a neutral view of
+its citations. Its handling level cannot be lower than the highest
+classification and applicable controls among the retrieved passages, prompt,
+attachments, conversation history, and generated content. Association or
+compilation may require a higher human determination even when every input is
+individually marked lower.
+
+Until an authorized marking service can calculate and render that result, a
+deployment using classified national security information must handle dynamic
+RAG results and retained chats at the authorizing authority's system-high
+level, display that level at the chat boundary, and warn users that an output
+without complete banner, portion, source-authority, and declassification
+markings may not be used as a source for derivative classification. The
+portal's existing banner does not satisfy this requirement for LibreChat or
+for exported artifacts.
+
+The same rule applies to evaluation. By default,
+[`evaluate_rag_quality.py`](../scripts/evaluate_rag_quality.py) stores hashes,
+counts, and scores rather than queries, contexts, filenames, references, or
+answers. A report produced with `--include-content` contains retrieved and
+generated material and must be stored, transmitted, reviewed, and destroyed
+at the effective handling level of that material; the evaluator does not mark
+or declassify it.
+
+### Classified-deployment authorization gate
+
+Before this profile can be represented as operational rather than partial,
+the deployment owner must document and test all of the following:
+
+1. The system authorization/accreditation boundary and system-high level,
+   including the LibreChat/LiteLLM/model, database, object store, vector store,
+   logs, backups, evaluation host, and administrator workstations.
+2. The exact supported marking grammar and controlled vocabulary, including
+   the semantics of combinations. Anything outside it is rejected or held for
+   security review, never silently simplified.
+3. The identity-governance process that maps adjudicated eligibility, access
+   approvals, need-to-know, briefings, and revocation into Keycloak roles.
+4. The named authorities allowed to perform original/derivative decisions,
+   approve ingest, challenge/correct markings, downgrade/declassify, approve
+   foreign disclosure, and authorize destruction. Separate duties where the
+   governing authority requires it.
+5. Preservation and rendering of banner, portion, authority/source,
+   downgrading/declassification, and special-notice metadata across original
+   files, chunks, retrieval results, answers, transcripts, screenshots,
+   print/export, and attachments.
+6. Change propagation and incident/spillage procedures for every copy,
+   especially chat-plane stores and backups outside the local purge path.
+   Deletion is not declassification, and declassification is not authorization
+   for public release.
+7. Representative self-inspection and training evidence, plus access-control,
+   adversarial, and Q→C→A regression results produced and held at the proper
+   handling level.
+
+Physical facilities, secure storage equipment, courier/transmission methods,
+media destruction equipment, TEMPEST/technical security, and other safeguards
+outside this application's boundary remain deployment obligations under the
+applicable authority; this profile deliberately does not restate them.
 
 ## Lineage and provenance
 
@@ -512,7 +667,8 @@ Stated so their absence reads as a decision rather than an oversight:
 
 | Gap | Issue |
 |---|---|
+| DoD classified-information profile is not end-to-end: no normalized portion/control/authority/declassification metadata, compilation review, formal chat/output markings, or complete special-category semantics | Documented above; must be resolved in the system authorization boundary before classified use |
+| Application roles are not evidence of OCA/derivative/declassification/foreign-disclosure authority or personnel access eligibility | Deployment identity-governance and authority mapping required; not implemented by this repository |
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
 | Retrieved content persists in the chat plane beyond purge's reach | Decided ([#286](https://github.com/schuecl/nexus-rag/issues/286)): accepted risk, recorded above; purge event signals it; operator procedure in [`chat-plane-purge.md`](chat-plane-purge.md) |
 | No detection/alerting on reconnaissance-shaped query patterns (metrics/SIEM substrate exists, no detection logic yet) | [threat-model.md](threat-model.md) |
-| No generation-side (Q→C→A) evaluation | [#74](https://github.com/schuecl/nexus-rag/issues/74) |

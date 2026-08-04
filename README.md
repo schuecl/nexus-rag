@@ -42,8 +42,10 @@ claims through one shared library, never trusted from the client.
   gating classification, releasability, access scope, and approval status before anything
   reaches Qdrant. Exposed to LibreChat as an MCP server over streamable HTTP.
 - **Monitoring & evaluation (FR-30..FR-32):** every ingestion, curation, and retrieval event
-  is audit-logged by OIDC identity, and a golden-query harness reports recall@K/precision@K
-  plus a regression check that pending/rejected/superseded content never leaks into results.
+  is audit-logged by OIDC identity. The deterministic golden-query harness reports
+  recall@K/precision@K and fails on pending/rejected/superseded leaks; a separate
+  local-judge harness drives the real LibreChat generation path and reports contextual
+  relevance/recall/precision, faithfulness, answer quality, and citation validity (#74).
 
 **Operational & security hardening:**
 
@@ -97,7 +99,7 @@ Keycloak (OIDC) issues the claims (`clearance`, `releasability`, `groups`, `org`
 | `services/reranker-service` | Cross-encoder reranking over the fused candidate pool | FR-25 |
 | `infra/keycloak` | Seeded realm: claims schema, per-org curator roles, test users | §6.2 |
 | `infra/librechat`, `infra/litellm` | Throwaway dev configs for the MCP/OBO + generation path | §7.7, NFR-9 |
-| `scripts/` | Sample-data seeding, golden-query retrieval evaluation | NFR-9, FR-30/FR-32 |
+| `scripts/` | Sample-data seeding, deterministic retrieval evaluation, and local-judge Q→C→A evaluation | NFR-9, FR-30/FR-32 |
 | `helm/nexus-rag` | Production Kubernetes packaging, scoped to this project's components | NFR-10 |
 
 ## Security model
@@ -125,7 +127,7 @@ nexus-rag/
   infra/
     keycloak/realm-export/   # seeded dev realm
     librechat/, litellm/     # throwaway dev configs
-  scripts/                   # sample-data seeding, retrieval evaluation harness
+  scripts/                   # sample-data seeding, retrieval and Q→C→A evaluation harnesses
   helm/nexus-rag/            # production Helm chart (NFR-10)
   docs/                      # dev-setup.md, testing.md
 ```
@@ -137,6 +139,7 @@ nexus-rag/
 - **[docs/architecture/diagrams.md](docs/architecture/diagrams.md)** — Mermaid diagrams of the full system: every application, both data pipelines, the tagging model, lifecycle, and Helm topology (#129)
 - **[docs/dev-setup.md](docs/dev-setup.md)** — local stack, seeded users, full walkthrough, and the honest what's-stubbed-vs-working list
 - **[docs/testing.md](docs/testing.md)** — the test pyramid, coverage/mutation policy, and known gaps
+- **[docs/governance.md](docs/governance.md)** — implemented data controls, the DoD classified-information profile, and explicitly unresolved authorization/marking gaps
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — workflow, CI gates, and how to run the suites
 
@@ -154,9 +157,9 @@ or *validated against a live environment* (see
   durable queue and NFR-12's object storage. That run surfaced and fixed eight real bugs and
   confirmed LibreChat OIDC login and the OBO token-exchange path live — the full history is
   in [docs/dev-setup.md](docs/dev-setup.md#live-validation-history).
-- **Not yet verified live:** LibreChat's own code triggering the OBO exchange on a real chat
-  message; the Helm chart against a real cluster / `helm lint`; the NFR-2/NFR-3 DB-hardening
-  against a real environment; PyKMIP encryption-at-rest (NFR-6, unscoped in REQUIREMENTS.md).
+- **Not yet verified live:** the Helm chart against a real cluster / `helm lint`; the
+  NFR-2/NFR-3 DB-hardening against a real environment; PyKMIP encryption-at-rest
+  (NFR-6, unscoped in REQUIREMENTS.md).
 
 The full, current list — with per-item confidence labels and rationale — lives in
 [docs/dev-setup.md](docs/dev-setup.md#whats-stubbed-vs-working).

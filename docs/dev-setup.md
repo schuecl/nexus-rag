@@ -1675,10 +1675,16 @@ the docs, not a silent "it works" — flag it if you find one.
   never leaks into results regardless of the querying persona's clearance (a regression
   check on FR-26, not just a quality metric). Not started automatically — run on demand
   with `docker compose --profile eval run --rm eval-retrieval` (FR-32's "periodically
-  re-evaluate"). This is a lighter, judge-free stand-in for the `ragas` library itself
-  (Section 7.6): RAGAS's more interesting metrics (faithfulness, LLM-judged context
-  precision) need a configured LLM judge and wired-up generation, neither of which exists
-  in this repo yet.
+  re-evaluate"). It remains the fast, deterministic, judge-free security and retrieval
+  gate. Issue #74 adds the complementary host-side `scripts/evaluate_rag_quality.py`:
+  it drives the real LibreChat Agent generation path, obtains ordered structured contexts
+  from `/debug/rag_search`, and uses the local Ollama model to report contextual
+  relevance/recall/precision, faithfulness, answer relevance/correctness, citation
+  validity, and abstention behavior. Run it after creating the per-user RAG Assistant:
+  `python scripts/evaluate_rag_quality.py --agent-id <agent-id> --history-dir
+  .eval-history/qca`. Local-judge scores are relative comparisons only, and the tool is
+  manual rather than a CI gate; see `docs/testing.md` for its data-handling and baseline
+  rules.
 - **Prompt-injection mitigation for retrieved content (P1)** — retrieved chunk `text` is
   untrusted by construction (whatever an uploader submitted; FR-18's tagging validation
   constrains metadata, not document content). `orchestration-mcp`'s `rag_search`

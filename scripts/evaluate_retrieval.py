@@ -21,14 +21,13 @@ informational content-overlap note (`content_overlap` below): it can flag
 a false positive whenever the corpus has a duplicate filename, so it must
 never be the thing that fails the build.
 
-Deliberately not the `ragas` library itself (REQUIREMENTS.md Section 7.6):
-RAGAS's more interesting metrics (faithfulness, LLM-judged context
-precision/recall) need a configured LLM judge and a wired-up generation
-step, neither of which exists in this repo yet -- generation happens via
-LibreChat/LiteLLM, outside this codebase. This is a lighter,
-judge-free stand-in that covers FR-30's literal "recall@K, precision@K, or
-an equivalent proxy" using only the retrieval layer this repo controls.
-Revisit once end-to-end generation is wired and a judge model is available.
+This remains deliberately judge-free: it is the fast, deterministic gate for
+FR-30's literal "recall@K, precision@K, or an equivalent proxy" and FR-26's
+approved-only invariant. Issue #74's `evaluate_rag_quality.py` complements it
+with a local LLM judge and the real LibreChat generation path for contextual
+relevancy/recall/precision, faithfulness, answer quality, and citation
+validity. Those noisy judge scores are relative tuning signals, not a
+replacement for this deterministic safety check.
 
 Run manually or on a schedule (FR-32's "periodically re-evaluate") --
 `docker compose --profile eval run --rm eval-retrieval`, or directly with
