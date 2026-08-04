@@ -23,3 +23,12 @@ htmlcov/
 infra/certs/*.crt
 infra/certs/*.key
 infra/certs/*.srl
+
+# Compose's local-override mechanism. Machine-specific accommodations live here
+# (a host port already taken, a bind mount only this machine has) precisely so
+# they are NOT project config -- docker-compose.yml stays the shared truth and a
+# branch switch cannot silently revert a local workaround. Ignored because it is
+# per-developer by construction, and because `git add -A` otherwise sweeps it
+# into an unrelated commit, which is easy to miss in review and confusing to
+# receive.
+docker-compose.override.yml
