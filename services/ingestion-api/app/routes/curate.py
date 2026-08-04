@@ -540,6 +540,13 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
     act on this" signal from `assigned_classification`/`final_classification`
     plus which decision action produced this entry, since that's read off the
     audit row itself, not something this function can see.
+
+    Issue #380: when #378's LLM verification ran for this document, also
+    embeds `pii_regex_llm_verified_count`/`pii_regex_llm_likely_false_positive_count`
+    -- counts only, never a verdict's own rationale text, same posture as
+    everything else here. Omitted entirely when verification never ran (not
+    zeroed), so the calibration script can tell "no verdicts" apart from
+    "verdicts unanimously said genuine" without a third sentinel state.
     """
     advisory = doc.tagging_advisory or {}
     precedent = advisory.get("precedent") or {}
@@ -589,6 +596,18 @@ def _tagging_advisory_outcome(doc: Document) -> dict | None:
         # posture as content_advisory_kinds above.
         outcome["pii_regex_kinds"] = sorted({f["kind"] for f in pii_regex_findings})
         outcome["pii_regex_count"] = len(pii_regex_findings)
+        # Issue #380 (calibration follow-on to #378): counts only, never a
+        # verdict's own rationale text -- same posture as every other field
+        # here. Omitted entirely (not zero) when verification never ran for
+        # this document, so `calibrate_tagging_advisory.py` can tell "no
+        # verdicts" apart from "verdicts said nothing was a false positive"
+        # without a third state.
+        verdicts = [f.get("llm_verdict") for f in pii_regex_findings if f.get("llm_verdict")]
+        if verdicts:
+            outcome["pii_regex_llm_verified_count"] = len(verdicts)
+            outcome["pii_regex_llm_likely_false_positive_count"] = sum(
+                1 for v in verdicts if v.get("likely_false_positive")
+            )
     if flagged_pii_llm:
         # Same posture -- kinds only, never the model's own rationale text.
         outcome["pii_llm_kinds"] = sorted({f["kind"] for f in pii_llm_findings})

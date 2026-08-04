@@ -41,6 +41,14 @@ changed in the running system, with the issue/PR reference for the trail.
   this never hides or filters a finding, the curator still sees and decides
   on every regex match. New metric:
   `nexus_rag_ingestion_worker_pii_llm_verification_total{outcome=...}`.
+- `scripts/calibrate_tagging_advisory.py` now scores #378's `llm_verdict`
+  against real curator decisions (#380): a new `pii_regex_llm_verdict` tally
+  reports `agreement_rate` for documents where every PII finding landed on
+  the same verdict (all likely-false-positive, or all not) -- did the
+  curator's approve/reject/correct decision agree with what the verdict
+  predicted? Mixed-verdict or partially-verified documents are counted in
+  `skipped` rather than scored. Participates in `--min-agreement` like the
+  other agreement-rate suggesters.
 - Mutation testing is now an enforced gate (#78): the nightly `mutation` job
   fails below an 80% kill rate on the four security-critical modules
   (`claims.py`, `qdrant_filters.py`, `metadata.py`, `versioning.py`),

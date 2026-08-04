@@ -169,6 +169,26 @@ def _pii_regex_flagged_advisory() -> dict:
     }
 
 
+def _pii_regex_verified_advisory(*, all_verified: bool = True) -> dict:
+    """Issue #380: same two findings as `_pii_regex_flagged_advisory`, but
+    each also carries #378's `llm_verdict` -- both saying likely false
+    positive. When `all_verified` is False, only the first finding got a
+    verdict (simulates #378's verification pass being unavailable partway
+    through, or having only ever covered a subset of findings)."""
+    advisory = _pii_regex_flagged_advisory()
+    findings = advisory["pii_advisory"]["findings"]
+    findings[0]["llm_verdict"] = {
+        "likely_false_positive": True,
+        "rationale": "reads like a part number, not an SSN",
+    }
+    if all_verified:
+        findings[1]["llm_verdict"] = {
+            "likely_false_positive": True,
+            "rationale": "reads like a catalog reference, not a card number",
+        }
+    return advisory
+
+
 def _pii_llm_flagged_advisory() -> dict:
     return {
         "assigned_classification": "CUI",
@@ -335,6 +355,12 @@ class TestPiiAdvisoryLinkage:
         assert outcome["pii_regex_kinds"] == ["credit_card", "ssn"]
         assert outcome["pii_regex_count"] == 2
         assert "pii_llm_kinds" not in outcome
+        # Issue #380: #378's LLM verification never ran for this fixture (no
+        # finding carries an `llm_verdict`), so these keys must be omitted
+        # entirely rather than zeroed -- see _tagging_advisory_outcome's
+        # docstring on why that distinction matters to the calibration script.
+        assert "pii_regex_llm_verified_count" not in outcome
+        assert "pii_regex_llm_likely_false_positive_count" not in outcome
         # No marking-mismatch/precedent/LLM finding of its own.
         assert outcome["marking_mismatch_flagged"] is False
 
@@ -369,6 +395,42 @@ class TestPiiAdvisoryLinkage:
         entry = _decision_entry(session, "document.reject")
         outcome = entry.detail["tagging_advisory"]
         assert outcome["pii_regex_kinds"] == ["credit_card", "ssn"]
+
+    def test_approve_embeds_llm_verified_counts_when_all_findings_verified(
+        self, session: Session
+    ) -> None:
+        doc = _document(tagging_advisory=_pii_regex_verified_advisory(all_verified=True))
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["pii_regex_count"] == 2
+        assert outcome["pii_regex_llm_verified_count"] == 2
+        assert outcome["pii_regex_llm_likely_false_positive_count"] == 2
+        # Never the verdict's own rationale text -- kinds/counts only, same
+        # posture as pii_regex_kinds/content_advisory_kinds.
+        assert "rationale" not in str(outcome)
+
+    def test_approve_embeds_partial_verified_count_when_only_some_findings_verified(
+        self, session: Session
+    ) -> None:
+        doc = _document(tagging_advisory=_pii_regex_verified_advisory(all_verified=False))
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        curate.approve(doc.id, corrections=None, user=CURATOR, session=session, _csrf=None)
+
+        entry = _decision_entry(session, "document.approve")
+        outcome = entry.detail["tagging_advisory"]
+        assert outcome["pii_regex_count"] == 2
+        # Only the first finding carries an llm_verdict.
+        assert outcome["pii_regex_llm_verified_count"] == 1
+        assert outcome["pii_regex_llm_likely_false_positive_count"] == 1
 
     def test_approve_of_no_pii_finding_document_has_no_pii_keys(self, session: Session) -> None:
         advisory = _pii_regex_flagged_advisory()

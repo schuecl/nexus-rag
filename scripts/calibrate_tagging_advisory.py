@@ -45,6 +45,19 @@ left untouched. A low `acted_on_rate` is a signal worth looking at either way
 genuine spillage-adjacent content is being waved through -- this script only
 surfaces the rate, it doesn't judge which.
 
+Issue #380 (calibration follow-on to #378): #378 added an `llm_verdict`
+(`likely_false_positive` + rationale) to each Phase 1 regex finding, judged
+from context alone -- purely advisory, it never filters a finding. This adds
+`pii_regex_llm_verdict` (`PiiVerdictTally`) to measure how well that verdict
+actually tracks curation practice: when every finding in a document landed
+on the same verdict, did the curator's decision agree? Unlike `pii_regex`/
+`pii_llm` above, this has an actual prediction to score against (the
+verdict itself), so it uses `agreement_rate` like the classification-tag
+suggesters, not `acted_on_rate`. A document where the verdicts disagreed
+with each other, or where verification only covered some of its findings,
+is counted in `skipped` -- there's no single verdict to score a
+document-level curator decision against in that case.
+
 Known limitation, not fixed here: the LLM suggester's `disagrees_with_assigned`
 flag (services/ingestion-worker/app/classification_suggestion.py via
 _apply_llm_suggestion_advisory) is one boolean covering *either* a
@@ -206,11 +219,12 @@ class PiiTally:
         final_classification: str | None,
     ) -> None:
         self.flagged += 1
-        if action == "document.reject":
-            self.rejected += 1
-        elif assigned_classification is None or final_classification is None:
+        acted = _pii_curator_acted(action, assigned_classification, final_classification)
+        if acted is None:
             self.unresolved += 1
-        elif assigned_classification.upper() != final_classification.upper():
+        elif action == "document.reject":
+            self.rejected += 1
+        elif acted:
             self.approved_corrected += 1
         else:
             self.approved_unchanged += 1
@@ -231,6 +245,113 @@ class PiiTally:
         }
 
 
+def _pii_curator_acted(
+    action: str,
+    assigned_classification: str | None,
+    final_classification: str | None,
+) -> bool | None:
+    """Shared "did the curator visibly act on this PII finding" signal used
+    by both `PiiTally` above and `PiiVerdictTally` below: rejecting the
+    document, or approving it with a changed classification, counts as
+    acted-on; approving with the ingestion-time classification untouched
+    does not. Returns None (unresolved -- see `PiiTally`'s docstring) when
+    an approve decision is missing either classification to compare."""
+    if action == "document.reject":
+        return True
+    if assigned_classification is None or final_classification is None:
+        return None
+    return assigned_classification.upper() != final_classification.upper()
+
+
+@dataclass
+class PiiVerdictTally:
+    """Issue #380: calibration for #378's `llm_verdict` -- when the LLM
+    verification pass ran and every regex finding in a document landed on
+    the *same* verdict (all `likely_false_positive` or all not), did the
+    curator's decision agree? A document where the verdicts disagreed with
+    each other, or where verification only covered some of the document's
+    findings, has no single verdict to score the curator's one document-level
+    decision against, so it's counted in `skipped` rather than guessed at.
+
+    "Agreement" mirrors `PiiTally`'s own notion of curator action
+    (`_pii_curator_acted`): a `likely_false_positive` verdict agrees with a
+    curator who did *not* act on the finding (approved unchanged); a
+    not-`likely_false_positive` verdict agrees with a curator who *did*
+    (rejected, or approved with a correction). This is a read on how well
+    the verdict tracks real curation practice, not a claim about whether the
+    finding itself was genuine spillage -- see module docstring.
+    """
+
+    predicted_false_positive: int = 0
+    predicted_false_positive_agreed: int = 0
+    predicted_false_positive_overridden: int = 0
+    predicted_genuine: int = 0
+    predicted_genuine_agreed: int = 0
+    predicted_genuine_overridden: int = 0
+    unresolved: int = 0
+    skipped: int = 0
+
+    def record(
+        self,
+        *,
+        action: str,
+        assigned_classification: str | None,
+        final_classification: str | None,
+        regex_count: int,
+        verified_count: int,
+        false_positive_count: int,
+    ) -> None:
+        if regex_count == 0 or verified_count != regex_count:
+            self.skipped += 1
+            return
+        if false_positive_count == regex_count:
+            predicted_false_positive = True
+        elif false_positive_count == 0:
+            predicted_false_positive = False
+        else:
+            # Verdicts disagreed with each other across this document's
+            # findings -- no single prediction to score.
+            self.skipped += 1
+            return
+
+        acted = _pii_curator_acted(action, assigned_classification, final_classification)
+        if acted is None:
+            self.unresolved += 1
+            return
+
+        if predicted_false_positive:
+            self.predicted_false_positive += 1
+            if acted:
+                self.predicted_false_positive_overridden += 1
+            else:
+                self.predicted_false_positive_agreed += 1
+        else:
+            self.predicted_genuine += 1
+            if acted:
+                self.predicted_genuine_agreed += 1
+            else:
+                self.predicted_genuine_overridden += 1
+
+    @property
+    def agreement_rate(self) -> float | None:
+        agreed = self.predicted_false_positive_agreed + self.predicted_genuine_agreed
+        total = self.predicted_false_positive + self.predicted_genuine
+        return agreed / total if total else None
+
+    def to_dict(self) -> dict:
+        return {
+            "predicted_false_positive": self.predicted_false_positive,
+            "predicted_false_positive_agreed": self.predicted_false_positive_agreed,
+            "predicted_false_positive_overridden": self.predicted_false_positive_overridden,
+            "predicted_genuine": self.predicted_genuine,
+            "predicted_genuine_agreed": self.predicted_genuine_agreed,
+            "predicted_genuine_overridden": self.predicted_genuine_overridden,
+            "unresolved": self.unresolved,
+            "skipped": self.skipped,
+            "agreement_rate": self.agreement_rate,
+        }
+
+
 @dataclass
 class Report:
     since: str | None
@@ -244,6 +365,7 @@ class Report:
     llm_doc_type_flags: int = 0
     pii_regex: PiiTally = field(default_factory=PiiTally)
     pii_llm: PiiTally = field(default_factory=PiiTally)
+    pii_regex_llm_verdict: PiiVerdictTally = field(default_factory=PiiVerdictTally)
 
     def to_dict(self) -> dict:
         return {
@@ -258,6 +380,7 @@ class Report:
             "llm_doc_type_flags": self.llm_doc_type_flags,
             "pii_regex": self.pii_regex.to_dict(),
             "pii_llm": self.pii_llm.to_dict(),
+            "pii_regex_llm_verdict": self.pii_regex_llm_verdict.to_dict(),
         }
 
 
@@ -330,6 +453,16 @@ def aggregate(decisions: list[dict], ranks: dict[str, int]) -> Report:
                 final_classification=outcome.get("final_classification"),
             )
 
+        if "pii_regex_llm_verified_count" in outcome:
+            report.pii_regex_llm_verdict.record(
+                action=row.get("action") or "",
+                assigned_classification=outcome.get("assigned_classification"),
+                final_classification=outcome.get("final_classification"),
+                regex_count=outcome.get("pii_regex_count") or 0,
+                verified_count=outcome.get("pii_regex_llm_verified_count") or 0,
+                false_positive_count=outcome.get("pii_regex_llm_likely_false_positive_count") or 0,
+            )
+
         if "pii_llm_kinds" in outcome:
             report.pii_llm.record(
                 action=row.get("action") or "",
@@ -387,6 +520,21 @@ def print_report(report: dict) -> None:
             f"approved_corrected={tally['approved_corrected']} rejected={tally['rejected']} "
             f"unresolved={tally['unresolved']} acted_on_rate={rate_str}"
         )
+    verdict = report["pii_regex_llm_verdict"]
+    verdict_rate = verdict["agreement_rate"]
+    verdict_rate_str = (
+        f"{verdict_rate:.2%}" if verdict_rate is not None else "n/a (nothing resolvable)"
+    )
+    print(
+        f"  pii_regex_llm_verdict: predicted_false_positive={verdict['predicted_false_positive']} "
+        f"(agreed={verdict['predicted_false_positive_agreed']} "
+        f"overridden={verdict['predicted_false_positive_overridden']}) "
+        f"predicted_genuine={verdict['predicted_genuine']} "
+        f"(agreed={verdict['predicted_genuine_agreed']} "
+        f"overridden={verdict['predicted_genuine_overridden']}) "
+        f"unresolved={verdict['unresolved']} skipped={verdict['skipped']} "
+        f"agreement_rate={verdict_rate_str}"
+    )
 
 
 def print_trend(previous: dict, current: dict) -> None:
@@ -407,6 +555,16 @@ def print_trend(previous: dict, current: dict) -> None:
             continue
         delta = cur_rate - prev_rate
         print(f"  {name}: {cur_rate:.2%} vs {prev_rate:.2%} (delta {delta:+.2%})")
+    prev_verdict_rate = previous.get("pii_regex_llm_verdict", {}).get("agreement_rate")
+    cur_verdict_rate = current["pii_regex_llm_verdict"]["agreement_rate"]
+    if prev_verdict_rate is None or cur_verdict_rate is None:
+        print("  pii_regex_llm_verdict: not comparable")
+    else:
+        delta = cur_verdict_rate - prev_verdict_rate
+        print(
+            f"  pii_regex_llm_verdict: {cur_verdict_rate:.2%} vs {prev_verdict_rate:.2%} "
+            f"(delta {delta:+.2%})"
+        )
 
 
 def main() -> None:
@@ -475,6 +633,7 @@ def main() -> None:
             "releasability_caveats",
             "precedent",
             "llm_classification",
+            "pii_regex_llm_verdict",
         )
         below_floor = [
             name

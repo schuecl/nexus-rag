@@ -906,10 +906,44 @@ the docs, not a silent "it works" — flag it if you find one.
   `pii_llm_findings_total{outcome="unavailable"}` incrementing a few times under heavy
   concurrent Ollama load from an unrelated backlog of large PDFs also queued in this dev
   stack — the pre-existing degrade-to-`None`-on-timeout contract working as designed,
-  not a regression.) `scripts/calibrate_tagging_advisory.py`'s `pii_regex`/`pii_llm`
-  tallies don't yet incorporate `llm_verdict` (whether a curator's decision agreed with
-  a false-positive verdict) — a natural follow-on once there's evidence of how well the
-  verdict tracks real curation practice, not built here.
+  not a regression.) `scripts/calibrate_tagging_advisory.py` did not yet incorporate
+  `llm_verdict` at the time -- closed by issue #380 below.
+- **Calibration for #378's `llm_verdict` (issue #380)** — `scripts/calibrate_tagging_advisory.py`
+  now scores how well the verdict tracks curation practice, not just whether a curator
+  acted on a PII finding at all: a new `pii_regex_llm_verdict` (`PiiVerdictTally`) checks,
+  for documents where #378's LLM verification ran and every finding in the document landed
+  on the *same* verdict, whether the curator's decision agreed (a `likely_false_positive`
+  verdict agrees with approving unchanged; a not-`likely_false_positive` verdict agrees
+  with rejecting or correcting). Unlike `pii_regex`/`pii_llm`'s `acted_on_rate`, this one
+  has an actual prediction to score against, so it reports `agreement_rate` like the
+  classification-tag suggesters do, and (opt-in, same as them) participates in
+  `--min-agreement`. A document where the verdicts disagreed with each other, or only
+  some of its findings got verified, is counted in `skipped` rather than guessed at --
+  there's no single per-document verdict to score a per-document curator decision
+  against in that case. New fields on the audit-entry outcome
+  (`services/ingestion-api/app/routes/curate.py`'s `_tagging_advisory_outcome`):
+  `pii_regex_llm_verified_count`/`pii_regex_llm_likely_false_positive_count`, counts
+  only, omitted entirely (not zeroed) when verification never ran for that document.
+  Unit-level behavior is **tested against mocks**
+  (`tests/unit/test_calibrate_tagging_advisory.py`'s `TestPiiVerdictTally`/
+  `TestAggregatePiiVerdict`, pure aggregation logic against constructed audit rows;
+  `services/ingestion-api/tests/test_tagging_advisory_linkage.py`'s new cases, linkage
+  against an in-memory SQLite session); the DB fetch itself is **validated against a
+  live environment**: real `docker compose up` with `PII_LLM_MODEL` re-enabled, a fresh
+  upload of the same field-service-manual fixture #378 used, approved by `carol-curator`
+  through the real `POST /curate/<id>/approve` API, confirmed end to end via
+  `docker compose --profile calibration run --rm calibrate-tagging-advisory` against
+  the real dev-stack Postgres: the audit row carried the new
+  `pii_regex_llm_verified_count`/`pii_regex_llm_likely_false_positive_count` fields, and
+  the printed report picked them up. This run happened to land 2-of-3 findings verdicted
+  `likely_false_positive` rather than 3-of-3 (real model output varies run to run) --
+  which live-exercised the mixed-verdict `skipped` path rather than a scored one
+  (`pii_regex_llm_verdict: ... skipped=1`), itself a useful confirmation that documents
+  without a single clean verdict are excluded rather than guessed at. The
+  all-agreed/all-overridden scoring paths are covered by the mocked unit tests above,
+  same "logic is unit-tested, the live run confirmed wiring + wrote the right JSON
+  shape" split as elsewhere in this doc (see "Deliberately not a pass/fail CI gate" in
+  `docs/testing.md`).
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk

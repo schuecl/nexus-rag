@@ -459,7 +459,7 @@ flowchart TD
     ui --> dec{"curator decision"}
     dec -->|approve / reject / correct| audit["audit_log entry<br/>tagging_advisory outcome embedded (#345):<br/>flagged vs. acted-on, per suggester"]
     audit --> calib["scripts/calibrate_tagging_advisory.py<br/>(profile: calibration)<br/>nexus_rag_audit_reporting role,<br/>SELECT-only on audit_log"]
-    calib --> report["per-suggester agreement rate<br/>(marking_mismatch / precedent /<br/>llm_classification / pii_regex / pii_llm)"]
+    calib --> report["per-suggester agreement rate<br/>(marking_mismatch / precedent /<br/>llm_classification / pii_regex / pii_llm /<br/>pii_regex_llm_verdict, #380)"]
 ```
 
 What to note:

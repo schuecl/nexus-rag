@@ -347,6 +347,16 @@ there means something different — see
 the `acted_on_rate` definition (rejected or approved-with-a-changed-tag counts
 as acted on; approved-unchanged does not).
 
+Issue #380 adds `pii_regex_llm_verdict` (`PiiVerdictTally`) on top of that:
+#378 added an `llm_verdict` (`likely_false_positive` + rationale) to each
+Phase 1 regex finding, judged from context alone. Unlike `pii_regex`/`pii_llm`
+above, the verdict *is* an actual prediction to score, so this one uses
+`agreement_rate` like the classification-tag suggesters — did the curator's
+decision agree with what the verdict predicted, for the (common) case where
+every finding in a document landed on the same verdict? A document with mixed
+verdicts across its findings, or only-partial verification coverage, is
+counted in `skipped` rather than scored.
+
 ```bash
 # Persist each run under a timestamped filename and print a trend line
 # against the previous one.

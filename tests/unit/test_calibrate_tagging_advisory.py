@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from calibrate_tagging_advisory import (
     PiiTally,
+    PiiVerdictTally,
     Tally,
     aggregate,
     latest_prior_report,
@@ -373,6 +374,171 @@ class TestAggregatePii:
         report = aggregate(decisions, RANKS).to_dict()
         assert report["pii_regex"]["flagged"] == 0
         assert report["pii_llm"]["flagged"] == 0
+
+
+class TestPiiVerdictTally:
+    """Issue #380: calibration for #378's `llm_verdict` -- record() is
+    exercised directly here (unlike PiiTally above, which the
+    TestAggregatePii* classes exercise indirectly through aggregate())."""
+
+    def test_agreement_rate_is_none_with_nothing_resolved(self) -> None:
+        assert PiiVerdictTally().agreement_rate is None
+
+    def test_all_false_positive_and_curator_left_it_unchanged_is_agreement(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=2,
+            verified_count=2,
+            false_positive_count=2,
+        )
+        assert tally.predicted_false_positive == 1
+        assert tally.predicted_false_positive_agreed == 1
+        assert tally.predicted_false_positive_overridden == 0
+        assert tally.agreement_rate == pytest.approx(1.0)
+
+    def test_all_false_positive_but_curator_rejected_is_override(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.reject",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=1,
+            verified_count=1,
+            false_positive_count=1,
+        )
+        assert tally.predicted_false_positive_overridden == 1
+        assert tally.agreement_rate == pytest.approx(0.0)
+
+    def test_all_genuine_and_curator_rejected_is_agreement(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.reject",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=1,
+            verified_count=1,
+            false_positive_count=0,
+        )
+        assert tally.predicted_genuine == 1
+        assert tally.predicted_genuine_agreed == 1
+        assert tally.agreement_rate == pytest.approx(1.0)
+
+    def test_all_genuine_but_curator_approved_unchanged_is_override(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=1,
+            verified_count=1,
+            false_positive_count=0,
+        )
+        assert tally.predicted_genuine_overridden == 1
+        assert tally.agreement_rate == pytest.approx(0.0)
+
+    def test_mixed_verdicts_across_findings_is_skipped(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=2,
+            verified_count=2,
+            false_positive_count=1,
+        )
+        assert tally.skipped == 1
+        assert tally.predicted_false_positive == 0
+        assert tally.predicted_genuine == 0
+
+    def test_partial_verification_is_skipped(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=3,
+            verified_count=2,
+            false_positive_count=2,
+        )
+        assert tally.skipped == 1
+
+    def test_zero_regex_count_is_skipped(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification="CUI",
+            final_classification="CUI",
+            regex_count=0,
+            verified_count=0,
+            false_positive_count=0,
+        )
+        assert tally.skipped == 1
+
+    def test_missing_classification_on_approve_is_unresolved(self) -> None:
+        tally = PiiVerdictTally()
+        tally.record(
+            action="document.approve",
+            assigned_classification=None,
+            final_classification="CUI",
+            regex_count=1,
+            verified_count=1,
+            false_positive_count=1,
+        )
+        assert tally.unresolved == 1
+        assert tally.predicted_false_positive == 0
+
+
+class TestAggregatePiiVerdict:
+    def test_all_false_positive_approved_unchanged_scored_through_aggregate(self) -> None:
+        decisions = [
+            _decision(
+                "document.approve",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": False,
+                    "flagged_classification": None,
+                    "flagged_caveats": [],
+                    "final_classification": "CUI",
+                    "final_releasability": ["NONE"],
+                    "pii_regex_kinds": ["credit_card", "bank_routing"],
+                    "pii_regex_count": 2,
+                    "pii_regex_llm_verified_count": 2,
+                    "pii_regex_llm_likely_false_positive_count": 2,
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        verdict = report["pii_regex_llm_verdict"]
+        assert verdict["predicted_false_positive"] == 1
+        assert verdict["predicted_false_positive_agreed"] == 1
+        assert verdict["agreement_rate"] == pytest.approx(1.0)
+        # Base pii_regex tally is still scored independently of the verdict tally.
+        assert report["pii_regex"]["approved_unchanged"] == 1
+
+    def test_document_with_no_verification_field_is_not_counted(self) -> None:
+        decisions = [
+            _decision(
+                "document.approve",
+                {
+                    "assigned_classification": "CUI",
+                    "marking_mismatch_flagged": False,
+                    "flagged_classification": None,
+                    "flagged_caveats": [],
+                    "final_classification": "CUI",
+                    "final_releasability": ["NONE"],
+                    "pii_regex_kinds": ["ssn"],
+                    "pii_regex_count": 1,
+                },
+            )
+        ]
+        report = aggregate(decisions, RANKS).to_dict()
+        verdict = report["pii_regex_llm_verdict"]
+        assert verdict["predicted_false_positive"] == 0
+        assert verdict["predicted_genuine"] == 0
+        assert verdict["skipped"] == 0
 
 
 class TestHistoryStore:
