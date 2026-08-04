@@ -154,6 +154,64 @@ class TestJudgmentScoring:
         assert result["contextual_recall"] is None
         assert result["faithfulness"] is None
         assert result["abstention_correct"] is True
+        assert result["abstention_undetermined"] is False
+
+    def test_failed_abstention_scores_false_rather_than_erroring(self) -> None:
+        """The judge saying "expected to abstain, and it didn't" is a real
+        result the schema must accept -- the qca-v1 prompt never told the model
+        to emit it, which is how the null case below went unnoticed."""
+        judgment = _judgment(relevance=[True])
+        judgment["abstention_correct"] = False
+
+        result = score_judgment(
+            judgment,
+            [_context(1)],
+            "The retention period is 90 days.",
+            expected_abstention=True,
+        )
+
+        assert result["abstention_correct"] is False
+        assert result["abstention_undetermined"] is False
+
+    def test_undetermined_abstention_does_not_fail_the_case(self) -> None:
+        """Regression for the reviewer's finding on #383: qwen2.5:3b-instruct
+        returns null here 100% of the time even when it judges the abstention
+        valid on every other field. Hard-erroring turned that into a reported
+        generation regression that had not happened.
+        """
+        judgment = _judgment(relevance=[])
+        judgment["abstention_correct"] = None
+
+        result = score_judgment(
+            judgment,
+            [],
+            "No approved document was found.",
+            expected_abstention=True,
+        )
+
+        assert result["abstention_correct"] is None
+        assert result["abstention_undetermined"] is True
+
+    def test_undetermined_abstention_is_not_coerced_to_a_failed_abstention(self) -> None:
+        """None and False must stay distinguishable. Coercing an unsure judge to
+        False would assert "the model was told to abstain and did not", which in
+        the observed case is simply untrue -- trading a loud wrong failure for a
+        quiet wrong metric."""
+        judgment = _judgment(relevance=[])
+        judgment["abstention_correct"] = None
+
+        result = score_judgment(judgment, [], "No approved document.", expected_abstention=True)
+
+        assert result["abstention_correct"] is not False
+
+    def test_rejects_non_boolean_abstention_verdict(self) -> None:
+        """Softening null must not soften garbage: a string is still a
+        malformed response, not an unsure one."""
+        judgment = _judgment(relevance=[])
+        judgment["abstention_correct"] = "yes"
+
+        with pytest.raises(JudgeError, match="abstention_correct must be boolean"):
+            score_judgment(judgment, [], "No approved document.", expected_abstention=True)
 
     def test_rejects_out_of_range_scores(self) -> None:
         judgment = _judgment(relevance=[True])
@@ -303,12 +361,97 @@ def test_evaluate_refreshes_mcp_connection_and_token_for_each_case(monkeypatch) 
     assert [case["token_seen"] for case in report["queries"]] == tokens
 
 
+def test_undetermined_abstentions_are_excluded_from_accuracy_but_counted(monkeypatch) -> None:
+    """abstention_accuracy must not silently average over a partial set. With
+    one determined pass and one undetermined case, accuracy reads 1.0 -- which
+    on its own looks like full coverage, so the count is what stops that being
+    misread.
+    """
+    verdicts = iter([True, None])
+    undetermined = iter([False, True])
+
+    def fake_evaluate_case(case, *, token, **kwargs):
+        return {
+            "id": case["id"],
+            "rag_search_called": True,
+            "contextual_relevancy": 1.0,
+            "contextual_recall": None,
+            "contextual_precision": 1.0,
+            "faithfulness": None,
+            "answer_relevancy": 1.0,
+            "answer_correctness": 1.0,
+            "citation_validity": 1.0,
+            "abstention_correct": next(verdicts),
+            "abstention_undetermined": next(undetermined),
+        }
+
+    monkeypatch.setattr(qca, "evaluate_case", fake_evaluate_case)
+
+    report = qca.evaluate(
+        [
+            {"id": "abstain-1", "query": "a", "reference_answer": "", "expect_abstention": True},
+            {"id": "abstain-2", "query": "b", "reference_answer": "", "expect_abstention": True},
+        ],
+        token_provider=lambda: "token",
+        agent_id="agent",
+        user="dave-admin",
+        judge=lambda payload: payload,
+        judge_model="qwen2.5:3b-instruct",
+    )
+
+    assert report["abstention_accuracy"] == 1.0
+    assert report["abstention_undetermined"] == 1
+    # The undetermined case is not an error: the run stays valid and every other
+    # metric is still usable. This is the whole point of the reviewer's fix.
+    assert report["errors"] == []
+    assert report["tool_call_failures"] == 0
+
+
+def test_all_undetermined_abstentions_report_null_accuracy_not_zero(monkeypatch) -> None:
+    """A run where nothing could be determined must not read as 0.0, which would
+    look like every abstention failed."""
+
+    def fake_evaluate_case(case, *, token, **kwargs):
+        return {
+            "id": case["id"],
+            "rag_search_called": True,
+            "contextual_relevancy": 1.0,
+            "contextual_recall": None,
+            "contextual_precision": 1.0,
+            "faithfulness": None,
+            "answer_relevancy": 1.0,
+            "answer_correctness": 1.0,
+            "citation_validity": 1.0,
+            "abstention_correct": None,
+            "abstention_undetermined": True,
+        }
+
+    monkeypatch.setattr(qca, "evaluate_case", fake_evaluate_case)
+
+    report = qca.evaluate(
+        [{"id": "abstain-1", "query": "a", "reference_answer": "", "expect_abstention": True}],
+        token_provider=lambda: "token",
+        agent_id="agent",
+        user="dave-admin",
+        judge=lambda payload: payload,
+        judge_model="qwen2.5:3b-instruct",
+    )
+
+    assert report["abstention_accuracy"] is None
+    assert report["abstention_undetermined"] == 1
+    assert report["errors"] == []
+
+
 class TestBaselineComparison:
     @pytest.mark.parametrize(
         ("field", "current"),
         [
             ("judge_model", "different-model"),
-            ("judge_prompt_version", "qca-v2"),
+            # Deliberately not a real version string: pinning this to whatever
+            # the current JUDGE_PROMPT_VERSION happens not to be makes the test
+            # fail on the next legitimate bump, which is how it broke when
+            # qca-v1 became qca-v2.
+            ("judge_prompt_version", "some-other-prompt-version"),
             ("golden_set_sha256", "golden-v2"),
         ],
     )

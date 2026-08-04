@@ -22,7 +22,10 @@ changed in the running system, with the issue/PR reference for the trail.
   judge: contextual relevance/recall/precision, faithfulness, answer
   relevance/correctness, citation validity, and abstention behavior. Reports omit
   corpus text by default and baseline comparisons require the same judge, prompt,
-  and golden set (#74).
+  and golden set (#74). Abstention cases the judge will not decide are recorded
+  as undetermined and counted, rather than failing the run: with the default 3B
+  judge that verdict was returned as `null` even for correct abstentions, which
+  made a default run report a generation regression that had not happened.
 - Governance now adapts the relevant digital controls from DoDM 5200.01
   Volumes 1 and 2 and 32 CFR Part 2001 into an explicit classified-information
   profile. “Adaptive classification” is constrained to human-authorized,

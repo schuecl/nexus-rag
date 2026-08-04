@@ -100,6 +100,35 @@ generation omitted the tool or any case could not be scored. Its local 3B/7B
 judge is useful for comparing two
 configurations, not for an absolute quality claim. Baselines are therefore
 rejected when the judge model, judge-prompt version, or golden-set hash differs.
+
+**The abstention metric is the weakest score here, and knowingly so.** Measured
+directly against `qwen2.5:3b-instruct` (the default judge) on the
+travel-policy-abstention case, with the four approved sample-corpus documents
+as context:
+
+| judge prompt | answer correctly abstains | answer fails to abstain |
+|---|---|---|
+| `qca-v1` | `null` 3/3 — run reported FAILED | `null` 3/3 |
+| `qca-v2` | `true` 3/3 | `false` 1/3, `true` 2/3 |
+
+`qca-v2` fixes the case the shipped golden set actually exercises — both
+`expected_abstention` cases have no on-topic evidence, so a working pipeline
+abstains and the judge now says so. What it does not fix is the 3B judge's
+ability to *catch* a failed abstention: shown an answer that invented a
+reimbursement policy outright, it still called it a correct abstention two times
+in three. So `abstention_correct: true` from a 3B judge is weak evidence, and
+`abstention_accuracy` should not be read as a guard against the pipeline
+answering when it should have declined. Use `--judge-model qwen2.5:7b-instruct`
+if that specific property matters; the 7B model has not been measured on the
+failed-abstention direction here either.
+
+A judge that will not commit to true/false is recorded as **undetermined** —
+excluded from `abstention_accuracy`, counted in `abstention_undetermined`, and
+printed as a warning — rather than failing the run, because a judge declining to
+assert confidence is not the same failure as generation regressing or the tool
+not being called. Note that `abstention_accuracy` alone cannot tell you coverage
+was partial: a run with one determined pass and one undetermined case still
+reads `1.0`, which is why the count is reported next to it.
 Reports contain hashes, aggregate counts, and scores by default—not query,
 source names, context, reference-answer, or generated-answer text.
 `--include-content` is an explicit diagnostic option whose output must be

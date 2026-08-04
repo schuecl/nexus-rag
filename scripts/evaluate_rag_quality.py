@@ -66,7 +66,11 @@ DEFAULT_JUDGE_MODEL = os.environ.get(
     "JUDGE_MODEL", os.environ.get("GENERATION_MODEL", "qwen2.5:3b-instruct")
 )
 DEFAULT_PERSONA = os.environ.get("EVAL_PERSONA", "dave-admin")
-JUDGE_PROMPT_VERSION = "qca-v1"
+# Bumped from qca-v1 when the abstention_correct rule was rewritten to spell out
+# all three cases. compare_to_baseline refuses to compare across a version
+# change, which is the point: scores produced under the old prompt are not
+# comparable to scores produced under this one.
+JUDGE_PROMPT_VERSION = "qca-v2"
 
 _CITATION_RE = re.compile(r"\[\s*([^\[\],]+?)\s*,\s*([^\[\]]+?)\s*\]")
 _COMPARED_METRICS = (
@@ -116,9 +120,15 @@ Rules:
 - answer_relevancy measures whether the answer directly addresses the question.
 - answer_correctness measures agreement with the reference answer, including
   important omissions and contradictions.
-- If expected_abstention is true, abstention_correct is true only when the
-  answer clearly says no approved evidence was found and does not invent an
-  answer. Otherwise abstention_correct is null.
+- abstention_correct has exactly three cases. Read all three before answering:
+  1. expected_abstention is true AND the answer clearly says no approved
+     evidence was found, without inventing an answer -> true.
+  2. expected_abstention is true AND the answer instead attempts a substantive
+     answer -> false.
+  3. expected_abstention is false -> null.
+  When expected_abstention is true you must return true or false. Never return
+  null in that case: null means "abstention was not expected here", not "I am
+  unsure".
 - Be concise. Do not include explanations or extra keys.
 """
 
@@ -364,8 +374,28 @@ def score_judgment(
     reference_flags = _claim_flags(judgment.get("reference_claims"), "reference_claims")
     answer_flags = _claim_flags(judgment.get("answer_claims"), "answer_claims")
     abstention = judgment.get("abstention_correct")
+    abstention_undetermined = False
     if expected_abstention:
-        abstention = _as_bool(abstention, "abstention_correct")
+        # A small local judge that will not commit to a boolean is a different
+        # failure from a malformed response, and must not fail the whole run.
+        #
+        # The observed case with the default qwen2.5:3b-instruct: the model
+        # judged the answer a valid abstention on every other field, then still
+        # returned null here. Hard-erroring turned that into
+        # "FAILED: one or more cases could not produce a valid tool-backed
+        # score" -- a report of a generation regression that had not happened.
+        #
+        # Recorded as undetermined rather than coerced to false, because false
+        # is a specific claim: "the model was told to abstain and did not". In
+        # the observed case that claim is untrue, so coercing would trade a
+        # loud wrong failure for a quiet wrong metric. None is what the judge
+        # actually told us; evaluate() excludes None from abstention_accuracy
+        # and counts it in abstention_undetermined, and print_report() warns on
+        # it, so the gap stays visible instead of reading as a clean pass.
+        if abstention is None:
+            abstention_undetermined = True
+        else:
+            abstention = _as_bool(abstention, "abstention_correct")
     elif abstention is not None:
         raise JudgeError("abstention_correct must be null when abstention is not expected")
 
@@ -379,6 +409,10 @@ def score_judgment(
         "answer_correctness": _as_score(judgment.get("answer_correctness"), "answer_correctness"),
         "citation_validity": citation["score"],
         "abstention_correct": abstention,
+        # Distinguishes "the judge said this abstention was wrong" from "the
+        # judge would not say". Both leave abstention_correct falsy-or-null;
+        # only this tells them apart in the report.
+        "abstention_undetermined": abstention_undetermined,
         "evidence": {
             "retrieved_contexts": len(contexts),
             "relevant_contexts": sum(context_flags),
@@ -509,6 +543,13 @@ def evaluate(
         if query.get("abstention_correct") is not None
     ]
     report["abstention_accuracy"] = _ratio(abstentions)
+    # Counted, not just implied by a shorter abstentions list. abstention_accuracy
+    # is None when nothing was determined and a clean 1.0 when only some cases
+    # were -- neither reading tells you coverage was incomplete, so the count is
+    # reported alongside it. main() warns when this is non-zero.
+    report["abstention_undetermined"] = sum(
+        bool(query.get("abstention_undetermined")) for query in queries
+    )
     report["tool_call_failures"] = sum(not query["rag_search_called"] for query in queries)
     return report
 
@@ -584,6 +625,15 @@ def print_report(report: dict[str, Any]) -> None:
         print(f"  {metric}: {report[metric]}")
     print(f"  tool_call_failures: {report['tool_call_failures']}")
     print(f"  evaluation_errors: {len(report['errors'])}")
+    undetermined = report.get("abstention_undetermined", 0)
+    if undetermined:
+        # Loud, but not a failure. The run is still usable for every other
+        # metric; what is not usable is reading abstention_accuracy as complete.
+        print(
+            f"  WARNING: {undetermined} abstention case(s) undetermined -- the judge "
+            f"({report['judge_model']}) returned null instead of true/false, so they are "
+            "excluded from abstention_accuracy. A larger judge model generally fixes this."
+        )
     for query in report["queries"]:
         print(
             f"  [{query['id']}] context_precision={query['contextual_precision']} "
