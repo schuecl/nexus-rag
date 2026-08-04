@@ -17,6 +17,16 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- Mutation testing is now an enforced gate (#78): the nightly `mutation` job
+  fails below an 80% kill rate on the four security-critical modules
+  (`claims.py`, `qdrant_filters.py`, `metadata.py`, `versioning.py`),
+  checked by `scripts/check_mutation_score.py`, which also fails closed on a
+  crashed/unparseable run -- the advisory era never once produced a score
+  and nothing noticed. Baseline at enforcement: 88.0% (183 mutants, 161
+  killed); all 22 survivors triaged into strengthened tests, including a
+  real gap where nothing asserted `parse_claims` populates `groups` (the
+  need-to-know input to the FR-26 filter).
+
 - Bulk document upload: the ingestion UI and `POST /documents/batch` accept
   multiple files sharing one Classification/Releasability/Access-scope/
   Source-Originator/Doc-type payload, validated once against the submitter's

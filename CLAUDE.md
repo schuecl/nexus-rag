@@ -171,8 +171,9 @@ independently of both.
   `app.reranking` in orchestration-mcp. `ingestion-api`'s route layer and
   `orchestration-mcp/app/rag_search.py` are measured but not gated — they need a
   containerized integration layer to test meaningfully (open gap, not hidden).
-- **Mutation testing is advisory only** (`e2e.yml`, nightly, `continue-on-error: true`)
-  against `claims.py`/`qdrant_filters.py`/`metadata.py`/`versioning.py` — the modules where
+- **Mutation testing is an enforced ≥80% kill-rate gate** (`e2e.yml`, nightly;
+  `scripts/check_mutation_score.py`, issue #78 — baseline 88%) against
+  `claims.py`/`qdrant_filters.py`/`metadata.py`/`versioning.py` — the modules where
   a subtle logic bug is a security incident. Runs from `services/common` specifically
   (`cd services/common && mutmut run`); running from repo root breaks module-name matching.
   `services/common` must not be pip-installed in that job or the installed copy shadows the

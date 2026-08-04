@@ -48,7 +48,13 @@ class TestValidateSupersedeTarget:
     def test_non_approved_target_rejected(self, status):
         with pytest.raises(SupersedeValidationError) as excinfo:
             validate_supersede_target(_document(status=status), **GOOD_KWARGS)
-        assert any("not 'approved'" in e for e in excinfo.value.errors)
+        # Exact message: FR-7 rejection text is what the submitter acts on,
+        # and substring checks can't tell a garbled message from the real one
+        # (#78 mutation triage -- XX-wrapped variants survived `in` asserts).
+        assert excinfo.value.errors == [
+            f"target document is '{status}', not 'approved' -- only an "
+            "approved document can be superseded"
+        ]
 
     def test_cross_org_target_rejected(self):
         with pytest.raises(SupersedeValidationError) as excinfo:
@@ -80,12 +86,23 @@ class TestValidateSupersedeTarget:
                 _document(classification="SECRET"),
                 **{**GOOD_KWARGS, "allowed_classifications": ["UNCLASSIFIED", "CUI"]},
             )
-        assert any("above the submitter's cleared level" in e for e in excinfo.value.errors)
+        assert excinfo.value.errors == [
+            "target document's classification is above the submitter's cleared level"
+        ]
 
     def test_unheld_releasability_rejected(self):
         with pytest.raises(SupersedeValidationError) as excinfo:
             validate_supersede_target(_document(releasability=["NOFORN"]), **GOOD_KWARGS)
-        assert any("does not hold" in e for e in excinfo.value.errors)
+        assert excinfo.value.errors == [
+            "submitter does not hold one or more of the target document's releasability values"
+        ]
+
+    def test_error_message_joins_all_violations(self):
+        # Same contract as MetadataValidationError: str(exc) renders every
+        # violation "; "-joined (#78 mutation triage).
+        err = SupersedeValidationError(["first problem", "second problem"])
+        assert err.errors == ["first problem", "second problem"]
+        assert str(err) == "first problem; second problem"
 
     def test_multiple_violations_accumulate(self):
         # Same-org only -- issue #325 made a cross-org target short-circuit

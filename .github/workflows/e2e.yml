@@ -209,11 +209,17 @@ jobs:
         run: docker compose down -v
 
   mutation:
-    # Advisory (continue-on-error) until a baseline mutation score exists;
-    # the goal is >=80% on services/common before this becomes a merge gate.
+    # Enforced kill-rate gate (#78): >=80% of mutants on the four
+    # security-critical modules ([tool.mutmut] in services/common/
+    # pyproject.toml) must be killed. Baseline at enforcement time was 88.0%
+    # (183 mutants, 161 killed) with every survivor triaged. Still
+    # nightly/manual-only, but no longer continue-on-error -- a red run here
+    # is a real test-suite weakening, not noise. The gate itself fails
+    # closed: an unparseable/crashed mutmut run is a failure, because the
+    # advisory era spent weeks green while printing "failed to collect
+    # stats" (see docs/testing.md).
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -234,23 +240,26 @@ jobs:
         # Runs from services/common so mutated module names match the test
         # suite's `common.*` imports -- see pyproject.toml's [tool.mutmut].
         # mutmut only auto-copies a tests/ dir inside its project root, so
-        # the repo-root tests/ tree is staged here first.
+        # the repo-root tests/ tree is staged here first. The run output is
+        # teed to a file because mutmut 3.x reports the full tally only on
+        # its progress line -- that file is what the gate below parses.
         run: |
           cd services/common
           mkdir -p tests/unit/common
           cp ../../tests/conftest.py tests/
           cp ../../tests/unit/common/*.py tests/unit/common/
-          mutmut run --max-children 4
-          mutmut results || true
+          mutmut run --max-children 4 2>&1 | tee mutmut-run.txt
+          mutmut results | tee mutmut-results.txt || true
           rm -rf tests
-      - name: Export HTML report
+      - name: Enforce the >=80% kill-rate gate (issue 78)
         if: always()
-        run: cd services/common && mutmut html || true
+        run: python scripts/check_mutation_score.py services/common/mutmut-run.txt --min-score 80
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: mutation-report
           path: |
+            services/common/mutmut-run.txt
+            services/common/mutmut-results.txt
             services/common/mutants/
-            services/common/html/
           if-no-files-found: ignore

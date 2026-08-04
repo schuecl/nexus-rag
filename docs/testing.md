@@ -16,7 +16,7 @@ golden-query harness the e2e workflow reuses.
 | Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
 | Browser CSRF + logout (issue #187) | `scripts/verify_browser_csrf_logout.py` | `e2e.yml` job `browser-verify` (same `needs-e2e` gating as golden-query) | Real Chromium against a real `docker compose up`: HttpOnly/readable cookie attributes, missing/mismatched/matching `X-CSRF-Token` (NFR-14), and a full Keycloak RP-initiated logout actually ending the SSO session (issue #254) rather than just the server-side logic `services/ingestion-api/tests` already covers with `TestClient` |
 | Tagging-advisory calibration | `scripts/calibrate_tagging_advisory.py` | Manual or scheduled (`docker compose --profile calibration run`), not in any CI workflow | Suggester-vs-curator agreement over time for Phase 1-3's advisories (FR-13/FR-16/FR-30/FR-32) — reporting only, no pass/fail gate by default |
-| Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **advisory**) | Test-suite strength on claims/access-filter/metadata/versioning |
+| Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **enforced ≥80% kill rate**, issue #78) | Test-suite strength on claims/access-filter/metadata/versioning |
 
 Design notes:
 
@@ -184,8 +184,9 @@ specific mechanism wouldn't reproduce that bug on its own — but making
 `needs-e2e` (defeating the point of the opt-in) or accepting that most PRs
 merge without this coverage, which is exactly today's tradeoff stated
 plainly rather than made required and then quietly never enforced.
-`mutation` is additionally still advisory pending a baseline (see below) and
-stays nightly/manual-only regardless of the label.
+`mutation` stays nightly/manual-only regardless of the label, but is no
+longer advisory — since #78 it fails its own run below an 80% kill rate
+(see "Mutation testing" below).
 
 **Fork-PR CodeQL reporting, confirmed working.** Issue #81's comment flagged
 an open question: does the default CodeQL setup produce a check run on
@@ -253,21 +254,41 @@ Keycloak via containers) to test meaningfully, which is tracked as a
 follow-up. That is a real gap, stated plainly rather than hidden behind a
 lower repo-wide number.
 
-## Mutation testing (advisory for now)
+## Mutation testing (enforced ≥80%)
 
 `e2e.yml`'s `mutation` job runs `mutmut` against `claims.py`,
 `qdrant_filters.py`, `metadata.py`, and `versioning.py` — the modules where a
-subtle logic change is a security incident. It is `continue-on-error: true`
-until a baseline score is established from a few nightly runs; the target is
-**≥80% killed on `services/common`** before it becomes a merge gate. Config
-lives in `services/common/pyproject.toml` (`[tool.mutmut]`) and the job runs
-from that directory (`cd services/common && mutmut run`) — running from the
+subtle logic change is a security incident — and **fails below an 80% kill
+rate** (`scripts/check_mutation_score.py`, issue #78). Baseline at
+enforcement time: **88.0%** (183 mutants, 161 killed), with every survivor
+triaged — the real gaps became tests (`groups` was never asserted out of
+`parse_claims`, the username→sub fallback was unpinned, the JWKS test stub
+ignored its argument) and the rest were error-message mutants killed by
+switching substring asserts to exact-message asserts. The gate parses the
+final tally line of the teed `mutmut run` output (mutmut 3.x has no
+machine-readable summary) and **fails closed** when there is no tally —
+which is not hypothetical: the advisory (`continue-on-error`) era of this
+job never once produced a score. Every night ended in `failed to collect
+stats` (and later an outright crash: `test_file_types.py`'s cross-service
+drift guard reads `ingestion-worker/app/parsing.py` by path, which doesn't
+exist inside mutmut's staged copy — it now skips itself under that staging),
+and nothing was red anywhere. "Timeout", "suspicious", and "no tests" all
+count against the score; skipped mutants are excluded from the denominator.
+
+Config lives in `services/common/pyproject.toml` (`[tool.mutmut]`,
+`source_paths` scoped to the four modules) and the job runs from that
+directory (`cd services/common && mutmut run`) — running from the
 repo root makes mutmut derive module names as `services.common.common.*`
 while the tests import `common.*`, so nothing matches and every mutant
 spuriously survives. Two related gotchas, both encoded in the repo:
 `services/common` must NOT be pip-installed in the mutation job (the
 installed package would shadow the mutated copy), and `tests/conftest.py`'s
 sys.path shim disables itself when `MUTANT_UNDER_TEST` is set.
+
+The job stays nightly/manual-only (it is not part of PR CI, see "Branch
+protection"), so "enforced" means a red nightly `e2e` run that someone must
+triage — either a test weakened or a survivor slipped in — not a merge
+blocker on individual PRs.
 
 ## Retrieval-quality tracking & re-evaluation policy (FR-30/FR-32)
 
