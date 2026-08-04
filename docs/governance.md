@@ -285,6 +285,10 @@ open-ended one:
    regression. It does mean "which documents has a user's query history
    touched" is answerable from the audit log by anyone who can read it — see
    the residual-credential point above for who that actually is today.
+   Affirmed as a recorded decision in
+   [#282](https://github.com/schuecl/nexus-rag/issues/282); the full
+   trade-off (including the rejected classification-threshold variant) is
+   written out in `roles-and-permissions.md` gap G6.
 
 ### The model that was adopted
 

@@ -77,7 +77,20 @@ class TestValidateAgainstClaims:
                 allowed_classifications=["UNCLASSIFIED", "CUI", "SECRET"],
                 user_releasability=["FVEY"],
             )
-        assert any("not held by the submitter" in e for e in excinfo.value.errors)
+        # Exact message, not a substring: FR-18's rejection text is what the
+        # uploader acts on, and `in` checks can't tell a garbled message from
+        # the real one (#78 mutation triage).
+        assert excinfo.value.errors == [
+            "releasability values ['NOFORN'] include one or more not held by the submitter"
+        ]
+
+    def test_error_message_joins_all_violations(self):
+        # str(exc) is what routes/logs render; it must carry every violation,
+        # "; "-joined -- MetadataValidationError(None)-shaped regressions
+        # survived until this was pinned (#78 mutation triage).
+        err = MetadataValidationError(["first problem", "second problem"])
+        assert err.errors == ["first problem", "second problem"]
+        assert str(err) == "first problem; second problem"
 
     def test_multiple_violations_accumulate(self):
         with pytest.raises(MetadataValidationError) as excinfo:

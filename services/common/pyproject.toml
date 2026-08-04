@@ -35,5 +35,22 @@ dependencies = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# Issue #78 (via #67): mutation testing scope -- the four modules where a
+# subtle logic bug is a security incident, per docs/testing.md. e2e.yml's
+# mutation job stages the repo-root tests/ tree into this directory and runs
+# `mutmut run` from here so mutated module names match the suite's
+# `common.*` imports. `also_copy` brings the rest of the package (and its
+# py.typed marker) into mutmut's mutants/ sandbox so those imports resolve;
+# mutmut writes the mutant-schemata copies of paths_to_mutate afterwards, so
+# this cannot shadow a mutant.
+[tool.mutmut]
+source_paths = [
+    "common/claims.py",
+    "common/qdrant_filters.py",
+    "common/metadata.py",
+    "common/versioning.py",
+]
+also_copy = ["common/"]
+
 [tool.setuptools.packages.find]
 include = ["common*"]

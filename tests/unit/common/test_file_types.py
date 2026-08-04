@@ -171,6 +171,14 @@ class TestTheAllowlistMatchesTheParsers:
             / "app"
             / "parsing.py"
         )
+        if not parsing.exists():
+            # e2e.yml's mutation job stages this suite inside services/common
+            # and runs it from mutmut's mutants/ copy, where no other service's
+            # tree exists -- this cross-service drift guard can only run from a
+            # full checkout. Skipping (rather than erroring) there is what let
+            # the mutation job produce a score at all (#78); the repo-root CI
+            # `unit` job still runs it against the real layout every time.
+            pytest.skip("ingestion-worker tree not present (mutation-run staging)")
         body = parsing.read_text().split("def parse_document")[1].split("def _parse_txt")[0]
 
         dispatched = set(re.findall(r'ext (?:==|in \()\s*"(\.[a-z]+)"', body))

@@ -180,5 +180,6 @@ CPU-bound `qwen2.5:7b-instruct` generation can take:
 
 Not wired into CI — real generation on CPU takes minutes per query, same
 reason the golden-query e2e job (`e2e.yml`) points `GENERATION_MODEL` at the
-embedding model instead of a real one. Manual/advisory only, like the
-mutation-testing job.
+embedding model instead of a real one. Manual/nightly-only, like the
+mutation-testing job (though that job now enforces its own ≥80% kill-rate
+gate as of issue #78 -- this one has no pass/fail gate at all).

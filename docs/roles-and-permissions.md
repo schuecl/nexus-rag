@@ -308,12 +308,29 @@ token-refresh writes touch each row. Qdrant/NATS/Keycloak rotation stays
 config-level on those systems' own side (no code change proposed for them in
 the issue); `APP_DB_USER` remains open as a candidate not yet picked up.
 
-**G6 — corrected (#364): `rag-query` retrieval *does* record per-document view
-audit granularity.** Every successful query's audit row carries
+**G6 — corrected (#364), and the trade-off affirmed as decided (#282):
+`rag-query` retrieval *does* record per-document view audit granularity, and
+keeps it deliberately.** Every successful query's audit row carries
 `result_document_ids` (`services/orchestration-mcp/app/rag_search.py`,
 `_audit_query_detail`), not just the filter and result count — asserted as a
 required FR-26/FR-31 accountability field by
-`test_query_privacy.py::test_accountability_fields_survive`. This entry
+`test_query_privacy.py::test_accountability_fields_survive`. #282 filed the
+*original* (wrong) G6 wording for a maintainer decision; the #364 correction
+inverted its question — the granularity already exists, so the call to record
+is whether to **keep** it, and the answer is yes. It is the evidence FR-26
+needs (*which* documents a filter actually permitted), and a precise reader
+list is exactly what a spillage response (#123, #286) turns on. The privacy
+cost #282 raises is real — a sequence of (user, returned-ids) tuples
+reconstructs research interests much as the query text #125 removed would —
+and is accepted because the read surface is confined, not because the
+inference is dismissed: since #278, every application role is INSERT-only on
+`audit_log`; only the offline `nexus_rag_audit_reporting` role and the
+bootstrap superuser can SELECT it, which substantially realizes #282's
+"sealed audit stream" middle ground with no new store. #282's other middle
+ground — recording ids only above a classification threshold — was rejected:
+it would blind both the FR-26 evidence and the spillage reader list below
+the threshold while leaving the inference channel intact above it, where the
+most sensitive research interests live. This entry
 previously claimed the opposite, conflating it with a different, real
 decision: #125 dropped the *raw query text* from the audit row (see
 `governance.md`'s "model that was adopted" table), but `result_document_ids`

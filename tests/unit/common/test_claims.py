@@ -22,6 +22,11 @@ class _FakeJWKClient:
         self._public_key = public_key
 
     def get_signing_key_from_jwt(self, token: str):
+        # #78 mutation triage: a stub that ignores its argument cannot notice
+        # decode_verified_token passing the wrong thing (mutmut proved it by
+        # passing None and surviving). Insist on receiving something shaped
+        # like the compact-serialized JWT the real PyJWKClient parses.
+        assert isinstance(token, str) and token.count(".") == 2
         return SimpleNamespace(key=self._public_key)
 
 
@@ -48,6 +53,11 @@ class TestParseClaims:
         # rag-releasability: client roles (#104, #116), not standalone claims.
         assert parsed.clearance == "SECRET"
         assert parsed.releasability == ["FVEY", "NATO"]
+        # `groups` feeds access_scope need-to-know matching (FR-26); if
+        # parse_claims stopped populating it, group-scoped documents would
+        # silently stop matching for everyone. No other test pinned it
+        # (#78 mutation triage: dropping the field entirely survived).
+        assert parsed.groups == ["USAREUR-AF"]
         assert parsed.org == "USAREUR-AF"
         assert parsed.rag_roles == [
             "rag-query",
@@ -110,10 +120,21 @@ class TestParseClaims:
         token = mint_token(rag_roles=["rag-query", "rag-clearance:SECRET", "rag-clearance:CUI"])
         with pytest.raises(claims_module.ConflictingClearanceError) as excinfo:
             parse_claims(token)
-        # Both conflicting values named, so the Keycloak admin can fix the
-        # assignment from the error alone.
-        assert "CUI" in str(excinfo.value)
-        assert "SECRET" in str(excinfo.value)
+        # The full message, not substrings: this error is the Keycloak admin's
+        # only diagnostic, and substring checks let a garbled message pass
+        # (#78 mutation triage -- six message mutants survived `in` asserts).
+        assert str(excinfo.value) == (
+            "token carries conflicting rag-clearance roles (CUI, SECRET); "
+            "exactly one clearance level is allowed per identity -- fix the "
+            "Keycloak role assignment"
+        )
+
+    def test_missing_preferred_username_falls_back_to_sub(self, verified_env, mint_token):
+        # Audit rows key on actor_username; when Keycloak omits the mapper the
+        # identity must degrade to the stable subject, never to None
+        # (#78 mutation triage: replacing the fallback with None survived).
+        token = mint_token(preferred_username=None, sub="s-fallback")
+        assert parse_claims(token).preferred_username == "s-fallback"
 
     def test_conflicting_clearance_is_a_pyjwt_error(self, verified_env, mint_token):
         # Every entry point (ingestion-api get_current_user, session refresh,
