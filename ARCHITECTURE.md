@@ -449,11 +449,12 @@ flowchart TD
     text --> s1["Marking-mismatch (#138 Phase 1)<br/>always on -- regex-detected classification/<br/>caveat markings vs. assigned tags"]
     text --> s2["Hidden-instruction / content risk (#284)<br/>always on -- invisible Unicode,<br/>prompt-injection trigger phrases"]
     text --> s3["PII regex scan (#342 Phase 1)<br/>always on -- SSN, credit card, bank routing,<br/>API keys, private-key blocks;<br/>matched span redacted before storage"]
+    s3 -.->|opt-in, PII_LLM_MODEL| s3v["PII LLM verification (#378)<br/>context-only read on Phase 1's own findings<br/>(already-redacted excerpt only); annotates<br/>likely_false_positive, never filters"]
     text -.->|opt-in, PII_LLM_MODEL| s4["PII LLM-assisted pass (#343 Phase 2)<br/>context-dependent PII a regex can't catch"]
     text -.->|opt-in, CLASSIFICATION_MODEL| s5["LLM classification suggestion (#308 Phase 3)<br/>zero-shot vs. configured vocabulary"]
     vec --> s6["Precedent kNN (#307 Phase 2)<br/>always on -- nearest approved documents'<br/>classification/releasability"]
 
-    s1 & s2 & s3 & s4 & s5 & s6 --> col[("Document.tagging_advisory<br/>(JSON column, merged by key)")]
+    s1 & s2 & s3 & s3v & s4 & s5 & s6 --> col[("Document.tagging_advisory<br/>(JSON column, merged by key)")]
     col --> ui["/curate queue + detail pages<br/>advisory box, per-finding"]
     ui --> dec{"curator decision"}
     dec -->|approve / reject / correct| audit["audit_log entry<br/>tagging_advisory outcome embedded (#345):<br/>flagged vs. acted-on, per suggester"]
@@ -473,6 +474,12 @@ What to note:
   Phase 1's code-enforced redaction — that's a prompt instruction the model could ignore,
   so its `kind`/`rationale` fields are treated as untrusted (textContent-only rendering in
   `curate.html`, same as the LLM classification suggestion's `rationale`).
+- **#378's verification pass has a narrower blast radius than #343's.** It never sees the
+  document's raw text at all -- only the same already-redacted `context` excerpts Phase 1
+  already produced and the curator already sees, so there is no new prompt-injection
+  surface beyond what Phase 1's own regex pass already exposed. Its `likely_false_positive`
+  verdict is additive metadata on an existing finding, not a filter: a false-positive
+  verdict never removes, hides, or dims the finding it's attached to.
 - **`calibrate_tagging_advisory.py` reads through a dedicated, SELECT-only-on-`audit_log`
   role** (`nexus_rag_audit_reporting`) rather than any of the four services' own
   credentials — NFR-2/NFR-3 keep every application role INSERT-only on `audit_log`, so

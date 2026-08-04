@@ -64,6 +64,16 @@ pii_llm_findings_total = Counter(
     "LLM-assisted PII/sensitive-info advisory attempts, by outcome.",
     ["outcome"],
 )
+# Issue #378: separate counter from pii_llm_findings_total above -- that one
+# tracks the additive context-dependent-findings pass, this tracks the
+# verification pass over Phase 1's own regex findings. Sharing one counter
+# with two purposes would make "outcome=unavailable" ambiguous about which
+# half of the PII_LLM_MODEL call budget failed.
+pii_llm_verification_total = Counter(
+    "nexus_rag_ingestion_worker_pii_llm_verification_total",
+    "LLM verification attempts over Phase 1 regex PII findings, by outcome.",
+    ["outcome"],
+)
 delivery_attempts = Histogram(
     "nexus_rag_ingestion_worker_delivery_attempts",
     "JetStream delivery number observed by the worker.",

@@ -29,6 +29,18 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- `PII_LLM_MODEL`, when enabled, now also verifies Phase 1's own regex PII
+  findings (#378), not just adding new context-dependent ones (#343): a
+  numeric-heavy document (a manual full of part numbers, page references,
+  revision codes) turned out to trip the checksum-validated credit-card/
+  bank-routing patterns often in practice, even though any one match is
+  individually unlikely by chance. The model reads only the already-redacted
+  `context` excerpt already shown to the curator (never the raw document
+  text) and annotates each finding with an `llm_verdict`
+  (`likely_false_positive` + a short rationale) on the `/curate` page --
+  this never hides or filters a finding, the curator still sees and decides
+  on every regex match. New metric:
+  `nexus_rag_ingestion_worker_pii_llm_verification_total{outcome=...}`.
 - Mutation testing is now an enforced gate (#78): the nightly `mutation` job
   fails below an 80% kill rate on the four security-critical modules
   (`claims.py`, `qdrant_filters.py`, `metadata.py`, `versioning.py`),

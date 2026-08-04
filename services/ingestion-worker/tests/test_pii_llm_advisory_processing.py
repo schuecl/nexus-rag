@@ -181,3 +181,136 @@ async def test_audit_entry_never_echoes_raw_text_beyond_model_output(monkeypatch
             "llm_findings": [{"kind": "spelled-out SSN", "rationale": "see the finding kind"}]
         }
     }
+
+
+# Issue #378: the same LLM pass also verifies Phase 1's own regex findings,
+# annotating each with an `llm_verdict` rather than filtering anything --
+# see app/pii_llm_advisory.py's verify_pii_findings, unit-tested on its own
+# in test_pii_llm_advisory.py. This covers what the worker does with its
+# result: merge verdicts into `pii_advisory.findings` by list position,
+# never touch anything when there's nothing to verify or verification is
+# unavailable, and never let it break ingestion.
+
+
+async def _apply_with_verification(monkeypatch, session, doc, sections, *, verdicts):
+    monkeypatch.setattr(processing_module, "pii_llm_enabled", lambda: True)
+
+    async def _fake_suggest(text):
+        return []
+
+    async def _fake_verify(findings):
+        return verdicts
+
+    monkeypatch.setattr(processing_module, "suggest_pii_llm_findings", _fake_suggest)
+    monkeypatch.setattr(processing_module, "verify_pii_findings", _fake_verify)
+    await _apply_pii_llm_advisory(session, doc, sections)
+
+
+async def test_verification_annotates_regex_findings_by_position(monkeypatch):
+    from app.pii_llm_advisory import PiiFindingVerdict
+
+    session = _make_session()
+    doc = _make_doc()
+    sections = [_Section("Part No. 4111111111111111 Rev 2. SSN on file: 234-56-7890.")]
+    _apply_pii_advisory(session, doc, sections)
+    regex_findings = doc.tagging_advisory["pii_advisory"]["findings"]
+    assert len(regex_findings) == 2
+
+    verdicts = [
+        PiiFindingVerdict(
+            index=0, likely_false_positive=True, rationale="looks like a part number"
+        ),
+        PiiFindingVerdict(index=1, likely_false_positive=False, rationale="labeled SSN"),
+    ]
+    await _apply_with_verification(monkeypatch, session, doc, sections, verdicts=verdicts)
+
+    annotated = doc.tagging_advisory["pii_advisory"]["findings"]
+    assert annotated[0]["kind"] == regex_findings[0]["kind"]
+    assert annotated[0]["llm_verdict"] == {
+        "likely_false_positive": True,
+        "rationale": "looks like a part number",
+    }
+    assert annotated[1]["llm_verdict"] == {
+        "likely_false_positive": False,
+        "rationale": "labeled SSN",
+    }
+
+
+async def test_verification_leaves_unmatched_findings_with_none_verdict(monkeypatch):
+    from app.pii_llm_advisory import PiiFindingVerdict
+
+    session = _make_session()
+    doc = _make_doc()
+    sections = [_Section("SSN on file: 234-56-7890.")]
+    _apply_pii_advisory(session, doc, sections)
+
+    # Model only returned a verdict for an index that doesn't exist in the
+    # single-finding input -- the real finding must stay present, unmarked,
+    # never dropped.
+    verdicts = [PiiFindingVerdict(index=5, likely_false_positive=True, rationale="out of range")]
+    await _apply_with_verification(monkeypatch, session, doc, sections, verdicts=verdicts)
+
+    annotated = doc.tagging_advisory["pii_advisory"]["findings"]
+    assert len(annotated) == 1
+    assert annotated[0]["llm_verdict"] is None
+
+
+async def test_verification_skipped_when_no_regex_findings(monkeypatch):
+    session = _make_session()
+    doc = _make_doc()
+    sections = [_Section("ordinary prose with no sensitive patterns")]
+    _apply_pii_advisory(session, doc, sections)
+    assert doc.tagging_advisory["pii_advisory"]["findings"] == []
+
+    called = False
+
+    async def _fake_verify(findings):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(processing_module, "pii_llm_enabled", lambda: True)
+
+    async def _fake_suggest(text):
+        return []
+
+    monkeypatch.setattr(processing_module, "suggest_pii_llm_findings", _fake_suggest)
+    monkeypatch.setattr(processing_module, "verify_pii_findings", _fake_verify)
+    await _apply_pii_llm_advisory(session, doc, sections)
+
+    assert called is False
+
+
+async def test_verification_unavailable_leaves_findings_unannotated(monkeypatch):
+    session = _make_session()
+    doc = _make_doc()
+    sections = [_Section("SSN on file: 234-56-7890.")]
+    _apply_pii_advisory(session, doc, sections)
+    original_findings = doc.tagging_advisory["pii_advisory"]["findings"]
+
+    await _apply_with_verification(monkeypatch, session, doc, sections, verdicts=None)
+
+    assert doc.tagging_advisory["pii_advisory"]["findings"] == original_findings
+    assert "llm_verdict" not in doc.tagging_advisory["pii_advisory"]["findings"][0]
+
+
+async def test_verification_failure_is_swallowed_and_leaves_advisory_untouched(monkeypatch):
+    session = _make_session()
+    doc = _make_doc()
+    sections = [_Section("SSN on file: 234-56-7890.")]
+    _apply_pii_advisory(session, doc, sections)
+    before = doc.tagging_advisory
+
+    monkeypatch.setattr(processing_module, "pii_llm_enabled", lambda: True)
+
+    async def _fake_suggest(text):
+        return []
+
+    async def _raise_verify(findings):
+        raise RuntimeError("model host unreachable")
+
+    monkeypatch.setattr(processing_module, "suggest_pii_llm_findings", _fake_suggest)
+    monkeypatch.setattr(processing_module, "verify_pii_findings", _raise_verify)
+    await _apply_pii_llm_advisory(session, doc, sections)
+
+    assert doc.tagging_advisory == before

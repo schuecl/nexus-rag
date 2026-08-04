@@ -143,14 +143,30 @@ function advisoryNode(doc) {
   // replaced with a redaction marker -- see common/pii_scan.py's module
   // docstring. textContent throughout regardless, same defense-in-depth
   // posture as every other field on this page.
+  //
+  // Issue #378: each finding may also carry an `llm_verdict` (set only when
+  // PII_LLM_MODEL is enabled and Phase 1 found something) -- a context-only
+  // second opinion on whether this specific match looks genuine or is a
+  // coincidental digit run (a part number, page reference, etc). This is
+  // shown alongside the finding, never in place of it: a likely-false-
+  // positive verdict doesn't remove or dim the finding, since the model can
+  // be wrong too and the curator remains the actual decision-maker (FR-11).
+  // `rationale` is model-generated text over attacker-controlled document
+  // content, same posture as the LLM findings below -- textContent only.
   const piiFindings = (adv.pii_advisory && adv.pii_advisory.findings) || [];
   let piiFindingsNode = null;
   if (piiFindings.length) {
     const kinds = [...new Set(piiFindings.map((f) => f.kind))];
+    const likelyFalsePositiveCount = piiFindings.filter(
+      (f) => f.llm_verdict && f.llm_verdict.likely_false_positive
+    ).length;
+    const verifiedSuffix = likelyFalsePositiveCount
+      ? ` -- LLM review suggests ${likelyFalsePositiveCount} of these may be false positive(s)`
+      : '';
     findings.push([
       document.createTextNode(`${piiFindings.length} sensitive-data-pattern finding(s) (`),
       el('strong', { text: kinds.join(', ') }),
-      document.createTextNode(') in the document’s own text -- review before approving'),
+      document.createTextNode(`) in the document’s own text -- review before approving${verifiedSuffix}`),
     ]);
     piiFindingsNode = el('span', {
       className: 'hint',
@@ -161,6 +177,16 @@ function advisoryNode(doc) {
             document.createTextNode(`${f.kind} — ${f.detail} (offset ${f.offset}): `),
             el('code', { text: f.context }),
           ];
+          if (f.llm_verdict) {
+            const verdictLabel = f.llm_verdict.likely_false_positive
+              ? 'likely false positive'
+              : 'appears genuine';
+            parts.push(
+              document.createTextNode(
+                ` [LLM: ${verdictLabel}${f.llm_verdict.rationale ? ' — ' + f.llm_verdict.rationale : ''}]`
+              )
+            );
+          }
           return i === piiFindings.length - 1 ? parts : [...parts, el('br')];
         }),
       ],

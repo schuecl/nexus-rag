@@ -34,7 +34,7 @@ from app.chunking import chunk_sections
 from app.classification_suggestion import suggest_classification, suggestion_enabled
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
-from app.pii_llm_advisory import pii_llm_enabled, suggest_pii_llm_findings
+from app.pii_llm_advisory import pii_llm_enabled, suggest_pii_llm_findings, verify_pii_findings
 from common.content_advisory import detect_content_risks
 from common.db import get_engine
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
@@ -541,6 +541,16 @@ async def _apply_pii_llm_advisory(
     -- a sibling of Phase 1's `pii_advisory.findings`, not a fourth advisory
     surface.
 
+    Issue #378: also asks the same model to verify Phase 1's own regex
+    findings from their already-redacted `context` excerpts alone, annotating
+    each one in place with an `llm_verdict` (`likely_false_positive` +
+    `rationale`) rather than filtering anything out -- a checksum-validated
+    match on a numeric-heavy document (part numbers, page references) is
+    common enough to be noisy at the document level even though any one
+    match is individually unlikely by chance, and a curator benefits from a
+    contextual second opinion without losing visibility into the raw match.
+    Runs only when Phase 1 actually found something -- no findings, no call.
+
     A no-op (not even a model call) unless PII_LLM_MODEL is set -- see
     app/pii_llm_advisory.py. Same posture as `_apply_llm_suggestion_advisory`:
     advisory only, never redacts/decides/gates anything, and fail-safe by
@@ -559,6 +569,33 @@ async def _apply_pii_llm_advisory(
 
         pii_advisory = dict((doc.tagging_advisory or {}).get("pii_advisory") or {})
         pii_advisory["llm_findings"] = [f.to_dict() for f in findings]
+
+        regex_findings = pii_advisory.get("findings") or []
+        if regex_findings:
+            verdicts = await verify_pii_findings(regex_findings)
+            if verdicts is None:
+                metrics.pii_llm_verification_total.labels(outcome="unavailable").inc()
+            else:
+                verdict_by_index = {v.index: v for v in verdicts}
+                pii_advisory["findings"] = [
+                    {
+                        **finding,
+                        "llm_verdict": (
+                            verdict_by_index[i].to_dict() if i in verdict_by_index else None
+                        ),
+                    }
+                    for i, finding in enumerate(regex_findings)
+                ]
+                metrics.pii_llm_verification_total.labels(outcome="verified").inc()
+                likely_fp = sum(1 for v in verdicts if v.likely_false_positive)
+                if likely_fp:
+                    logger.info(
+                        "document %s PII LLM verification: %d/%d finding(s) likely false positive",
+                        doc.id,
+                        likely_fp,
+                        len(regex_findings),
+                    )
+
         doc.tagging_advisory = {**(doc.tagging_advisory or {}), "pii_advisory": pii_advisory}
         metrics.pii_llm_findings_total.labels(outcome="findings" if findings else "clean").inc()
         if findings:

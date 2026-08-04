@@ -869,6 +869,47 @@ the docs, not a silent "it works" — flag it if you find one.
   effect of `PII_LLM_MODEL` being enabled during `seed-sample-data` — not a claim
   about those documents' real content, just confirmation the pass runs unattended
   across a realistic batch without error.)
+- **LLM-assisted verification of Phase 1's own regex findings (issue #378)** — #342's
+  checksum-validated patterns (Luhn for credit cards, ABA for bank routing) keep any
+  *individual* random digit run's false-positive chance low, but a numeric-heavy
+  technical document (a manual full of part numbers, page/section references,
+  revision codes) offers many candidate digit runs, so at the document level a false
+  flag turns out to be common rather than rare — reported in practice against real
+  manuals. Rather than raise the regex pass's bar (which would just start missing
+  genuine matches), when `PII_LLM_MODEL` is enabled the same model is also asked to
+  judge each Phase 1 finding using only its already-redacted `context` excerpt (the
+  matched value itself was never in that excerpt, so there is nothing further to send
+  the model beyond what the curator already sees). Every finding is annotated in place
+  with an `llm_verdict` (`likely_false_positive` + a short `rationale`) — this never
+  filters, drops, or dims a finding; the curator still sees and decides on every regex
+  match, same "advisory only, never trusted to redact/decide/gate" posture as
+  everything else in this family. Own metric,
+  `nexus_rag_ingestion_worker_pii_llm_verification_total{outcome=...}`, kept separate
+  from `pii_llm_findings_total` so an `unavailable` outcome is unambiguous about which
+  half of the `PII_LLM_MODEL` call budget failed. Unit-level behavior is **tested
+  against mocks** (`services/ingestion-worker/tests/test_pii_llm_advisory.py`'s
+  `verify_pii_findings` cases, respx-mocked Ollama; `test_pii_llm_advisory_processing.py`'s
+  verification cases, worker glue against an in-memory SQLite session); the enabled path
+  is **validated against a live environment**: real `docker compose up`
+  (`PII_LLM_MODEL=qwen2.5:3b-instruct`), a document worded as a field-service manual
+  (part numbers/document-control numbers chosen so two are Luhn-valid and one is
+  ABA-checksum-valid, e.g. `4111 1111 1111 1111` labeled "Part No. ... Rev 2") uploaded
+  through the real `POST /documents` API tagged `CUI`/`manual`, confirmed end to end:
+  Phase 1's regex scan flagged all three as expected (2 `credit_card`, 1 `bank_routing`
+  finding), the worker's real Ollama verification call annotated each with
+  `llm_verdict.likely_false_positive: true` and an accurate rationale (e.g. "Part number
+  and revision reference match credit card number pattern", "Document control number
+  matches bank routing number pattern") — exactly the false-positive pattern #378
+  reported — and `nexus_rag_ingestion_worker_pii_llm_verification_total{outcome=
+  "verified"}` incremented on `/metrics`. `GET /documents/<id>` confirmed every original
+  finding stayed present and unfiltered alongside its verdict. (The same run also showed
+  `pii_llm_findings_total{outcome="unavailable"}` incrementing a few times under heavy
+  concurrent Ollama load from an unrelated backlog of large PDFs also queued in this dev
+  stack — the pre-existing degrade-to-`None`-on-timeout contract working as designed,
+  not a regression.) `scripts/calibrate_tagging_advisory.py`'s `pii_regex`/`pii_llm`
+  tallies don't yet incorporate `llm_verdict` (whether a curator's decision agreed with
+  a false-positive verdict) — a natural follow-on once there's evidence of how well the
+  verdict tracks real curation practice, not built here.
 - **Precedent-tag advisory over the approved corpus (issue #307, Phase 2 of #138)** —
   the ingestion worker runs a dense-only kNN lookup (`VectorStore.find_similar_approved`)
   against every `approved` chunk, using the centroid of the document's own chunk
