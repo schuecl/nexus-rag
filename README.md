@@ -93,7 +93,7 @@ Keycloak (OIDC) issues the claims (`clearance`, `releasability`, `groups`, `org`
 | `services/common` | Shared claims parsing, metadata schema, Qdrant access-filter builder, DB models, object-store + NATS helpers | FR-18, FR-26, §6.1, NFR-11, NFR-12 |
 | `services/ingestion-api` | Upload UI + API, mandatory tagging, curation queue + UI, admin-configurable lists | FR-1..FR-23, NFR-11..NFR-13 |
 | `services/ingestion-worker` | Durable NATS JetStream consumer: parsing/chunking/embedding, Qdrant writes | FR-3..FR-6, NFR-11 |
-| `services/orchestration-mcp` | FastMCP server exposing `rag_search`; hybrid retrieval, reranking, access enforcement, audit logging | FR-24..FR-31 |
+| `services/orchestration-mcp` | MCP server (MCP SDK 2.x `MCPServer`, #288) exposing `rag_search`; hybrid retrieval, reranking, access enforcement, audit logging | FR-24..FR-31 |
 | `services/reranker-service` | Cross-encoder reranking over the fused candidate pool | FR-25 |
 | `infra/keycloak` | Seeded realm: claims schema, per-org curator roles, test users | §6.2 |
 | `infra/librechat`, `infra/litellm` | Throwaway dev configs for the MCP/OBO + generation path | §7.7, NFR-9 |
@@ -120,7 +120,7 @@ nexus-rag/
     common/                  # shared claims/metadata/Qdrant-filter/object-store/job-queue library
     ingestion-api/           # upload + curation UI/API (FastAPI)
     ingestion-worker/        # durable parse/chunk/embed/store pipeline (NATS JetStream consumer)
-    orchestration-mcp/       # retrieval MCP server (FastMCP)
+    orchestration-mcp/       # retrieval MCP server (MCP SDK 2.x MCPServer)
     reranker-service/        # cross-encoder reranking API
   infra/
     keycloak/realm-export/   # seeded dev realm
