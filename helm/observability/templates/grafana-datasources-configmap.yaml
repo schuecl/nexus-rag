@@ -7,8 +7,9 @@ a delivery mechanism for a file that belongs on a different machine:
   kubectl get configmap <release>-grafana-datasources \
     -o jsonpath='{.data.datasources\.yaml}' > datasources.yaml
 
-The UIDs below are NOT free-form. All 13 dashboards in dashboards/ have an
-empty templating.list and no __inputs block -- they reference the literal UIDs
+The UIDs below are NOT free-form. All 14 dashboards in dashboards/ have no
+__inputs block (the quality dashboard alone has a profile variable) and
+reference the literal UIDs
 `prometheus`, `loki`, `tempo`, `alertmanager`, and `documents-pg`. Change one
 here and every panel bound to it imports broken, with no error at import time
 and no hint at panel time beyond "No data".

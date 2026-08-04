@@ -28,19 +28,23 @@ Grafana reads, and vendored the dashboards for you to import.
 {{ end }}
    Copy it to Grafana's provisioning/datasources/ directory and restart Grafana.
 
-   Do not renumber the uid fields. All 13 dashboards reference the literal uids
+   Do not renumber the uid fields. All 14 dashboards reference the literal uids
    prometheus / loki / tempo / alertmanager / documents-pg, and a mismatch
    imports every panel broken with no error.
 
 3. Import the dashboards. They are files in the chart, not objects in the
    cluster -- import them from your checkout:
 
-     helm/observability/dashboards/*.json      (13 dashboards)
+     helm/observability/dashboards/*.json      (14 dashboards)
      helm/observability/dashboards/system-flow.svg
 
    Grafana -> Dashboards -> New -> Import, one file at a time, or point a file
    provider at the directory. See helm/observability/README.md for the
    pre-staged plugin prerequisite -- three dashboards render blank without it.
+
+   The RAG quality dashboard remains empty until sanitized report metrics are
+   published. Pushgateway is ClusterIP-only; see helm/observability/README.md
+   for the allowed-namespace and controlled port-forward workflows.
 
 4. Turn on tracing in the nexus-rag release. It is off until you do: the app
    services no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.

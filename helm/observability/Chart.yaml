@@ -2,7 +2,8 @@ apiVersion: v2
 name: observability
 description: >-
   Nexus RAG observability backends (issue #257) -- Prometheus, Loki, Tempo,
-  Alertmanager, an OTLP collector, a pod-log shipper, and the exporters they
+  Alertmanager, a batch-metrics Pushgateway, an OTLP collector, a pod-log
+  shipper, and the exporters they
   scrape. Deliberately ships NO Grafana: this chart exists for the topology
   where Grafana already runs outside the cluster on the air-gapped network, so
   the four stores it reads are published on LoadBalancer addresses and the

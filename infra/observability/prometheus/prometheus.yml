@@ -15,6 +15,14 @@ scrape_configs:
     static_configs:
       - targets: ["prometheus:9090"]
 
+  # #384: evaluator runs are batch jobs. honor_labels preserves the fixed
+  # job/profile grouping labels supplied by the sanitized publisher instead of
+  # renaming them to exported_job/exported_profile.
+  - job_name: nexus-rag-quality-pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
   - job_name: nexus-rag-ingestion-api
     static_configs:
       - targets: ["ingestion-api:8001"]

@@ -374,7 +374,8 @@ otherwise block the scrape. **This remains the preferred arrangement.**
 For a cluster that has *no* monitoring stack, and whose Grafana runs outside it
 on the air-gapped network, there is a second, separately-installed chart:
 `helm/observability` (#257) deploys Prometheus/Loki/Tempo/Alertmanager on
-LoadBalancer addresses, vendors the 13 dashboards for import, and deploys no
+LoadBalancer addresses, adds a ClusterIP-only Pushgateway for sanitized
+Q-to-C-to-A batch metrics, vendors the 14 dashboards for import, and deploys no
 Grafana. See [observability.md](observability.md).
 
 ## Prerequisites

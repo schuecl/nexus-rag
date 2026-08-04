@@ -46,6 +46,15 @@ data:
         static_configs:
           - targets: ["localhost:{{ .Values.prometheus.service.port }}"]
 
+      {{- if .Values.pushgateway.enabled }}
+      # #384: preserve the publisher's fixed job/profile grouping labels. All
+      # report-derived labels are hashes or allowlisted metric vocabulary.
+      - job_name: nexus-rag-quality-pushgateway
+        honor_labels: true
+        static_configs:
+          - targets: ["{{ include "observability.fullname" . }}-pushgateway:{{ .Values.pushgateway.service.port }}"]
+      {{- end }}
+
       {{- /*
       One job per app service rather than one job with four port filters: the
       alert rules match on `up{job=~"nexus-rag-.*"}` and the dashboards key on

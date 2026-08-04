@@ -4,9 +4,10 @@ The observability backends for a Nexus RAG deployment, for the specific topology
 where **Grafana already exists outside the cluster** on the air-gapped network.
 
 This chart deploys **no Grafana**. It deploys the four stores that Grafana reads,
-publishes them on LoadBalancer addresses, generates a datasource provisioning
-file with those addresses filled in, and vendors the 13 dashboards as importable
-files.
+plus a ClusterIP-only Pushgateway for sanitized batch-evaluation metrics,
+publishes the stores on LoadBalancer addresses, generates a datasource
+provisioning file with those addresses filled in, and vendors the 14 dashboards
+as importable files.
 
 ## When NOT to use this
 
@@ -32,6 +33,7 @@ nexus-rag` posture is unchanged.
 | Loki | `grafana/loki:3.7.2` | LoadBalancer :3100 | Grafana datasource |
 | Tempo | `grafana/tempo:2.10.5` | LoadBalancer :3200 | Grafana datasource |
 | Alertmanager | `prom/alertmanager:v0.32.1` | LoadBalancer :9093 | Grafana datasource |
+| Pushgateway | `prom/pushgateway:v1.11.3` | ClusterIP :9091 | sanitized Q-to-C-to-A batch metrics (#384) |
 | Tempo OTLP | (same pod) | ClusterIP :4317/:4318 | trace *ingest* is a write path |
 | OTLP collector | `otel/opentelemetry-collector-contrib:0.153.0` | ClusterIP :4317/:4318 | in-cluster senders only |
 | Alloy | `grafana/alloy:v1.16.1` | none (DaemonSet) | push-only to Loki |
@@ -39,11 +41,12 @@ nexus-rag` posture is unchanged.
 | nats-exporter | `natsio/prometheus-nats-exporter:0.20.1` | ClusterIP :7777 | scraped in-cluster |
 | blackbox-exporter | `prom/blackbox-exporter:v0.28.0` | ClusterIP :9115 | scraped in-cluster |
 
-Only the four things Grafana actually connects to get a LoadBalancer. An
-exporter on a LoadBalancer would be attack surface with no consumer.
+Only the four things Grafana actually connects to get a LoadBalancer.
+Pushgateway is a write endpoint and stays ClusterIP-only; an exporter or write
+receiver on a LoadBalancer would be attack surface without a direct consumer.
 
 Every tag matches `docker-compose.yml` exactly, so the Compose stack and the
-cluster run the same builds (NFR-16). Mirror all nine into the air-gapped
+cluster run the same builds (NFR-16). Mirror all ten into the air-gapped
 registry and set `global.imageRegistry` — nothing here is fetched at runtime
 (NFR-1).
 
@@ -81,7 +84,7 @@ Two things make the template **fail rather than render**, both deliberate:
 
 ## Dashboards
 
-Vendored under `dashboards/` — 13 JSON files plus `system-flow.svg`. They are
+Vendored under `dashboards/` — 14 JSON files plus `system-flow.svg`. They are
 files in the chart, not objects in the cluster; import them into the external
 Grafana from a checkout.
 
@@ -91,12 +94,13 @@ stack and the air-gapped Grafana can never end up with different copies.
 
 ### The datasource UIDs are not free-form
 
-All 13 dashboards have an empty `templating.list` and no `__inputs` block. They
-reference **literal** datasource UIDs:
+All dashboards have no `__inputs` block and reference **literal** datasource
+UIDs. The RAG quality dashboard has one Prometheus-backed `profile` selector;
+the other dashboards keep an empty `templating.list`.
 
 | UID | Type | Used by |
 |---|---|---|
-| `prometheus` | prometheus | 254 panel references across 12 dashboards |
+| `prometheus` | prometheus | operational and quality dashboards |
 | `loki` | loki | 51 references |
 | `tempo` | tempo | log→trace derived field, service map |
 | `alertmanager` | alertmanager | alert state |
@@ -105,6 +109,31 @@ reference **literal** datasource UIDs:
 Rename any of these in Grafana and every panel bound to it imports broken —
 with no error at import time and nothing at panel time beyond "No data". The
 generated datasource file uses exactly these UIDs; leave them alone.
+
+### Publishing Q-to-C-to-A evaluation metrics
+
+The chart's Pushgateway is ClusterIP-only and persistent by default. It accepts
+only what a caller sends, so use
+`scripts/publish_rag_quality_metrics.py` rather than posting report JSON or
+hand-built labels. That publisher emits numeric scores/counts and one-way hashes
+only; it never emits query, answer, context, source, model, user, or error text.
+
+Publish from an allowed namespace, point the script at an existing approved
+gateway, or use a controlled port-forward for administrative validation:
+
+```bash
+kubectl port-forward -n observability \
+  svc/nexus-rag-obs-observability-pushgateway 9092:9091
+python scripts/publish_rag_quality_metrics.py \
+  --report eval-history/qca-current.json \
+  --baseline eval-history/qca-baseline.json \
+  --profile nightly \
+  --pushgateway-url http://127.0.0.1:9092
+```
+
+When NetworkPolicy is enabled, in-cluster writers must be in
+`networkPolicy.allowedNamespaces`. Do not change the Service to LoadBalancer
+without adding the environment's approved authentication and network controls.
 
 ### Three dashboards need pre-staged plugins
 
@@ -180,6 +209,7 @@ never appear.
   A plausible-looking email receiver would be worse — configured-looking and
   delivering nowhere.
 - **It does not create the Postgres monitoring role or the metrics view.**
+- **No public Pushgateway.** The batch-metrics write endpoint is ClusterIP-only.
 
 ## Confidence
 
@@ -189,7 +219,7 @@ in a container, against the output of `helm template`:
 
 | Config | Validator |
 |---|---|
-| `prometheus.yml` + rules | `promtool check config` (15 scrape jobs, 10 rules) |
+| `prometheus.yml` + rules | `promtool check config` (16 scrape jobs, 10 rules) |
 | `alertmanager.yml` | `amtool check-config` |
 | `loki.yml` | `loki -verify-config` |
 | `tempo.yml` | `tempo -config.verify` |

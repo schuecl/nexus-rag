@@ -55,8 +55,9 @@ kubectl get cm -n observability nexus-rag-obs-observability-grafana-datasources 
 
 ### Three things that bite
 
-**The dashboards hard-code datasource UIDs.** All 13 have an empty
-`templating.list` and no `__inputs` block; they reference the literal UIDs
+**The dashboards hard-code datasource UIDs.** None has an `__inputs` block;
+the quality dashboard has one Prometheus-backed `profile` selector and the
+others have an empty `templating.list`. They reference the literal UIDs
 `prometheus`, `loki`, `tempo`, `alertmanager`, `documents-pg`. Rename one in
 Grafana and every panel bound to it imports broken — no error at import, nothing
 at panel time beyond "No data". The generated provisioning file uses exactly
@@ -116,6 +117,12 @@ id (#127).
 | reranker-service | 8003 | request counts, model predict latency, batch sizes, model-loaded gauge |
 | ingestion-worker | 8004 | job outcomes + duration, per-stage duration, chunks produced, delivery attempts, consumer-running gauge, last-success timestamp |
 
+Issue #384 adds a fifth, batch-oriented source: sanitized Q-to-C-to-A report
+metrics published through Pushgateway. It is not a fifth application service and
+does not accept corpus content. The publisher allowlists numeric scores/counts,
+hashes case and configuration identities, and rejects malformed reports rather
+than serializing arbitrary labels.
+
 The reranker fallback rate matters more than it looks: FR-25 degrades to fused
 order rather than failing, so a ranking-quality drop is otherwise invisible.
 
@@ -137,7 +144,7 @@ flame graph for the same service.
 
 ## Dashboards
 
-13 dashboards, in `infra/observability/grafana/dashboards/` (Compose) and
+14 dashboards, in `infra/observability/grafana/dashboards/` (Compose) and
 `helm/observability/dashboards/` (chart). The two copies are kept byte-identical
 by `scripts/check_observability_assets_sync.py`, which runs in CI's `pin-check`
 job — the same arrangement #212 uses for `nats.conf`, and for the same reason:
@@ -149,6 +156,7 @@ a duplicated source of truth is only safe if something enforces it.
 | System flow | prometheus (needs the three flow plugins) |
 | Ingestion pipeline | prometheus |
 | Retrieval and reranking | prometheus |
+| RAG quality evaluation | prometheus (via Pushgateway; issue #384) |
 | Messaging (NATS JetStream) | prometheus (via nats-exporter `-jsz=all`) |
 | Datastores (Postgres) | prometheus (via postgres-exporter) |
 | Vector store (Qdrant) | prometheus |
@@ -164,6 +172,56 @@ rather than going through Prometheus, so it needs
 `infra/postgres/document-metrics-view.sql` applied and `grafana_ro` granted
 `SELECT` on the view. Without those it reads "No data" while everything else
 works.
+
+### Q-to-C-to-A quality dashboard (#384)
+
+[`scripts/publish_rag_quality_metrics.py`](../scripts/publish_rag_quality_metrics.py)
+turns a completed issue #74/#383 evaluation report into an allowlisted Prometheus
+payload. The separation is deliberate: `evaluate_rag_quality.py` remains the
+fail-closed evaluator and its JSON remains the local audit artifact; publishing
+is an explicit second action that can be omitted where the approved monitoring
+boundary is different.
+
+For Compose, Pushgateway is part of the opt-in `observability` profile and its
+write port is bound to host loopback on `127.0.0.1:9092` (container port 9091).
+Host port 9092 avoids a collision with Milvus's host-side health/metrics port.
+
+```bash
+docker compose --profile observability up -d pushgateway prometheus grafana
+
+# First create a content-free report with #383's evaluator.
+python scripts/evaluate_rag_quality.py \
+  --agent-id <librechat-agent-id> \
+  --output eval-history/qca-current.json
+
+# Publish latest state. Add --baseline for delta/regression panels.
+python scripts/publish_rag_quality_metrics.py \
+  --report eval-history/qca-current.json \
+  --baseline eval-history/qca-baseline.json \
+  --profile nightly
+```
+
+`--dry-run` prints the exact exposition payload without making a request. The
+publisher supports an HTTPS gateway through `--ca-file` and a reverse proxy's
+bearer token through `--bearer-token-file`; credentials are never accepted in
+the URL. Keep the endpoint inside the accreditation boundary. Pushgateway is a
+metrics cache for ephemeral/batch jobs, not an event store; Prometheus's TSDB is
+what provides the 30-day trend displayed by the dashboard.
+
+The Helm observability chart deploys its gateway as ClusterIP only. Publish from
+an allowed namespace, use the environment's existing approved Pushgateway, or
+use a controlled `kubectl port-forward` for administrative validation. The chart
+does not create an unauthenticated public write endpoint. With
+`networkPolicy.enabled=true`, writer namespaces come from
+`networkPolicy.allowedNamespaces`; Prometheus in the observability release is
+always allowed to scrape it.
+
+Dashboard panels include latest aggregate gauges, score time series, comparable
+baseline deltas, run-validity/regression/error/coverage stats, a hashed case-ID
+table, a hashed configuration table, and configuration-fingerprint annotations.
+The aggregate gauges are intentionally neutral blue. Judge scores are relative,
+so only the publisher's same-configuration baseline decision is rendered as a
+red/green regression state.
 
 ## Alerts
 

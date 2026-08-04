@@ -11,6 +11,7 @@ volumes:
   milvus-data:
   prometheus-data:
   postgres-data:
+  pushgateway-data:
   pyroscope-data:
   qdrant-data:
   tempo-data:
@@ -770,6 +771,38 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+
+  pushgateway:
+    # #384: Q-to-C-to-A evaluation is a short-lived host-side batch job, so it
+    # cannot expose a stable scrape target. Pushgateway retains the latest
+    # sanitized score gauges long enough for Prometheus to scrape them. Port
+    # 9092 is loopback-only and deliberately differs from Milvus's host-side
+    # 9091, allowing observability and milvus profiles to run together.
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    profiles: ["observability"]
+    image: prom/pushgateway:v1.11.3
+    command:
+      - --persistence.file=/pushgateway/metrics.db
+      - --persistence.interval=5m
+    read_only: true
+    volumes:
+      # Official image owns /pushgateway as uid 65534; mounting the named
+      # volume there preserves a writable non-root persistence path.
+      - pushgateway-data:/pushgateway
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:9092:9091"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9091/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      fix-config-perms:
+        condition: service_completed_successfully
 
   prometheus:
     # #133: opt-in -- the observability stack starts only with

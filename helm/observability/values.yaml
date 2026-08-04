@@ -173,6 +173,33 @@ prometheus:
       memory: "4Gi"
 
 # ---------------------------------------------------------------------------
+# Pushgateway (#384). Q-to-C-to-A evaluation is a short-lived batch process,
+# so Prometheus cannot scrape it directly. This ClusterIP-only write endpoint
+# retains the latest sanitized report metrics; operators using an existing
+# monitoring stack may point the publisher at their approved gateway instead.
+# ---------------------------------------------------------------------------
+pushgateway:
+  enabled: true
+  image:
+    repository: prom/pushgateway
+    tag: "v1.11.3"          # NFR-16
+  service:
+    type: ClusterIP
+    port: 9091
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  persistenceInterval: 5m
+  resources:
+    requests:
+      cpu: "25m"
+      memory: "64Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+
+# ---------------------------------------------------------------------------
 # Alertmanager (prom/alertmanager:v0.32.1)
 # ---------------------------------------------------------------------------
 alertmanager:

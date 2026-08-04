@@ -12,7 +12,7 @@
 
 global:
   # The registry the images were pre-staged into (NFR-1: nothing is pulled from
-  # the internet at deploy time). Mirror the nine images listed in README.md.
+  # the internet at deploy time). Mirror the ten images listed in README.md.
   imageRegistry: "CHANGEME.registry.internal.example.mil/nexus-rag"
   imagePullSecrets: []
   labels:
@@ -52,6 +52,15 @@ prometheus:
     # - https://librechat.example.mil/login
     # - http://litellm.chat.svc:4000/health/liveliness
     # - http://ollama.gen.svc:11434/api/version
+
+pushgateway:
+  # ClusterIP only. Run the sanitized publisher from an allowed namespace or
+  # use the environment's existing approved Pushgateway.
+  enabled: true
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: "CHANGEME-block-storageclass"
 
 loki:
   service:

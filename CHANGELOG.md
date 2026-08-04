@@ -32,6 +32,13 @@ changed in the running system, with the issue/PR reference for the trail.
   fail-closed handling; the profile separately lists the marking, authority,
   compilation, special-category, and chat-output gaps that remain before a
   deployment could claim the profile is operational.
+- Q-to-C-to-A evaluation reports can now be published as sanitized Prometheus
+  metrics through an opt-in Pushgateway path, and a new Grafana dashboard shows
+  aggregate gauges/trends, comparable-baseline deltas, run validity, hashed
+  case diagnostics, and configuration-change annotations without exporting
+  query, answer, context, source, user, model, or error text (#384). The
+  undetermined-abstention count travels with the abstention score, so a run
+  where the judge declined some verdicts cannot read as full coverage.
 
 ## [0.4.0] - 2026-08-04
 
