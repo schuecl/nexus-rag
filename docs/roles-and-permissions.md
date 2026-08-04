@@ -341,6 +341,23 @@ honest answer to "can we know who saw document X?" is **yes** — scan
 `audit_log` for that document id — bounded by who can read the table at all
 (G2's residual: `nexus_rag_audit_reporting` and the bootstrap superuser only).
 
+**G7 — Retrieved content persists in the chat plane beyond purge's reach —
+decided as accepted risk (#286).** Every successful `rag_search` hands chunk
+text to LibreChat, which persists tool results and grounded answers in its
+own Mongo store (and LiteLLM may log the generation request), with none of
+this document's controls attached and no reach for the purge path (#123).
+The §6 line "out of this repo's enforcement scope" is true for access
+control, but the pipeline is what sends content across that boundary, so the
+exposure is this system's to characterize. The recorded decision: accept the
+risk and equip the response rather than pretend to control the other side —
+the `document.purged` audit entry now carries `chat_plane_action_required`
+and the retrievability window, the NFR-2 SIEM export delivers it to
+chat-plane operators, and [`chat-plane-purge.md`](chat-plane-purge.md) is
+their procedure (its step 2 leans on G6-as-corrected: `result_document_ids`
+makes the affected identities enumerable). Retrieval-side minimization
+(truncating what crosses) was considered and rejected — it shrinks the copy,
+not the boundary.
+
 ## 8. Reviewing a change against this document
 
 A PR touches authorization if it adds a route, widens a query, adds a role, or

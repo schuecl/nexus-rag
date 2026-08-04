@@ -29,6 +29,7 @@ def test_adds_missing_column_to_preexisting_table():
         "queue_published_at",
         "processing_started_at",
         "content_sha256",
+        "first_approved_at",
     } & _columns(engine, "documents")
 
     _ensure_columns(engine)
@@ -38,6 +39,7 @@ def test_adds_missing_column_to_preexisting_table():
         "queue_published_at",
         "processing_started_at",
         "content_sha256",
+        "first_approved_at",
     } <= _columns(engine, "documents")
     engine.dispose()
 

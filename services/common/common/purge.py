@@ -37,6 +37,16 @@ delete them by construction. That
 tension is real and is called out in #123 -- resolving it needs a policy
 decision and an out-of-band administrative path, not an application function.
 
+Issue #286: a purge destroys every copy *this system* holds, but every chat
+conversation that ever retrieved the document still holds its text verbatim
+in the chat plane (LibreChat's Mongo store, potentially LiteLLM's logs) --
+stores none of this code can reach. The `document.purged` audit entry
+therefore carries a `chat_plane_action_required` flag and the retrievability
+window start (`retrievable_since`), and the #73 SIEM export forwards that
+entry like any other -- giving chat-plane operators the trigger and the time
+bounds for their side of the remediation. The operator procedure itself is
+`docs/chat-plane-purge.md`.
+
 Issue #279 (gap G3): `purge_document` above is a complete, irreversible
 destruction in one call -- fine as a primitive, but it means a single
 `rag-purge` holder can act alone. `request_purge`/`confirm_purge` below add a
@@ -73,6 +83,18 @@ CONFIRMED_STATUS = "confirmed"
 # other field is scrubbed to this marker so nothing about the destroyed
 # document's content, origin, or tagging survives in a queryable row.
 SCRUBBED = "[purged]"
+
+# Issue #286: statuses that say, by themselves, that chunk text may have
+# reached the chat plane. `approved` is the only status the FR-26 filter
+# accepts and `superseded` is only reachable from it; `purging` (a retry of a
+# half-finished purge) is conservatively included because the pre-purge
+# status is unknown at that point. Deliberately NOT a complete answer:
+# status alone cannot clear a document, because the #268 edit route demotes
+# an approved document straight back to `pending_review` (and a demoted one
+# can go on to `rejected`) -- the review of this change caught exactly that
+# false-negative. `Document.first_approved_at`, which that demotion
+# deliberately does not clear, supplies the missing half below.
+EVER_RETRIEVABLE_STATUSES = frozenset({"approved", "superseded", "purging"})
 
 
 class PurgeError(Exception):
@@ -133,6 +155,28 @@ def purge_document(
     # Captured before any mutation: step 4 below scrubs doc.classification,
     # and issue #229 needs the pre-scrub value to find the right collection.
     classification = doc.classification
+    # #286: whether chunk text could ever have crossed into the chat plane,
+    # and since when. Two signals, OR'd, because neither is complete alone:
+    # the status covers rows approved before `first_approved_at` existed
+    # (their column is null but their status still says approved/superseded),
+    # and `first_approved_at` covers the #268 demotion path, where an
+    # approved document is sent back to pending_review -- with `reviewed_at`
+    # wiped -- and may be purged from there or from a later rejection. The
+    # remaining blind spot is a pre-column approve-then-demote (null column
+    # AND non-retrievable status); documented as a residual in
+    # docs/chat-plane-purge.md rather than silently absorbed.
+    # `first_approved_at` is the earliest moment the FR-26 filter could have
+    # matched this document, so it starts the operator sweep window; both
+    # are timestamps, not content: safe to keep in the append-only audit row.
+    chat_plane_action_required = (
+        original_status in EVER_RETRIEVABLE_STATUSES or doc.first_approved_at is not None
+    )
+    _since = doc.first_approved_at or doc.reviewed_at
+    retrievable_since = (
+        _as_aware_utc(_since).isoformat()
+        if chat_plane_action_required and _since is not None
+        else None
+    )
 
     # 1. Make it unretrievable before destroying anything. Committed on its own
     #    so a failure below cannot leave the document still matchable.
@@ -203,6 +247,17 @@ def purge_document(
                 "status_before_purge": original_status,
                 "chunks_destroyed": chunk_count,
                 "original_destroyed": object_key is not None,
+                # #286: the chat-plane trigger. This entry reaches the SIEM
+                # via the #73 export, so these two fields are what a
+                # chat-plane operator alerts on and scopes their sweep with:
+                # the window is [retrievable_since, this entry's created_at].
+                # retrievable_since prefers first_approved_at (survives the
+                # #268 demotion and purge retries) over reviewed_at; null
+                # only when neither timestamp exists (rows approved before
+                # the column existed) -- the runbook's fallback is the
+                # document row's created_at, which the tombstone keeps.
+                "chat_plane_action_required": chat_plane_action_required,
+                "retrievable_since": retrievable_since,
                 # #279: both identities land in this one row when a
                 # two-person request/confirm preceded this call -- actor_sub
                 # above is already the confirmer.

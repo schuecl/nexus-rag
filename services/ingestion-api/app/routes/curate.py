@@ -272,6 +272,9 @@ def edit_metadata(
         doc.status = "pending_review"
         doc.reviewed_by_sub = None
         doc.reviewed_at = None
+        # Deliberately NOT clearing first_approved_at: the document *was*
+        # retrievable until this demotion, and that fact is exactly what the
+        # #286 chat-plane purge signal needs to survive this branch.
         changed_qdrant["status"] = doc.status
         demoted = True
 
@@ -656,6 +659,13 @@ def approve(
     doc.status = "approved"
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(UTC)
+    # #286: set once, at the *first* approval only, and never cleared -- the
+    # edit route's #268 demotion wipes reviewed_at, and this field is what
+    # lets a later purge still know the document was once FR-26-retrievable
+    # (see common/models.py). A re-approval after demotion keeps the original
+    # timestamp: the chat-plane sweep window starts at the earliest exposure.
+    if doc.first_approved_at is None:
+        doc.first_approved_at = doc.reviewed_at
 
     qdrant_fields: dict[str, str | list[str]] = {"status": doc.status}
     if corrections:

@@ -10,6 +10,7 @@ HTTP plumbing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -428,6 +429,54 @@ class TestRequireCuratorOrPurge:
         assert exc_info.value.status_code == 403  # type: ignore[attr-defined]
 
 
+class TestFirstApprovalTimestamp:
+    """#286 (review finding): first_approved_at is the durable
+    was-ever-retrievable signal the purge audit entry depends on. It is set
+    once at the first approval, survives the #268 demotion (unlike
+    reviewed_at), and keeps the *earliest* exposure through a
+    demote-then-re-approve cycle."""
+
+    def test_set_once_and_kept_through_demotion_and_reapproval(
+        self, session: Session, _stub_qdrant: _PayloadCalls
+    ) -> None:
+        doc = _document(status="pending_review")
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        approved = curate.approve(
+            doc.id, corrections=None, user=CURATOR, session=session, _csrf=None
+        )
+        first = approved.first_approved_at
+        assert first is not None
+        assert first == approved.reviewed_at
+
+        # An out-of-authority tag edit demotes (#268) -- reviewed_at is wiped,
+        # first_approved_at must survive.
+        demoted = curate.edit_metadata(
+            doc.id,
+            curate.DocumentEdit(classification="TOP SECRET"),
+            user=CURATOR,
+            session=session,
+            _csrf=None,
+        )
+        assert demoted.status == "pending_review"
+        assert demoted.reviewed_at is None
+        assert demoted.first_approved_at == first
+
+        # An authorized correction lands and the doc is re-approved: the
+        # timestamp stays at the earliest exposure, not the re-approval.
+        demoted.classification = "CUI"
+        session.add(demoted)
+        session.commit()
+        reapproved = curate.approve(
+            doc.id, corrections=None, user=CURATOR, session=session, _csrf=None
+        )
+        assert reapproved.first_approved_at == first
+        assert reapproved.reviewed_at is not None
+        assert reapproved.reviewed_at >= first
+
+
 class TestDocumentEditRejectsEmptyLists:
     """FR-20/Section 6.3's "one or more" cardinality, same as upload-time
     DocumentMetadataIn -- an edit must not be able to orphan a document by
@@ -557,7 +606,8 @@ class TestEditMetadata:
         applied, but the document is sent back to pending_review so a curator
         who does hold that authority has to sign off before it's retrievable
         again."""
-        doc = _document(classification="CUI")
+        first_approved = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
+        doc = _document(classification="CUI", first_approved_at=first_approved)
         session.add(doc)
         session.commit()
         session.refresh(doc)
@@ -574,6 +624,10 @@ class TestEditMetadata:
         assert result.status == "pending_review"
         assert result.reviewed_by_sub is None
         assert result.reviewed_at is None
+        # #286: the demotion must NOT erase the fact the document was once
+        # approved -- a purge from this state still has to trigger the
+        # chat-plane sweep (common/purge.py's chat_plane_action_required).
+        assert result.first_approved_at is not None
         assert _stub_qdrant.calls == [
             (
                 "update",

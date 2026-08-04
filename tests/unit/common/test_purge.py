@@ -157,6 +157,116 @@ class TestAuditTrail:
         assert "spilled-secret" not in str(entry.detail)
 
 
+class TestChatPlaneSignal:
+    """Issue #286: the purge audit entry is the chat-plane remediation
+    trigger. It must say whether chunk text could ever have crossed into the
+    chat plane (only ever true for a document the FR-26 filter once matched)
+    and, when it could, since when -- the window the operator runbook
+    (docs/chat-plane-purge.md) sweeps."""
+
+    def _purged_detail(self, db):
+        return (
+            db.exec(select(AuditLogEntry).where(AuditLogEntry.action == "document.purged"))
+            .one()
+            .detail
+        )
+
+    def test_approved_document_flags_chat_plane_action(self, db, doc, stores):
+        approved_at = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+        doc.reviewed_at = approved_at
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        detail = self._purged_detail(db)
+        assert detail["chat_plane_action_required"] is True
+        assert detail["retrievable_since"] == approved_at.isoformat()
+
+    def test_approved_without_review_timestamp_still_flags_with_null_window(self, db, doc, stores):
+        """A missing approval timestamp must not silence the flag -- the
+        runbook's documented fallback is the tombstone's created_at."""
+        assert doc.reviewed_at is None
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        detail = self._purged_detail(db)
+        assert detail["chat_plane_action_required"] is True
+        assert detail["retrievable_since"] is None
+
+    def test_never_retrievable_document_does_not_flag(self, db, doc, stores):
+        """pending_review chunks never matched the FR-26 filter, so nothing
+        can have reached the chat plane -- the operator should not be sent
+        sweeping conversations for a document no query could return."""
+        doc.status = "pending_review"
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="mistake")
+
+        detail = self._purged_detail(db)
+        assert detail["chat_plane_action_required"] is False
+        assert detail["retrievable_since"] is None
+
+    def test_superseded_document_flags_it_was_retrievable_before(self, db, doc, stores):
+        """superseded is only reachable *from* approved (FR-7), so the text
+        was retrievable once even though it isn't at purge time."""
+        doc.status = "superseded"
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        assert self._purged_detail(db)["chat_plane_action_required"] is True
+
+    def test_demoted_after_approval_still_flags(self, db, doc, stores):
+        """The review finding on this change: the #268 edit route demotes an
+        approved document back to pending_review and wipes reviewed_at, and
+        that path is *likely* in the primary purge scenario (a misclassified
+        approved doc gets its tags corrected, then purged). Status alone
+        would say never-retrievable -- first_approved_at, which the demotion
+        deliberately keeps, must carry the flag and the window start."""
+        first_approved = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
+        doc.status = "pending_review"
+        doc.reviewed_at = None
+        doc.reviewed_by_sub = None
+        doc.first_approved_at = first_approved
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        detail = self._purged_detail(db)
+        assert detail["chat_plane_action_required"] is True
+        assert detail["retrievable_since"] == first_approved.isoformat()
+
+    def test_demoted_then_rejected_still_flags(self, db, doc, stores):
+        """A demoted document can go on to be rejected -- rejected is not
+        proof of never-retrievable either."""
+        doc.status = "rejected"
+        doc.reviewed_at = datetime(2026, 7, 2, 8, 0, 0, tzinfo=UTC)
+        doc.first_approved_at = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        assert self._purged_detail(db)["chat_plane_action_required"] is True
+
+    def test_window_start_prefers_first_approval_over_last_review(self, db, doc, stores):
+        """A demote-then-re-approve sequence leaves reviewed_at at the second
+        approval; the sweep window must start at the *earliest* exposure."""
+        first_approved = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
+        doc.reviewed_at = datetime(2026, 7, 2, 8, 0, 0, tzinfo=UTC)
+        doc.first_approved_at = first_approved
+        db.add(doc)
+        db.commit()
+
+        purge_document(db, doc.id, actor_sub="d", actor_username="dave", reason="spillage")
+
+        assert self._purged_detail(db)["retrievable_since"] == first_approved.isoformat()
+
+
 class TestPartialFailure:
     def test_qdrant_failure_leaves_the_document_unretrievable(self, db, doc, monkeypatch):
         """The FR-26 filter requires status == approved. If a store fails, the

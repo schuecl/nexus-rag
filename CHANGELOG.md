@@ -39,6 +39,22 @@ changed in the running system, with the issue/PR reference for the trail.
   real gap where nothing asserted `parse_claims` populates `groups` (the
   need-to-know input to the FR-26 filter).
 
+- Chat-plane boundary decision recorded (#286): a purge destroys every copy
+  this system holds, but conversations that retrieved the document keep its
+  text in LibreChat/LiteLLM stores purge cannot reach. The `document.purged`
+  audit event now carries `chat_plane_action_required` and the
+  retrievability-window start (`retrievable_since`) and reaches the SIEM via
+  the existing NFR-2 export, so chat-plane operators can trigger their side
+  of a spillage response; `docs/chat-plane-purge.md` is their runbook, and
+  `docs/governance.md` / `docs/roles-and-permissions.md` (new G7) /
+  `docs/threat-model.md` state the accepted risk plainly. The flag is backed
+  by a new `documents.first_approved_at` column (additive, auto-added on
+  startup): set at first approval and deliberately never cleared, so a
+  document that was approved, then demoted back to review by an
+  out-of-authority tag edit (#268), then purged still triggers the sweep —
+  status alone would have missed exactly the misclassify-correct-purge
+  sequence purges exist for (caught in review).
+
 - Bulk document upload: the ingestion UI and `POST /documents/batch` accept
   multiple files sharing one Classification/Releasability/Access-scope/
   Source-Originator/Doc-type payload, validated once against the submitter's

@@ -160,6 +160,20 @@ class Document(SQLModel, table=True):
     processing_error: str | None = None
     reviewed_by_sub: str | None = None
     reviewed_at: datetime | None = None
+    # #286 (review finding on the chat-plane signal): set once at the moment
+    # of *first* approval and never cleared afterwards -- unlike reviewed_at,
+    # which the #268 edit route wipes when it demotes an approved document
+    # back to pending_review. This is the durable "was this ever
+    # FR-26-retrievable" fact the document.purged audit entry needs: a doc
+    # can be purged from pending_review/rejected *after* having been live in
+    # the chat plane, and by then no other row state remembers the approval.
+    # (An audit_log lookback can't serve here instead: since #278 the
+    # application roles hold INSERT-only on audit_log, no SELECT.)
+    # Null on rows approved before this column existed -- for those,
+    # status_before_purge keeps the flag correct while they remain
+    # approved/superseded; a pre-column approve-then-demote is a documented
+    # residual (docs/chat-plane-purge.md).
+    first_approved_at: datetime | None = None
     chunk_count: int = Field(default=0)
 
     # The submission row and original are committed before JetStream publish.

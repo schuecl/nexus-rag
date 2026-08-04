@@ -167,11 +167,14 @@ authorization — the chunk payload itself.
   enforcement (`roles-and-permissions.md` §6 states this plainly). Neither
   carries classification/releasability tagging or a retention policy this
   repo controls, and the purge path ([#123](https://github.com/schuecl/nexus-rag/issues/123))
-  cannot reach either. This is a *recorded, open* boundary decision, not a
-  closed one — see [#286](https://github.com/schuecl/nexus-rag/issues/286),
-  which lays out remediation options by cost (accept-as-risk /
-  operator runbook / purge-event notification hook / retrieval-side
-  minimization) and has not yet been decided.
+  cannot reach either. **Decided in
+  [#286](https://github.com/schuecl/nexus-rag/issues/286)** as accepted risk
+  with an equipped response: the `document.purged` audit entry carries
+  `chat_plane_action_required` and the retrievability window, the #73 SIEM
+  export delivers it to chat-plane operators, and
+  [`chat-plane-purge.md`](chat-plane-purge.md) is their sweep procedure.
+  Retrieval-side minimization was considered and rejected (shrinks the copy,
+  not the boundary).
 - **Reranker boundary:** `reranker-service` receives already-authorized
   chunk text with no claims check of its own — a deliberate exception,
   documented in `governance.md`'s "The reranker-service boundary", bounded
@@ -282,7 +285,7 @@ which score-suppression already answers without touching recall.
 
 | Item | Status |
 |---|---|
-| Retrieved content persisting in the chat plane beyond purge's reach | Recorded, not decided — [#286](https://github.com/schuecl/nexus-rag/issues/286) |
+| Retrieved content persisting in the chat plane beyond purge's reach | Decided ([#286](https://github.com/schuecl/nexus-rag/issues/286)): accepted risk; purge event signals it ([`chat-plane-purge.md`](chat-plane-purge.md)) |
 | Qdrant payload cleartext not encrypted at rest | Bounded by collection split/NetworkPolicy/RO-RW keys, not eliminated; depends on deployment storage layer |
 | No detection/alerting on reconnaissance-shaped query patterns | Substrate (#72 metrics, #73 SIEM) exists; no detection logic built on top of it yet |
 | Rank-order residual membership-inference channel | Accepted, unmitigated — see "Considered and rejected" above |
@@ -292,8 +295,9 @@ which score-suppression already answers without touching recall.
 [`governance.md`](governance.md) (lifecycle/retention, and the
 "Query confidentiality and user privacy" section this document supersedes
 the "not done" framing of), [`roles-and-permissions.md`](roles-and-permissions.md)
-(authorization matrix and its own gap analysis, G1–G6),
+(authorization matrix and its own gap analysis, G1–G7),
 [`ARCHITECTURE.md`](../ARCHITECTURE.md) (component/sequence diagrams),
 [#127](https://github.com/schuecl/nexus-rag/issues/127) (the issue this
 document answers), [#286](https://github.com/schuecl/nexus-rag/issues/286)
-(chat-plane persistence, still open).
+(chat-plane persistence — decided, see
+[`chat-plane-purge.md`](chat-plane-purge.md)).

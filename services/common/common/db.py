@@ -54,6 +54,11 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         # (uploaded before this column existed) upgrade without a rewrite --
         # ingestion-worker's re-verification check is skipped for those.
         "content_sha256": "VARCHAR(64)",
+        # #286: durable first-approval timestamp for the chat-plane purge
+        # signal; survives the #268 pending_review demotion that wipes
+        # reviewed_at. Nullable: pre-existing rows upgrade without a rewrite,
+        # and purge.py treats null as "trust status_before_purge instead".
+        "first_approved_at": "TIMESTAMP WITH TIME ZONE",
     },
     "portal_settings": {
         # #248: branding + login popup banner, all defaulted so an existing

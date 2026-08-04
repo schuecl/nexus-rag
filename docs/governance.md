@@ -382,6 +382,7 @@ are the only destruction that happens.
 | `oauth_states` / `user_sessions` | Bounded lifetimes, reaped continuously | #108 (merged) | **Implemented** |
 | `audit_log` | Local minimum **1 year** (configurable, `AUDIT_RETENTION_DAYS`), then eligible for administrative expiry — **except** destruction-evidence entries (`document.purged`, `audit.expired`), retained **7 years** | The audited-expiry process below; never the application role | **Proposed** |
 | SIEM copy of audit events | Governed by the environment's SIEM retention schedule, not this system | #73 export (merged, validated live against the dev `syslog-collector`) hands custody off; the SIEM is the long-term audit store | Out of this system's control — stated, not assumed |
+| Chat-plane copies of retrieved content (LibreChat conversations, LiteLLM logs) | Governed by those platforms' own retention, not this system — every successful `rag_search` hands chunk text across this boundary | **None here.** Purge cannot reach them; remediation is the operator procedure in [`chat-plane-purge.md`](chat-plane-purge.md), triggered by the `document.purged` event ([#286](https://github.com/schuecl/nexus-rag/issues/286)) | Out of this system's control — **accepted risk, decided in #286** |
 | Traces / metrics / process logs | Backend-governed (Tempo/Prometheus/Loki retention). Carry ids, counts, and sizes only — no corpus content or query text by construction (#125's rule, enforced in #132/#134/#158) | Observability backend configuration | Out of scope for this schedule |
 
 ### Destruction authority and evidence
@@ -392,6 +393,7 @@ are the only destruction that happens.
 | Who may expire audit entries? | No application role, ever — the append-only grant (NFR-2) stays exactly as it is. Only the administrative expiry process below, run by the platform admin under the bootstrap credentials, on the ratified schedule |
 | What evidence survives a purge? | The tombstoned `documents` row (id, uploader sub, timestamps, `purged` status) and a `document.purged` audit entry recording who, when, and the stated reason — deliberately **not** the filename or any other content-bearing field, so the evidence chain does not itself become a lower-classification aggregation of the destroyed content |
 | What evidence survives an audit expiry? | An `audit.expired` entry per run: the count of rows destroyed and the time range they covered — never their contents |
+| What does purge **not** destroy? | Chat-plane copies: every conversation that ever retrieved the document holds its text in LibreChat's Mongo store (and possibly LiteLLM's logs), outside every control this repo enforces. Purge is therefore **not** the whole spillage remediation — the `document.purged` audit entry carries `chat_plane_action_required` plus the retrievability window, the #73 SIEM export delivers it to chat-plane operators, and [`chat-plane-purge.md`](chat-plane-purge.md) is their procedure ([#286](https://github.com/schuecl/nexus-rag/issues/286)) |
 
 ### Reconciling NFR-2 with scheduled destruction (the audited-expiry design)
 
@@ -511,6 +513,6 @@ Stated so their absence reads as a decision rather than an oversight:
 | Gap | Issue |
 |---|---|
 | Retention: schedule drafted below but unratified; audited-expiry job unimplemented | [#123](https://github.com/schuecl/nexus-rag/issues/123) |
-| Retrieved content persists in the chat plane beyond purge's reach | [#286](https://github.com/schuecl/nexus-rag/issues/286) |
+| Retrieved content persists in the chat plane beyond purge's reach | Decided ([#286](https://github.com/schuecl/nexus-rag/issues/286)): accepted risk, recorded above; purge event signals it; operator procedure in [`chat-plane-purge.md`](chat-plane-purge.md) |
 | No detection/alerting on reconnaissance-shaped query patterns (metrics/SIEM substrate exists, no detection logic yet) | [threat-model.md](threat-model.md) |
 | No generation-side (Q→C→A) evaluation | [#74](https://github.com/schuecl/nexus-rag/issues/74) |
