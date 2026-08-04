@@ -60,7 +60,7 @@ jobs:
           chmod 0644 infra/certs/dev.key
       - name: Start the full stack and seed sample data
         # Not `up --wait`: the stack's one-shot containers (ollama-model-init,
-        # seed-sample-data, harden-audit-log) exit 0 by design, and --wait
+        # seed-sample-data, lock-down-db-grants) exit 0 by design, and --wait
         # treats an early exit as a failure on some compose versions. Wait
         # explicitly on the long-running services' healthchecks, then on each
         # one-shot's exit code.
@@ -102,8 +102,8 @@ jobs:
             done'
           echo "::endgroup::"
           echo "Waiting on one-shot containers (model pull, seeding, audit-log hardening)..."
-          docker compose wait ollama-model-init seed-sample-data harden-audit-log || true
-          for svc in ollama-model-init seed-sample-data harden-audit-log; do
+          docker compose wait ollama-model-init seed-sample-data lock-down-db-grants || true
+          for svc in ollama-model-init seed-sample-data lock-down-db-grants; do
             code=$(docker inspect --format '{{.State.ExitCode}}' "nexus-rag-$svc-1")
             if [ "$code" != "0" ]; then
               echo "::error::$svc exited with code $code"
@@ -179,8 +179,8 @@ jobs:
               echo "  [healthy] $svc after ${waited}s"
             done'
           echo "::endgroup::"
-          docker compose wait ollama-model-init seed-sample-data harden-audit-log || true
-          for svc in ollama-model-init seed-sample-data harden-audit-log; do
+          docker compose wait ollama-model-init seed-sample-data lock-down-db-grants || true
+          for svc in ollama-model-init seed-sample-data lock-down-db-grants; do
             code=$(docker inspect --format '{{.State.ExitCode}}' "nexus-rag-$svc-1")
             if [ "$code" != "0" ]; then
               echo "::error::$svc exited with code $code"
