@@ -1,17 +1,23 @@
-"""Exposes rag_search two ways, both on the single ASGI app FastMCP builds
+"""Exposes rag_search two ways, both on the single ASGI app MCPServer builds
 (mcp_server.streamable_http_app()) -- deliberately not wrapped in an outer
 Starlette/FastAPI app via Mount(), which was tried first and doesn't work:
-mounting FastMCP's app under an extra prefix double-nests its internal /mcp
+mounting the MCP app under an extra prefix double-nests its internal /mcp
 route to /mcp/mcp, and more importantly an outer app's default lifespan does
 not cascade into the mounted sub-app's, so the streamable-http session
-manager's task group is never started and every MCP call 500s. FastMCP's own
-`custom_route` decorator (used below for /health and /debug/rag_search) adds
-plain HTTP routes to the *same* app and lifespan, sidestepping both problems.
-Verified against the real `mcp` client SDK, not just read from source -- see
-the commit message for what was checked and how.
+manager's task group is never started and every MCP call 500s. MCPServer's
+own `custom_route` decorator (used below for /health and /debug/rag_search)
+adds plain HTTP routes to the *same* app and lifespan, sidestepping both
+problems. Verified against the real `mcp` client SDK, not just read from
+source -- see the commit message for what was checked and how.
+
+(#288: this file previously used mcp 1.x's `mcp.server.fastmcp.FastMCP`,
+which mcp 2.0 removed -- the reason #205 pinned <2.0. `MCPServer` is its
+2.x successor with the same tool/custom_route/streamable_http_app surface;
+the one wiring difference is that `transport_security` moved from the
+server constructor to the streamable_http_app() call.)
 
 1. As an MCP tool at /mcp -- what LibreChat calls per Section 7.7. LibreChat
-   obtains a dedicated MCP OAuth token from Keycloak. FastMCP verifies that
+   obtains a dedicated MCP OAuth token from Keycloak. MCPServer verifies that
    bearer at the HTTP boundary, and the tool reads the same header from the
    request rather than accepting identity as a tool argument.
 2. As a plain REST endpoint at /debug/rag_search for curl-based smoke testing
@@ -25,7 +31,7 @@ import os
 from typing import Annotated
 
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from pydantic import AnyHttpUrl, Field
@@ -62,10 +68,11 @@ HTTPXClientInstrumentor().instrument()
 # is set.
 setup_profiling("orchestration-mcp")
 
-# FastMCP's default DNS-rebinding protection only allows Host headers of
-# 127.0.0.1/localhost/::1 (see mcp.server.fastmcp.server.FastMCP.__init__),
-# because it assumes the server binds to a loopback address. This service is
-# reached over the docker-compose network as "orchestration-mcp:8002" (that's
+# The default DNS-rebinding protection only allows Host headers of
+# 127.0.0.1/localhost/::1 (see MCPServer.streamable_http_app's `host`
+# default), because it assumes the server binds to a loopback address. This
+# service is reached over the docker-compose network as
+# "orchestration-mcp:8002" (that's
 # the Host header LibreChat's requests carry), which the default allowlist
 # rejects with a 421. Extend the allowlist to include that hostname instead
 # of disabling DNS-rebinding protection outright.
@@ -73,7 +80,7 @@ logger = logging.getLogger("orchestration-mcp")
 #
 # OAuth is also enforced at this transport boundary, not only inside the tool:
 # LibreChat keeps a streamable-HTTP connection open longer than Keycloak's
-# access-token lifetime. When the connection's bearer expires, FastMCP now
+# access-token lifetime. When the connection's bearer expires, the server now
 # returns 401/invalid_token, which makes LibreChat redeem its refresh token and
 # retry. A tool-level {"error": "Signature has expired"} over HTTP 200 gave the
 # client no auth failure to react to and left the connection permanently stale.
@@ -82,7 +89,7 @@ MCP_RESOURCE_SERVER_URL = os.environ.get(
 )
 MCP_AUTHORIZATION_SERVER = os.environ.get("MCP_AUTHORIZATION_SERVER", OIDC_ISSUERS[-1])
 
-mcp_server = FastMCP(
+mcp_server = MCPServer(
     "nexus-rag-orchestration",
     token_verifier=KeycloakTokenVerifier(),
     auth=AuthSettings(
@@ -94,15 +101,12 @@ mcp_server = FastMCP(
         issuer_url=AnyHttpUrl(MCP_AUTHORIZATION_SERVER),
         resource_server_url=AnyHttpUrl(MCP_RESOURCE_SERVER_URL),
     ),
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "orchestration-mcp:*"],
-        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
-    ),
+    # mcp 2.x: transport_security is no longer a constructor parameter; it
+    # rides on streamable_http_app() at the bottom of this module (#288).
 )
 
 
-# This docstring is FastMCP's literal tool description (LLM-facing, sent as
+# This docstring is the MCP tool's literal description (LLM-facing, sent as
 # the "description" field of every tool schema over MCP) -- keep it short.
 # Longer prose here measurably hurts small local models' tool-call
 # reliability: reproduced live (issue #99 follow-up, 2026-07-26) against
@@ -141,8 +145,11 @@ async def rag_search(
     {"table": 1.2} to prefer table content for this query. Omit for the
     default weighting.
     """
-    request = ctx.request_context.request
-    bearer_token = request.headers.get("authorization") if request is not None else None
+    # mcp 2.x: Context.headers is the blessed accessor for transport-level
+    # request headers (None on transports that carry none); it replaces 1.x's
+    # reach through ctx.request_context.request (#288).
+    headers = ctx.headers
+    bearer_token = headers.get("authorization") if headers is not None else None
     if not bearer_token:
         return "Retrieval failed: no Authorization header on the MCP request"
     result = await run_rag_search(
@@ -247,4 +254,10 @@ async def debug_rag_search(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-app = mcp_server.streamable_http_app()
+app = mcp_server.streamable_http_app(
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "orchestration-mcp:*"],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    ),
+)

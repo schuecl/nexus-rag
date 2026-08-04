@@ -71,7 +71,7 @@ returns real, claims-filtered search results. Getting there took six real bugs, 
    2026-07-28). JWT verification previously happened only inside `rag_search`, which
    returned `{"error":"invalid token: Signature has expired"}` as a successful HTTP 200
    tool result. LibreChat therefore had no OAuth failure signal and did not redeem its
-   refresh token. `orchestration-mcp` now verifies the bearer at the FastMCP transport
+   refresh token. `orchestration-mcp` now verifies the bearer at the MCP transport
    boundary and returns RFC 6750 `401 invalid_token`; LibreChat can refresh, reconnect, and
    retry. `requiresOAuth: true` remains explicit, and disconnect now uses Keycloak's real
    revocation endpoint instead of the MCP server's nonexistent `/revoke` route.
@@ -1057,7 +1057,7 @@ the docs, not a silent "it works" — flag it if you find one.
   source — that testing caught a real bug in how the MCP app was mounted (see the FR-7
   commit's sibling for the write-up) where the streamable-http session manager's task
   group was never started, so every MCP call would have 500'd. Fixed by adding `/health`
-  and `/debug/rag_search` via FastMCP's own `custom_route` instead of wrapping the app in
+  and `/debug/rag_search` via MCPServer's own `custom_route` instead of wrapping the app in
   an outer Starlette `Mount`, which doesn't propagate lifespan to the mounted sub-app.
 - **Admin-configurable Classification/Releasability lists (C9)** via `/admin/*`
   (`rag-admin` only) — add, retire (soft-delete via an `active` flag, not a hard
@@ -1762,7 +1762,7 @@ the docs, not a silent "it works" — flag it if you find one.
   LibreChat's transport erroring `Streamable HTTP error: Error POSTing to endpoint:
   Invalid Host header` while `orchestration-mcp` logged `Invalid Host header:
   orchestration-mcp:8002` and a `421 Misdirected Request`, before the request ever reached
-  `rag_search`'s own auth check. Root cause: `mcp` SDK's `FastMCP` auto-enables DNS-rebinding
+  `rag_search`'s own auth check. Root cause: `mcp` SDK auto-enables DNS-rebinding
   protection (`mcp.server.transport_security.TransportSecuritySettings`) whenever it's
   constructed with the default `host="127.0.0.1"`, allowlisting only `127.0.0.1`/`localhost`/
   `::1` Host headers — it assumes a loopback bind and has no way to know the container will
@@ -1849,7 +1849,7 @@ the docs, not a silent "it works" — flag it if you find one.
   scale on a bigger model instead of disappearing entirely.
 
   **Fixed two ways**, since both factors independently mattered: (1) shortened
-  `rag_search`'s docstring in `services/orchestration-mcp/app/server.py` -- FastMCP uses
+  `rag_search`'s docstring in `services/orchestration-mcp/app/server.py` -- the MCP SDK uses
   the function's docstring verbatim as the LLM-facing tool description, so the multi-
   paragraph version (FR references, issue numbers, security rationale) was shipped to the
   model on every single call; moved that context to a regular code comment above the

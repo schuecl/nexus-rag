@@ -36,13 +36,14 @@ def _client_id(payload: dict[str, Any]) -> str:
 
 
 class KeycloakTokenVerifier:
-    """Adapt the shared Keycloak JWT validator to FastMCP's auth protocol."""
+    """Adapt the shared Keycloak JWT validator to the MCP SDK's TokenVerifier
+    protocol (unchanged across the 1.x -> 2.x migration, #288)."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
         try:
             payload = decode_verified_token(token)
         except (jwt.PyJWTError, KeyError, TypeError, ValueError):
-            # FastMCP's bearer middleware turns ``None`` into the RFC 6750
+            # The SDK's bearer middleware turns ``None`` into the RFC 6750
             # 401/invalid_token response that LibreChat recognizes.
             return None
 
@@ -61,7 +62,7 @@ class KeycloakTokenVerifier:
             scopes=scopes,
             expires_at=expires_at,
             subject=subject,
-            # FastMCP uses issuer + subject + client_id to keep an authenticated
+            # The SDK uses issuer + subject + client_id to keep an authenticated
             # streamable-HTTP session bound to the same principal across an
             # access-token refresh.
             claims={"iss": payload.get("iss")},

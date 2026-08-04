@@ -6,7 +6,7 @@
 # `pip-compile --generate-hashes`; see issue #230.
 -r ../common/requirements.in
 opentelemetry-instrumentation-httpx>=0.51b0
-mcp>=1.6,<2.0
+mcp>=2.0,<3.0
 uvicorn[standard]>=0.30
 httpx>=0.27
 prometheus-client>=0.20

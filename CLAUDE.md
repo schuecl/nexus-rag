@@ -38,7 +38,7 @@ services/
   common/               # shared claims/metadata/Qdrant-filter/object-store/job-queue library
   ingestion-api/         # upload + curation UI/API (FastAPI + Jinja2/HTMX)
   ingestion-worker/       # durable parse/chunk/embed/store pipeline (NATS JetStream consumer)
-  orchestration-mcp/      # retrieval MCP server (FastMCP) exposing rag_search
+  orchestration-mcp/      # retrieval MCP server (MCP SDK 2.x MCPServer) exposing rag_search
   reranker-service/       # cross-encoder reranking API
 infra/
   keycloak/realm-export/  # seeded dev realm (claims schema, org curator roles, test users)

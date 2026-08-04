@@ -15,6 +15,18 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Changed
+
+- orchestration-mcp migrated from mcp SDK 1.x to 2.x (#288): `FastMCP` is
+  now `MCPServer` (the module mcp 2.0 removed was why #205 pinned <2.0),
+  `transport_security` rides on `streamable_http_app()` instead of the
+  constructor, and the tool reads the bearer via 2.x's `Context.headers`.
+  Externally visible behavior is unchanged: same /mcp, /health, /metrics,
+  and /debug/rag_search routes, same RFC 6750 401 challenge on an
+  expired/missing bearer, same tool schema bounds. The dependency pin is
+  now `mcp>=2.0,<3.0` (deliberately not straddling the API break), which
+  re-opens the SDK to upstream security patches.
+
 ### Added
 
 - Bulk document upload: the ingestion UI and `POST /documents/batch` accept
