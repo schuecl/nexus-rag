@@ -1,6 +1,6 @@
 [project]
 name = "ingestion-worker"
-version = "0.3.0"
+version = "0.4.0"
 description = "Durable parse/chunk/embed/store pipeline (FR-3..FR-6), consuming NATS JetStream (NFR-11)"
 requires-python = ">=3.11"
 dependencies = [

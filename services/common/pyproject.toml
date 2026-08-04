@@ -1,6 +1,6 @@
 [project]
 name = "nexus-rag-common"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared claims parsing, metadata schema, Qdrant filter building, and DB models for nexus-rag services"
 requires-python = ">=3.11"
 dependencies = [

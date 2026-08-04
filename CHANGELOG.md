@@ -15,6 +15,8 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-04
+
 ### Changed
 
 - orchestration-mcp migrated from mcp SDK 1.x to 2.x (#288): `FastMCP` is
@@ -87,6 +89,45 @@ changed in the running system, with the issue/PR reference for the trail.
   sizes `proxy-body-size` as `maxBatchFiles x maxUploadBytes` rather than a
   static single-file value, since a batch's whole multipart body lands in
   one request (FR-34, #356).
+- A re-embedding path for a stale embedding-model collection (#122, #362):
+  `common/qdrant_store.replace_document_chunks` upserts a document's
+  freshly re-embedded chunks under the same deterministic point ids
+  ingestion uses (new-before-old, mirroring FR-7 supersession), and
+  `ingestion-worker`'s new `python -m app.reembed [classification...]
+  [--force] [--dry-run]` CLI is the operator-triggered remedy for the
+  embedding-model-mismatch refusal #130 shipped detection for but no fix.
+  Idempotent (skips a document whose stamped model already matches) and
+  scoped to `approved`/`pending_review` documents; run inside the
+  ingestion-worker container, not wired into the read path or the
+  JetStream consumer.
+- Audit query rows now carry a `trace_id` (#134, #363): `rag_search`'s
+  audit call writes the current trace's id (when tracing is enabled and
+  the request was sampled -- omitted otherwise) into every outcome
+  (success, empty, unavailable, denied, embedding-model mismatch),
+  correlating an audit row back to its Tempo trace the same way chunk
+  provenance already was.
+
+### Fixed
+
+- Helm chart's `MAX_UPLOAD_BYTES` no longer renders as scientific
+  notation (#358): Helm's YAML->JSON->Go float64 round-trip formatted a
+  large round default like `52428800` as `5.24288e+07`, which
+  `int(MAX_UPLOAD_BYTES)` rejects, crashing ingestion-api on startup with
+  the chart's own default. Cast to int64 before quoting in the template.
+- `docker compose up` self-heals host-umask permission failures (#192):
+  a checkout under a restrictive umask (e.g. 077) leaves every non-executable
+  tracked file 0600/0700, which several bind-mounted images
+  (Postgres, NATS, the Prometheus/Grafana stack, Keycloak) can't read as
+  their non-root users -- Postgres and friends failed outright, Grafana
+  silently provisioned no datasources/dashboards. A new `fix-config-perms`
+  one-shot normalizes `infra/` (excluding runtime-generated `infra/certs`)
+  before any dependent service starts.
+
+### Security
+
+- Bumped `cryptography` 49.0.0 -> 50.0.0 in all four service lockfiles
+  (#371): fixes CVE-2026-69247 (HIGH), a Bleichenbacher oracle in PKCS#7
+  EnvelopedData decryption through distinguishable errors.
 
 ## [0.3.0] - 2026-08-03
 

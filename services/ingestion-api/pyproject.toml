@@ -1,6 +1,6 @@
 [project]
 name = "ingestion-api"
-version = "0.3.0"
+version = "0.4.0"
 description = "Upload, mandatory tagging, and curation queue API/UI (FR-1..FR-16)"
 requires-python = ">=3.11"
 dependencies = [
