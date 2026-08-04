@@ -92,6 +92,38 @@ def test_exposition_contains_all_scores_and_only_hashed_identifiers():
     assert "nexus_rag_quality_evaluation_last_success_timestamp_seconds" in success
 
 
+def test_undetermined_abstention_count_is_published_alongside_the_score():
+    """#383 excludes undetermined abstention verdicts from abstention_accuracy
+    rather than failing the run, so the score alone cannot show partial
+    coverage: one determined pass plus one undetermined case still reads 1.0.
+    The count is what makes that readable.
+    """
+    current, _ = build_exposition(_report(abstention_undetermined=1, abstention_accuracy=1.0))
+
+    assert "nexus_rag_quality_evaluation_abstention_undetermined 1" in current
+    assert 'nexus_rag_quality_evaluation_score{metric="abstention_accuracy"} 1' in current
+
+
+def test_report_without_the_undetermined_field_publishes_zero():
+    """Reports written before #383's fix have no such field. Under the old
+    behaviour an undetermined verdict raised, so a report that exists at all had
+    none -- 0 is the honest value, and failing closed here would reject every
+    historical report in a --history-dir.
+    """
+    report = _report()
+    report.pop("abstention_undetermined", None)
+
+    current, _ = build_exposition(report)
+
+    assert "nexus_rag_quality_evaluation_abstention_undetermined 0" in current
+
+
+def test_undetermined_abstention_count_rejects_malformed_values():
+    """Defaulting a missing field must not soften a present-but-garbage one."""
+    with pytest.raises(ReportError, match="abstention_undetermined"):
+        build_exposition(_report(abstention_undetermined=-1))
+
+
 def test_comparable_baseline_publishes_deltas_and_regression():
     baseline = _report(mean_faithfulness=0.95, mean_answer_correctness=0.80)
 

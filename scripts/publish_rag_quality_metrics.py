@@ -162,6 +162,18 @@ def build_exposition(
     query_count = _count(report.get("query_count"), "query_count")
     scored_query_count = _count(report.get("scored_query_count"), "scored_query_count")
     tool_failures = _count(report.get("tool_call_failures"), "tool_call_failures")
+    # #383: abstention verdicts the judge would not commit to. Those cases are
+    # excluded from abstention_accuracy rather than failing the run, so without
+    # this count the gauge is unreadable: one determined pass plus one
+    # undetermined case still reports 1.0, indistinguishable from full coverage.
+    #
+    # Defaulted rather than required, so a report written before #383's fix
+    # publishes as 0 instead of failing closed. That is honest for those
+    # reports -- under the old behaviour an undetermined verdict raised, so a
+    # report that exists at all had none.
+    abstention_undetermined = _count(
+        report.get("abstention_undetermined", 0), "abstention_undetermined"
+    )
     errors = report.get("errors")
     queries = report.get("queries")
     if not isinstance(errors, list):
@@ -277,6 +289,12 @@ def build_exposition(
             "nexus_rag_quality_evaluation_errors",
             "Number of case evaluation errors in the latest run.",
             len(errors),
+        ),
+        (
+            "nexus_rag_quality_evaluation_abstention_undetermined",
+            "Abstention cases the judge would not decide; excluded from the "
+            "abstention_accuracy score, so read that score against this count.",
+            abstention_undetermined,
         ),
         (
             "nexus_rag_quality_evaluation_baseline_comparable",
