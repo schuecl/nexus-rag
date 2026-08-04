@@ -257,3 +257,61 @@ def test_configuration_fingerprint_changes_without_exposing_raw_configuration():
     )
     assert line_a != line_b
     assert "different-secret-model" not in current_b
+
+
+def test_evaluator_report_feeds_the_publisher_without_losing_abstention_coverage(monkeypatch):
+    """Interop guard across #383 and #384.
+
+    These two halves are separate scripts with no import between them -- the
+    evaluator writes JSON, the publisher reads it. That seam is exactly how
+    `abstention_undetermined` was silently dropped when it was added on one side
+    only: the publisher iterates a fixed allowlist, so a new field costs nothing
+    and reports nothing. Neither side's own tests could see it.
+
+    Builds a real report through the evaluator's aggregate path -- one abstention
+    the judge decided, one it declined -- and asserts the published exposition
+    carries both the score and the coverage count. Without the count the gauge
+    reads 1.0 for a run that only determined half its abstention cases.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import evaluate_rag_quality as qca
+
+    verdicts = iter([True, None])
+    undetermined = iter([False, True])
+
+    def fake_case(case, *, token, **kwargs):
+        return {
+            "id": case["id"],
+            "rag_search_called": True,
+            "contextual_relevancy": 0.8,
+            "contextual_recall": None,
+            "contextual_precision": 0.8,
+            "faithfulness": None,
+            "answer_relevancy": 0.9,
+            "answer_correctness": 0.9,
+            "citation_validity": 1.0,
+            "abstention_correct": next(verdicts),
+            "abstention_undetermined": next(undetermined),
+        }
+
+    monkeypatch.setattr(qca, "evaluate_case", fake_case)
+
+    report = qca.evaluate(
+        [
+            {"id": "abstain-1", "query": "a", "reference_answer": ""},
+            {"id": "abstain-2", "query": "b", "reference_answer": ""},
+        ],
+        token_provider=lambda: "token",
+        agent_id="agent",
+        user="dave-admin",
+        judge=lambda payload: payload,
+        judge_model="qwen2.5:3b-instruct",
+    )
+
+    assert report["abstention_accuracy"] == 1.0
+    assert report["abstention_undetermined"] == 1
+
+    current, _ = build_exposition(report)
+
+    assert 'nexus_rag_quality_evaluation_score{metric="abstention_accuracy"} 1' in current
+    assert "nexus_rag_quality_evaluation_abstention_undetermined 1" in current
