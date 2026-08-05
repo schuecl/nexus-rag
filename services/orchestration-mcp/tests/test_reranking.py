@@ -132,3 +132,133 @@ async def test_omits_shared_secret_header_when_unconfigured(monkeypatch):
     await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
 
     assert seen_headers == {}
+
+
+def _chunk(id_: str, doc: str, idx, score_rank: int = 0) -> dict:
+    """A candidate carrying the payload fields the #395 collapse keys on."""
+    return {
+        "id": id_,
+        "payload": {"text": id_, "content_type": "text", "document_id": doc, "chunk_index": idx},
+    }
+
+
+class TestCollapseAdjacentOverlaps:
+    """Issue #395: same-document adjacent-index chunks share text by
+    construction (FR-4 overlap), so the better-ranked one keeps the slot and
+    the freed slot backfills from the remaining pool."""
+
+    def test_adjacent_pair_collapses_to_the_better_ranked_and_backfills(self):
+        ranked = [
+            _chunk("a", "doc1", 4),
+            _chunk("b", "doc1", 5),  # adjacent to kept "a" -- dropped
+            _chunk("c", "doc2", 0),
+            _chunk("d", "doc3", 7),
+        ]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=3)
+
+        assert [c["id"] for c in kept] == ["a", "c", "d"]
+        assert dropped == 1
+
+    def test_non_adjacent_same_document_chunks_both_survive(self):
+        ranked = [_chunk("a", "doc1", 2), _chunk("b", "doc1", 9)]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=2)
+
+        assert [c["id"] for c in kept] == ["a", "b"]
+        assert dropped == 0
+
+    def test_same_index_different_documents_both_survive(self):
+        ranked = [_chunk("a", "doc1", 3), _chunk("b", "doc2", 4)]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=2)
+
+        assert [c["id"] for c in kept] == ["a", "b"]
+        assert dropped == 0
+
+    def test_chain_collapses_both_neighbours_of_a_kept_chunk(self):
+        # Ranked i, i+1, i-1: both neighbours overlap the kept middle chunk.
+        ranked = [
+            _chunk("mid", "doc1", 5),
+            _chunk("next", "doc1", 6),
+            _chunk("prev", "doc1", 4),
+            _chunk("other", "doc2", 0),
+        ]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=3)
+
+        assert [c["id"] for c in kept] == ["mid", "other"]
+        assert dropped == 2
+
+    def test_missing_identity_fields_are_never_collapsed(self):
+        no_doc = {"id": "x", "payload": {"text": "x", "chunk_index": 5}}
+        no_idx = {"id": "y", "payload": {"text": "y", "document_id": "doc1"}}
+        ranked = [_chunk("a", "doc1", 5), no_doc, no_idx]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=3)
+
+        assert [c["id"] for c in kept] == ["a", "x", "y"]
+        assert dropped == 0
+
+    def test_truncates_to_top_k_after_collapsing(self):
+        ranked = [_chunk(str(i), f"doc{i}", 0) for i in range(6)]
+
+        kept, dropped = reranking.collapse_adjacent_overlaps(ranked, top_k=4)
+
+        assert len(kept) == 4
+        assert dropped == 0
+
+
+async def test_rerank_collapses_adjacent_pair_and_notes_it(monkeypatch):
+    candidates = [
+        _chunk("a", "doc1", 4),
+        _chunk("b", "doc1", 5),
+        _chunk("c", "doc2", 0),
+    ]
+    _mock_reranker(monkeypatch, {"a": 0.9, "b": 0.8, "c": 0.5})
+
+    reranked, note = await reranking.rerank("q", candidates, top_k=2)
+
+    assert [c["id"] for c in reranked] == ["a", "c"]
+    assert "1 overlap-adjacent duplicate(s) collapsed" in note
+
+
+async def test_rerank_keeps_the_higher_scoring_side_of_the_pair(monkeypatch):
+    # The lower-indexed chunk is NOT automatically the survivor -- rank is.
+    candidates = [
+        _chunk("a", "doc1", 4),
+        _chunk("b", "doc1", 5),
+        _chunk("c", "doc2", 0),
+    ]
+    _mock_reranker(monkeypatch, {"a": 0.2, "b": 0.9, "c": 0.5})
+
+    reranked, _note = await reranking.rerank("q", candidates, top_k=2)
+
+    assert [c["id"] for c in reranked] == ["b", "c"]
+
+
+async def test_rerank_without_duplicates_does_not_mention_collapsing(monkeypatch):
+    candidates = [_chunk("a", "doc1", 4), _chunk("c", "doc2", 0)]
+    _mock_reranker(monkeypatch, {"a": 0.9, "c": 0.5})
+
+    _, note = await reranking.rerank("q", candidates, top_k=2)
+
+    assert "collapsed" not in note
+
+
+async def test_degraded_path_also_collapses(monkeypatch):
+    async def fail_post(self, url, json=None, **kwargs):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fail_post)
+    candidates = [
+        _chunk("a", "doc1", 4),
+        _chunk("b", "doc1", 5),
+        _chunk("c", "doc2", 0),
+    ]
+
+    reranked, note = await reranking.rerank("q", candidates, top_k=2)
+
+    assert [c["id"] for c in reranked] == ["a", "c"]
+    assert "reranking unavailable" in note
+    assert "1 overlap-adjacent duplicate(s) collapsed" in note
