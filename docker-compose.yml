@@ -416,6 +416,9 @@ services:
       # INSERT-only on audit_log -- see infra/postgres/apply-service-grants.sh
       # for the matrix and why nothing gets SELECT on the audit trail.
       DATABASE_URL: postgresql+psycopg://${INGESTION_API_DB_USER:-nexus_rag_ingestion_api}:${INGESTION_API_DB_PASSWORD:-nexus_rag_ingestion_api}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # #236/#389: see .env.example -- not a correctness setting, pool_pre_ping
+      # already replaces a dead connection at checkout.
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
       # Issue #75: the third entry (https://keycloak:8443) is the issuer
       # stamped on tokens produced by LibreChat's OBO token-exchange call,
       # which now goes to Keycloak's HTTPS listener (openid-client's
@@ -548,6 +551,9 @@ services:
       # SELECT on the vocabulary tables, INSERT on audit_log. It never sees a
       # browser, so it has no access to user_sessions or oauth_states at all.
       DATABASE_URL: postgresql+psycopg://${INGESTION_WORKER_DB_USER:-nexus_rag_ingestion_worker}:${INGESTION_WORKER_DB_PASSWORD:-nexus_rag_ingestion_worker}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # #236/#389: see .env.example -- not a correctness setting, pool_pre_ping
+      # already replaces a dead connection at checkout.
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
       QDRANT_URL: http://qdrant:6333
       # NFR-15: full read/write key -- this is now the service that creates
       # the collection and writes points, moved out of ingestion-api.
@@ -658,6 +664,9 @@ services:
       # audit_log. It cannot read documents -- chunk payloads come from Qdrant
       # -- so a compromise of the retrieval path yields no database content.
       DATABASE_URL: postgresql+psycopg://${ORCHESTRATION_MCP_DB_USER:-nexus_rag_orchestration_mcp}:${ORCHESTRATION_MCP_DB_PASSWORD:-nexus_rag_orchestration_mcp}@postgres:5432/${POSTGRES_DB:-nexus_rag}
+      # #236/#389: see .env.example -- not a correctness setting, pool_pre_ping
+      # already replaces a dead connection at checkout.
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
       # Issue #75: the third entry (https://keycloak:8443) is the issuer
       # stamped on tokens produced by LibreChat's OBO token-exchange call,
       # which now goes to Keycloak's HTTPS listener (openid-client's

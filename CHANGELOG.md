@@ -29,6 +29,16 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- The DB pool recycle interval is now configurable via `DB_POOL_RECYCLE_SECONDS`
+  (`externalPostgres.poolRecycleSeconds` in the chart), overriding #236's
+  hardcoded 30-minute default for environments whose Postgres sits behind an
+  intermediary (PgBouncer, a cloud proxy/LB) with a shorter idle timeout; `-1`
+  disables recycling (#390, closes #389). Not a correctness setting --
+  `pool_pre_ping` already replaces a dead connection at checkout, so a
+  mismatched value costs round trips, not errors. An unset, empty, or
+  unparseable value falls back to the 1800s default with a `WARNING` log
+  rather than crashing the service at startup, since the parse runs at import
+  of `common.db`, which all three services import.
 - Embedding requests can now target an OpenAI-API-compliant hosted model
   (vLLM, TGI, a cloud embedding endpoint), not just an Ollama-compatible one
   (#403, Phase 2 of #401): `ingestion-worker`'s `embed_texts` and
