@@ -480,3 +480,78 @@ class TestBaselineComparison:
 
         assert result["comparable"] is True
         assert result["regressed"] is False
+
+
+class TestAbstentionIsDiagnosticOnly:
+    """#386: abstention_accuracy is reported but never gates a regression.
+
+    Both judges tested scored a fabricated, non-abstaining answer as a correct
+    abstention (3B 2/3, 7B 3/3), so comparing it against a baseline produces
+    verdicts that are noise in both directions -- a spurious failure on a lucky
+    baseline, and silence when a real regression hides behind false positives.
+    """
+
+    def test_abstention_accuracy_is_not_a_compared_metric(self):
+        assert "abstention_accuracy" not in qca._COMPARED_METRICS
+
+    def test_a_total_abstention_collapse_does_not_report_a_regression(self):
+        """The strongest form: 1.0 -> 0.0 is the largest possible drop, and it
+        still must not flip the regression verdict, because the number it moved
+        is not trustworthy enough to act on.
+        """
+        baseline = _report(value=0.9)
+        baseline["abstention_accuracy"] = 1.0
+        current = _report(value=0.9)
+        current["abstention_accuracy"] = 0.0
+
+        result = compare_to_baseline(current, baseline, tolerance=0.05)
+
+        assert result["comparable"] is True
+        assert result["regressed"] is False
+        assert "abstention_accuracy" not in result["metrics"]
+
+    def test_a_real_quality_regression_is_still_caught(self):
+        """Guard against over-correcting: excluding one metric must not blunt
+        the others.
+        """
+        baseline = _report(value=0.9)
+        current = _report(value=0.9)
+        current["mean_faithfulness"] = 0.5
+
+        result = compare_to_baseline(current, baseline, tolerance=0.05)
+
+        assert result["regressed"] is True
+        assert result["metrics"]["mean_faithfulness"]["regressed"] is True
+
+    def test_abstention_accuracy_is_still_reported(self, monkeypatch):
+        """Excluded from comparison, not from the report -- a 0.0 there is still
+        worth investigating.
+        """
+
+        def fake_evaluate_case(case, *, token, **kwargs):
+            return {
+                "id": case["id"],
+                "rag_search_called": True,
+                "contextual_relevancy": 1.0,
+                "contextual_recall": None,
+                "contextual_precision": 1.0,
+                "faithfulness": None,
+                "answer_relevancy": 1.0,
+                "answer_correctness": 1.0,
+                "citation_validity": 1.0,
+                "abstention_correct": False,
+                "abstention_undetermined": False,
+            }
+
+        monkeypatch.setattr(qca, "evaluate_case", fake_evaluate_case)
+
+        report = qca.evaluate(
+            [{"id": "abstain-1", "query": "a", "reference_answer": ""}],
+            token_provider=lambda: "token",
+            agent_id="agent",
+            user="dave-admin",
+            judge=lambda payload: payload,
+            judge_model="qwen2.5:3b-instruct",
+        )
+
+        assert report["abstention_accuracy"] == 0.0

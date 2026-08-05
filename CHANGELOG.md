@@ -15,6 +15,18 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Changed
+
+- `abstention_accuracy` is now diagnostic-only and no longer participates in
+  the Q→C→A baseline comparison (#386). Measured against a fabricated,
+  non-abstaining answer it scored a correct abstention 2 times in 3 on
+  `qwen2.5:3b-instruct` and 3 times in 3 on `qwen2.5:7b-instruct`, so it cannot
+  distinguish a real abstention failure from a lucky pass in either direction.
+  It is still computed, reported, and published — a `0.0` is worth
+  investigating — but it can no longer raise or suppress a regression verdict,
+  and `docs/testing.md` drops the unmeasured claim that a 7B judge mitigates
+  this.
+
 ### Added
 
 - Embedding requests can now target an OpenAI-API-compliant hosted model
