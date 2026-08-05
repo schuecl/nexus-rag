@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from app import main
+from app import main, metrics
 
 
 def test_noop_when_no_secret_configured(monkeypatch):
@@ -82,16 +82,18 @@ class _FakeTokenizer:
 
 class TestWindowTexts:
     def test_fitting_pair_is_returned_unchanged(self):
-        texts = main._window_texts(_FakeTokenizer(), "q w", "a b c", max_length=10)
+        texts, oversized = main._window_texts(_FakeTokenizer(), "q w", "a b c", max_length=10)
 
         assert texts == ["a b c"]
+        assert oversized is False
 
     def test_oversized_chunk_is_split_into_overlapping_windows(self):
         # budget = 10 - 1 (query) - 3 (specials) = 6; 12 words -> windows.
         chunk = " ".join(f"w{i}" for i in range(12))
 
-        texts = main._window_texts(_FakeTokenizer(), "q", chunk, max_length=10)
+        texts, oversized = main._window_texts(_FakeTokenizer(), "q", chunk, max_length=10)
 
+        assert oversized is True
         assert len(texts) > 1
         # Every word appears in at least one window -- nothing silently lost.
         seen = set()
@@ -102,12 +104,25 @@ class TestWindowTexts:
         # seen whole by one of them.
         assert set(texts[0].split()) & set(texts[1].split())
 
-    def test_query_overfilling_the_window_degrades_to_the_raw_text(self):
+    def test_query_overfilling_the_window_degrades_to_the_raw_text_but_still_counts(self):
+        # Windowing the chunk can't help when the query alone exhausts the
+        # budget, but the pair is still oversized -- the caller's metric
+        # must count it rather than silently missing every over-length
+        # query (the case a near-MAX_QUERY_CHARS request hits in practice).
         long_query = " ".join(f"q{i}" for i in range(20))
 
-        texts = main._window_texts(_FakeTokenizer(), long_query, "a b c", max_length=10)
+        texts, oversized = main._window_texts(_FakeTokenizer(), long_query, "a b c", max_length=10)
 
         assert texts == ["a b c"]
+        assert oversized is True
+
+    def test_query_exactly_filling_budget_with_empty_text_is_not_oversized(self):
+        query = " ".join(f"q{i}" for i in range(7))  # budget = 10 - 7 - 3 = 0
+
+        texts, oversized = main._window_texts(_FakeTokenizer(), query, "", max_length=10)
+
+        assert texts == [""]
+        assert oversized is False
 
 
 class _FakeModel:
@@ -156,6 +171,25 @@ def test_rerank_window_scoring_off_restores_head_only_scoring(monkeypatch):
     ranked = main.rerank(body)
 
     assert {r.id for r in ranked} == {"tail", "head"}
+
+
+def test_rerank_counts_oversized_chunk_even_when_query_alone_fills_the_window(monkeypatch):
+    # A near-MAX_QUERY_CHARS request (orchestration-mcp allows up to 4000
+    # chars) can tokenize past the window by itself, leaving no budget for
+    # windowing. That pair still gets truncated by the model, so it must
+    # still increment the metric -- the earlier bug returned len(texts) == 1
+    # for this case and the caller mistook that for "not oversized".
+    monkeypatch.setattr(main, "_model", _FakeModel())
+    monkeypatch.setattr(main, "MAX_LENGTH", 10)
+    monkeypatch.setattr(main, "WINDOW_SCORING", True)
+    long_query = " ".join(f"q{i}" for i in range(20))
+    body = main.RerankRequest(query=long_query, chunks=[main.Chunk(id="a", text="a b c")])
+    before = metrics.oversized_chunks_total.labels(handling="windowed")._value.get()
+
+    main.rerank(body)
+
+    after = metrics.oversized_chunks_total.labels(handling="windowed")._value.get()
+    assert after == before + 1
 
 
 def test_rerank_fitting_chunks_are_scored_exactly_once(monkeypatch):

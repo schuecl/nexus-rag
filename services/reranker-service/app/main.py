@@ -236,31 +236,37 @@ class RerankedChunk(BaseModel):
     score: float
 
 
-def _window_texts(tokenizer, query: str, text: str, max_length: int) -> list[str]:  # type: ignore[no-untyped-def]
-    """#393: the texts whose max score stands in for this chunk's score.
+def _window_texts(  # type: ignore[no-untyped-def]
+    tokenizer, query: str, text: str, max_length: int
+) -> tuple[list[str], bool]:
+    """#393: the texts whose max score stands in for this chunk's score, and
+    whether the raw (query, text) pair was oversized.
 
-    Returns [text] unchanged when the (query, text) pair fits max_length.
+    Returns ([text], False) unchanged when the pair fits max_length.
     Otherwise splits the chunk's tokens into overlapping windows that each
     fit alongside the query, decoded back to text -- so a relevant passage in
-    the chunk's tail is scored instead of silently cut. Never returns an
-    empty list.
+    the chunk's tail is scored instead of silently cut -- and returns those
+    windows with True. When the query alone leaves no budget for windowing,
+    windowing cannot help and the model's own truncation is the only
+    remaining behavior, but the pair is still oversized: texts is [text]
+    unchanged, oversized is still True, so the caller's metric counts this
+    chunk rather than silently missing every over-length query. Never
+    returns an empty texts list.
     """
     query_ids = tokenizer(query, add_special_tokens=False)["input_ids"]
     text_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
     # [CLS] query [SEP] text [SEP] -> 3 special tokens around the pair.
     budget = max_length - len(query_ids) - 3
-    if budget <= 0 or len(text_ids) <= budget:
-        # Fits -- or the query alone (over)fills the window, in which case
-        # windowing the chunk cannot help and the model's own truncation is
-        # the only remaining behavior.
-        return [text]
+    oversized = len(text_ids) > budget
+    if budget <= 0 or not oversized:
+        return [text], oversized
     stride = max(1, int(budget * (1 - _WINDOW_OVERLAP)))
     windows: list[str] = []
     for start in range(0, len(text_ids), stride):
         windows.append(tokenizer.decode(text_ids[start : start + budget]))
         if start + budget >= len(text_ids):
             break
-    return windows
+    return windows, True
 
 
 @app.post(
@@ -293,8 +299,8 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
     oversized = 0
     tokenizer = _model.tokenizer
     for i, chunk in enumerate(body.chunks):
-        texts = _window_texts(tokenizer, body.query, chunk.text, MAX_LENGTH)
-        if len(texts) > 1:
+        texts, is_oversized = _window_texts(tokenizer, body.query, chunk.text, MAX_LENGTH)
+        if is_oversized:
             oversized += 1
             if not WINDOW_SCORING:
                 texts = [chunk.text]

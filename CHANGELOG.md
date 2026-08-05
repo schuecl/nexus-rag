@@ -29,6 +29,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- `reranker-service` now states its input window as a decision
+  (`RERANKER_MAX_LENGTH`, default 512, matching the pinned model's own
+  `max_position_embeddings`) instead of inheriting an unstated tokenizer
+  default, and scores an oversized `(query, chunk)` pair as the max over
+  overlapping windows rather than silently truncating it to the chunk's head
+  (#414, closes #393). Measured on this stack's dev corpus, 12% of chunks
+  overflowed the window paired with a typical query, with a mean overflow of
+  323 tokens and a worst case of 67% of the chunk unseen by the model; window
+  scoring lets a relevant passage in the tail count instead. Every oversized
+  chunk is counted regardless of handling via
+  `nexus_rag_reranker_oversized_chunks_total{handling="windowed"|"truncated"}`.
+  `RERANKER_WINDOW_SCORING=false` restores the previous head-truncation
+  behavior (still counted in the metric) for anyone who wants the visibility
+  without the scoring change.
 - The DB pool recycle interval is now configurable via `DB_POOL_RECYCLE_SECONDS`
   (`externalPostgres.poolRecycleSeconds` in the chart), overriding #236's
   hardcoded 30-minute default for environments whose Postgres sits behind an
