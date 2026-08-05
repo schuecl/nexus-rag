@@ -134,6 +134,140 @@ async def test_omits_shared_secret_header_when_unconfigured(monkeypatch):
     assert seen_headers == {}
 
 
+class TestTeiCompatibility:
+    """Issue #419: RERANKER_API_COMPATIBILITY="tei" targets HuggingFace
+    text-embeddings-inference's native /rerank shape -- {query, texts} ->
+    [{index, score}], index-addressed rather than id-addressed like the
+    internal reranker-service shape."""
+
+    async def test_reorders_by_index_addressed_score(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "tei")
+        candidates = [_candidate("a", "text"), _candidate("b", "text"), _candidate("c", "text")]
+        seen_body = {}
+
+        async def fake_post(self, url, json=None, headers=None, **kwargs):
+            seen_body.update(json)
+            assert url == "http://reranker-service:8003/rerank"
+            return _FakeResponse([{"index": 0, "score": 0.1}, {"index": 1, "score": 0.9}])
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        ranked, note = await reranking.rerank("q", candidates, top_k=3)
+
+        assert seen_body == {"query": "q", "texts": ["a", "b", "c"]}
+        assert [c["id"] for c in ranked] == ["b", "a", "c"]
+        assert "reranking applied" in note
+
+    async def test_sends_bearer_token_when_configured(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "tei")
+        monkeypatch.setattr(reranking, "RERANKER_API_KEY", "tei-key")
+        seen_headers = {}
+
+        async def fake_post(self, url, json=None, headers=None, **kwargs):
+            seen_headers.update(headers or {})
+            return _FakeResponse([{"index": 0, "score": 0.5}])
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
+
+        assert seen_headers == {"Authorization": "Bearer tei-key"}
+
+    async def test_omits_shared_secret_header_even_when_configured(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "tei")
+        monkeypatch.setattr(reranking, "RERANKER_SHARED_SECRET", "internal-secret")
+        seen_headers = {}
+
+        async def fake_post(self, url, json=None, headers=None, **kwargs):
+            seen_headers.update(headers or {})
+            return _FakeResponse([{"index": 0, "score": 0.5}])
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
+
+        assert seen_headers == {}
+
+    async def test_falls_back_to_fused_order_on_outage(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "tei")
+
+        async def fake_post(self, url, json=None, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        candidates = [_candidate("a", "text"), _candidate("b", "text")]
+        ranked, note = await reranking.rerank("q", candidates, top_k=2)
+
+        assert ranked == candidates
+        assert "unavailable" in note
+
+
+class TestCohereCompatibility:
+    """Issue #419: RERANKER_API_COMPATIBILITY="cohere" targets the Jina/
+    Cohere-style /v1/rerank convention -- also what vLLM's own rerank
+    endpoints speak, unlike "tei" above."""
+
+    async def test_reorders_by_index_addressed_relevance_score(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "cohere")
+        monkeypatch.setattr(reranking, "RERANKER_MODEL", "BAAI/bge-reranker-base")
+        candidates = [_candidate("a", "text"), _candidate("b", "text")]
+        seen_body = {}
+
+        async def fake_post(self, url, json=None, headers=None, **kwargs):
+            seen_body.update(json)
+            assert url == "http://reranker-service:8003/v1/rerank"
+            return _FakeResponse(
+                {
+                    "results": [
+                        {"index": 1, "relevance_score": 0.9},
+                        {"index": 0, "relevance_score": 0.1},
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        ranked, _note = await reranking.rerank("q", candidates, top_k=2)
+
+        assert seen_body == {
+            "model": "BAAI/bge-reranker-base",
+            "query": "q",
+            "documents": ["a", "b"],
+            "top_n": 2,
+        }
+        assert [c["id"] for c in ranked] == ["b", "a"]
+
+    async def test_sends_bearer_token_when_configured(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "cohere")
+        monkeypatch.setattr(reranking, "RERANKER_API_KEY", "cohere-key")
+        seen_headers = {}
+
+        async def fake_post(self, url, json=None, headers=None, **kwargs):
+            seen_headers.update(headers or {})
+            return _FakeResponse({"results": [{"index": 0, "relevance_score": 0.5}]})
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        await reranking.rerank("q", [_candidate("a", "text")], top_k=1)
+
+        assert seen_headers == {"Authorization": "Bearer cohere-key"}
+
+    async def test_falls_back_to_fused_order_on_non_2xx(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANKER_API_COMPATIBILITY", "cohere")
+
+        async def fake_post(self, url, json=None, **kwargs):
+            raise httpx.HTTPStatusError("503", request=None, response=httpx.Response(503))
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        candidates = [_candidate("a", "text"), _candidate("b", "text")]
+        ranked, note = await reranking.rerank("q", candidates, top_k=2)
+
+        assert ranked == candidates
+        assert "unavailable" in note
+
+
 def _chunk(id_: str, doc: str, idx, score_rank: int = 0) -> dict:
     """A candidate carrying the payload fields the #395 collapse keys on."""
     return {

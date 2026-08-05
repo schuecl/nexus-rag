@@ -17,6 +17,13 @@ path. Defaults to no boost (every type weighted 1.0): there's no evidence
 yet from the FR-30/FR-32 golden-query harness that a specific weighting
 helps, so this wires up the mechanism for that harness to tune rather than
 guessing a value.
+
+Issue #419: RERANKER_URL need not point at this chart's own reranker-service
+at all -- RERANKER_API_COMPATIBILITY selects "internal" (default, unchanged),
+"tei" (HuggingFace text-embeddings-inference's native /rerank), or "cohere"
+(the Jina/Cohere-style /v1/rerank convention, also what vLLM's own rerank
+endpoints speak). See the RERANKER_API_COMPATIBILITY constant below for the
+three wire shapes.
 """
 
 from __future__ import annotations
@@ -36,6 +43,28 @@ RERANKER_URL = os.environ.get("RERANKER_URL", "http://reranker-service:8003")
 # same value on both sides, out of band. Empty by default so this stays a no-op
 # against a reranker-service that also hasn't set one (today's posture).
 RERANKER_SHARED_SECRET = os.environ.get("RERANKER_SHARED_SECRET", "")
+
+# Issue #419: which wire protocol RERANKER_URL above speaks.
+# - "internal" (default): this chart's own reranker-service, unchanged --
+#   POST {query, chunks: [{id, text}]} -> [{id, score}], authenticated (if
+#   at all) with RERANKER_SHARED_SECRET above.
+# - "tei": HuggingFace text-embeddings-inference's native /rerank --
+#   POST {query, texts: [...]} -> [{index, score}, ...]. Recommended default
+#   for a genuinely external endpoint (see the issue's decision writeup).
+# - "cohere": the Jina/Cohere-style /v1/rerank convention -- POST {model,
+#   query, documents: [...], top_n} -> {results: [{index, relevance_score}]}.
+#   Also what vLLM's own /rerank, /v1/rerank, /v2/rerank endpoints speak --
+#   vLLM does NOT speak the "tei" shape above despite also hosting
+#   cross-encoder rerankers, so this is the mode to use against vLLM.
+# "tei"/"cohere" authenticate with RERANKER_API_KEY as a bearer token
+# instead of RERANKER_SHARED_SECRET, matching common/embedding_client.py's
+# and common/completion_client.py's external-mode convention.
+RERANKER_API_COMPATIBILITY = os.environ.get("RERANKER_API_COMPATIBILITY", "internal")
+RERANKER_API_KEY = os.environ.get("RERANKER_API_KEY", "")
+# Only meaningful in "cohere" mode, which requires a model field; "tei" has
+# no such field and "internal" carries no model identity of its own (the
+# reranker-service process already knows its own RERANKER_MODEL).
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "")
 
 
 def _load_content_type_boosts() -> dict[str, float]:
@@ -120,21 +149,56 @@ async def rerank(
 
     boosts = CONTENT_TYPE_BOOSTS if content_type_boosts is None else content_type_boosts
 
-    headers = {"X-Reranker-Shared-Secret": RERANKER_SHARED_SECRET} if RERANKER_SHARED_SECRET else {}
+    headers: dict[str, str] = {}
+    if RERANKER_API_COMPATIBILITY in ("tei", "cohere"):
+        if RERANKER_API_KEY:
+            headers["Authorization"] = f"Bearer {RERANKER_API_KEY}"
+    elif RERANKER_SHARED_SECRET:
+        headers["X-Reranker-Shared-Secret"] = RERANKER_SHARED_SECRET
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{RERANKER_URL}/rerank",
-                json={
-                    "query": query,
-                    "chunks": [
-                        {"id": c["id"], "text": c["payload"].get("text", "")} for c in candidates
-                    ],
-                },
-                headers=headers,
-            )
-            resp.raise_for_status()
-            scores = {row["id"]: row["score"] for row in resp.json()}
+            if RERANKER_API_COMPATIBILITY == "tei":
+                resp = await client.post(
+                    f"{RERANKER_URL}/rerank",
+                    json={
+                        "query": query,
+                        "texts": [c["payload"].get("text", "") for c in candidates],
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                scores = {candidates[row["index"]]["id"]: row["score"] for row in resp.json()}
+            elif RERANKER_API_COMPATIBILITY == "cohere":
+                resp = await client.post(
+                    f"{RERANKER_URL}/v1/rerank",
+                    json={
+                        "model": RERANKER_MODEL,
+                        "query": query,
+                        "documents": [c["payload"].get("text", "") for c in candidates],
+                        "top_n": len(candidates),
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                scores = {
+                    candidates[row["index"]]["id"]: row["relevance_score"]
+                    for row in resp.json()["results"]
+                }
+            else:
+                resp = await client.post(
+                    f"{RERANKER_URL}/rerank",
+                    json={
+                        "query": query,
+                        "chunks": [
+                            {"id": c["id"], "text": c["payload"].get("text", "")}
+                            for c in candidates
+                        ],
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                scores = {row["id"]: row["score"] for row in resp.json()}
     except httpx.HTTPError as exc:
         logger.warning("reranker-service unavailable: %s: %s", type(exc).__name__, log_safe(exc))
         # #395: the collapse applies to the degraded path too -- overlap

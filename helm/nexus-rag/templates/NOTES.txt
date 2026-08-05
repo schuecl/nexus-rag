@@ -71,7 +71,7 @@ and reranker-service now accept traffic only from this chart's own components.
   (Calico/Cilium/Antrea do; some managed CNIs silently do not). Kubernetes
   reports no error either way -- verify rather than assume.
 {{- end }}
-{{- if not .Values.rerankerService.sharedSecret.existingSecret }}
+{{- if and (eq .Values.rerankerService.external.apiCompatibility "internal") (not .Values.rerankerService.sharedSecret.existingSecret) }}
 
   Note: rerankerService.sharedSecret.existingSecret is unset (issue #216).
   reranker-service accepts /rerank calls from anything that can reach it on
