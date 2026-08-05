@@ -127,6 +127,18 @@ spec:
               value: {{ include "nexus-rag.embeddingUrl" . | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
+            # Issue #403: which wire protocol OLLAMA_URL above speaks --
+            # "ollama" (default, common/embedding_client.py) or "openai" for
+            # an OpenAI-API-compliant hosted model.
+            - name: EMBEDDING_API_COMPATIBILITY
+              value: {{ .Values.embeddingService.external.apiCompatibility | quote }}
+            {{- if and (eq .Values.embeddingService.external.apiCompatibility "openai") .Values.embeddingService.external.apiKey.existingSecret }}
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.embeddingService.external.apiKey.existingSecret }}
+                  key: {{ .Values.embeddingService.external.apiKey.secretKey }}
+            {{- end }}
             {{- if .Values.ingestionWorker.visionModel }}
             # Issue #92: opt-in image/figure captioning at ingestion. Absent
             # (not just empty) when unset, matching the code's

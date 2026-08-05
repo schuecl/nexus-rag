@@ -29,6 +29,10 @@ dependencies = [
     "boto3>=1.34",
     # NFR-11: durable ingestion job queue (common/job_queue.py).
     "nats-py>=2.7",
+    # Issue #403: shared embedding-request client (common/embedding_client.py),
+    # used by both ingestion-worker and orchestration-mcp -- same pin both
+    # already carry in their own pyproject.toml.
+    "httpx>=0.27",
 ]
 
 [build-system]

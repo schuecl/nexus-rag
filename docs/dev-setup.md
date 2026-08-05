@@ -1976,6 +1976,28 @@ the docs, not a silent "it works" — flag it if you find one.
   applies to the new `externalKeycloak.clientId`/`clientSecret` and
   `ingestionApi.oidcRedirectUri`/`cookieSecure` wiring same as everything else in the
   chart — run `helm template --debug` against a real values override before trusting it.
+- **OpenAI-API-compliant embedding client (issue #403, Phase 2 of #401)** — both embedding
+  call sites (`ingestion-worker/app/embedding.py`'s `embed_texts`,
+  `orchestration-mcp/app/rag_search.py`'s `_embed_query`) previously spoke only Ollama's
+  native `/api/embeddings`, hardcoded, so `embeddingService.external` (#401) could only
+  point at an Ollama-*compatible* endpoint, not a genuinely OpenAI-API-compliant hosted
+  model (vLLM, TGI, a cloud embedding endpoint) despite that being #401's original ask.
+  Factored the request/response wire protocol out to a shared
+  `common/embedding_client.py`, selected by `EMBEDDING_API_COMPATIBILITY`
+  (`"ollama"`, default, unchanged behavior, vs. `"openai"`: `/v1/embeddings`,
+  `Authorization: Bearer EMBEDDING_API_KEY` when set) and wired through
+  `embeddingService.external.apiCompatibility`/`.apiKey` in the Helm chart. Unlike this
+  file's other Helm entries, `helm lint`/`helm template` *were* run here (`helm` is
+  reachable via `host-spawn helm` in this environment, unlike when the note above and
+  `helm/nexus-rag/README.md`'s old blanket disclaimer were written — see that README's
+  now-corrected note) across every new value combination, including the fail-closed and
+  TLS-scheme cases. **Tested against mocks only**: `common/embedding_client.py`'s two code
+  paths are covered by `tests/unit/common/test_embedding_client.py` (`respx`-mocked HTTP,
+  100% line/branch coverage on the new module) and the existing `embed_texts`/`_embed_query`
+  prefix-application suites in both services pass unmodified against the refactor — no real
+  OpenAI-API-compliant server (a local vLLM instance, etc.) was reachable in this
+  environment to validate the `"openai"` path end-to-end. Treat that path as implemented and
+  unit-tested, not yet live-validated, until someone runs it against a real endpoint.
 
 ## Resetting
 

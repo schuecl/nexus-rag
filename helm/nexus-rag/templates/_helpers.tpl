@@ -139,9 +139,9 @@ Issue #401: NATS client URL, same enabled/external pattern as Qdrant above.
 
 {{/*
 Issue #401: embedding-service endpoint URL, same enabled/external pattern as
-Qdrant above. Speaks Ollama's native API either way (self-deployed or an
-external Ollama-compatible instance) -- an OpenAI-API-compliant hosted model
-is a separate, not-yet-implemented client mode (see issue #401's Phase 2).
+Qdrant above. The self-deployed instance always speaks Ollama's native API;
+an external instance may speak either that or an OpenAI-API-compliant one,
+selected by embeddingService.external.apiCompatibility (issue #403).
 */}}
 {{- define "nexus-rag.embeddingUrl" -}}
 {{- if .Values.embeddingService.enabled -}}

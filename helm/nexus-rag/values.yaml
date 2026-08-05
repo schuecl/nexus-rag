@@ -349,6 +349,19 @@ embeddingService:
     port: 11434
     # true selects https:// for the URL built from host/port above.
     tls: false
+    # Issue #403: which wire protocol the endpoint above speaks.
+    # "ollama" (default) is Ollama's native /api/embeddings, unauthenticated
+    # -- what the self-deployed instance (enabled: true) always speaks too,
+    # and what any Ollama-*compatible* external endpoint speaks. "openai"
+    # targets an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud
+    # provider) via /v1/embeddings, authenticated with apiKey below.
+    apiCompatibility: ollama
+    # Only meaningful (and only sent as an Authorization: Bearer header) when
+    # apiCompatibility is "openai" and existingSecret is set -- Ollama's
+    # native path takes no credential, same as today.
+    apiKey:
+      existingSecret: ""
+      secretKey: "api-key"
   image:
     repository: ollama/ollama
     # NFR-16: pinned, never :latest.

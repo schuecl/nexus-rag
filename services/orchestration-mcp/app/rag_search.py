@@ -48,6 +48,7 @@ from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
+from common.embedding_client import request_embedding
 from common.embedding_prefixes import embedding_identity, query_prefix
 from common.log_safety import log_safe
 from common.models import AuditLogEntry
@@ -323,15 +324,13 @@ def format_rag_search_for_model(result: dict) -> str:
 async def _embed_query(query: str) -> list[float]:
     # Issue #392: the query-side counterpart to embed_texts' document_prefix
     # in ingestion-worker -- the two must agree on which model gets which
-    # prefix, hence the shared common.embedding_prefixes lookup.
+    # prefix, hence the shared common.embedding_prefixes lookup. Issue #403:
+    # the actual request/response wire protocol is shared with embed_texts
+    # too, via common.embedding_client -- an httpx.HTTPError from a failed
+    # request propagates to this function's caller unwrapped, same as before.
     prefix = query_prefix(EMBEDDING_MODEL)
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": EMBEDDING_MODEL, "prompt": prefix + query},
-        )
-        resp.raise_for_status()
-        return resp.json()["embedding"]
+        return await request_embedding(client, OLLAMA_URL, EMBEDDING_MODEL, prefix + query)
 
 
 def _timings_ms(timings: dict[str, float], started: float) -> dict[str, int]:

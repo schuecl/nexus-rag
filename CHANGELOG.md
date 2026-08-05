@@ -17,6 +17,14 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- Embedding requests can now target an OpenAI-API-compliant hosted model
+  (vLLM, TGI, a cloud embedding endpoint), not just an Ollama-compatible one
+  (#403, Phase 2 of #401): `ingestion-worker`'s `embed_texts` and
+  `orchestration-mcp`'s `_embed_query` both delegate to a new shared
+  `common/embedding_client.py`, selected by `EMBEDDING_API_COMPATIBILITY`
+  (`ollama`, default, unchanged behavior, or `openai`). Helm wiring is
+  `embeddingService.external.apiCompatibility`/`.apiKey` (bearer token, same
+  `existingSecret` pattern as everywhere else in the chart).
 - A host-side Q→C→A quality evaluator now drives the real LibreChat Agent
   generation path and scores its ordered retrieval contexts with the local Ollama
   judge: contextual relevance/recall/precision, faithfulness, answer

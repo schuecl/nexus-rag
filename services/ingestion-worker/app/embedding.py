@@ -1,8 +1,12 @@
 """FR-5: generate embeddings for each chunk using the self-hosted,
 non-Chinese-origin embedding model served by Ollama (REQUIREMENTS.md Section
-7.2). Sequential calls, not batched/concurrent -- fine for the small dev
-corpus this stack is meant for; worth revisiting for throughput once ingestion
-runs against a real-sized corpus.
+7.2) or, since issue #403, an OpenAI-API-compliant hosted model
+(`EMBEDDING_API_COMPATIBILITY=openai`) -- the wire protocol itself lives in
+`common.embedding_client`, shared with orchestration-mcp's `_embed_query` so
+the two can't drift on request/response shape. Sequential calls, not
+batched/concurrent -- fine for the small dev corpus this stack is meant for;
+worth revisiting for throughput once ingestion runs against a real-sized
+corpus.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import os
 
 import httpx
 
+from common.embedding_client import request_embedding
 from common.embedding_prefixes import document_prefix
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
@@ -30,12 +35,8 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     async with httpx.AsyncClient(timeout=60) as client:
         for text in texts:
             try:
-                resp = await client.post(
-                    f"{OLLAMA_URL}/api/embeddings",
-                    json={"model": EMBEDDING_MODEL, "prompt": prefix + text},
-                )
-                resp.raise_for_status()
+                vector = await request_embedding(client, OLLAMA_URL, EMBEDDING_MODEL, prefix + text)
             except httpx.HTTPError as exc:
                 raise EmbeddingError(f"embedding request failed: {exc}") from exc
-            vectors.append(resp.json()["embedding"])
+            vectors.append(vector)
     return vectors
