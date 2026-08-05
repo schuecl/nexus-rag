@@ -1035,19 +1035,43 @@ the docs, not a silent "it works" — flag it if you find one.
   successful queries resolving to 0-1 chunks (`narrow_probe_shaped` — the substitute
   for near-duplicate-query-text detection, since #125 means no query text exists to
   diff), and repeated denial-then-success sequences within a short window
-  (`boundary_mapping`, i.e. filter-boundary mapping). Run on demand or on a schedule
-  with `docker compose --profile anomaly-detection run --rm detect-query-anomalies`;
-  reporting only by default, same posture as the calibration script. Reuses the same
-  `nexus_rag_audit_reporting` role (no new grant) and, unlike that script, also pushes
-  a content-free, per-signal *count* of flagged identities plus a staleness timestamp
-  to Prometheus via Pushgateway — deliberately never a per-identity label, for the same
-  reason `orchestration-mcp/app/metrics.py` gives for never labeling a metric by user.
-  Two new alert rules, `NexusRagQueryAnomalyDetected`/`NexusRagQueryAnomalyDetectionStale`,
-  ship in `infra/observability/prometheus/rules/nexus-rag.yml`. **Tested against mocks
-  only** (the pure aggregation/exposition logic —
-  `tests/unit/test_detect_query_anomalies.py` — against constructed audit rows) — the DB
-  fetch itself, the `anomaly-detection` compose profile, and the alert rules have not
-  been exercised against a live stack.
+  (`boundary_mapping`). Run on demand or on a schedule with `docker compose --profile
+  anomaly-detection run --rm detect-query-anomalies`; reporting only by default, same
+  posture as the calibration script. Reuses the same `nexus_rag_audit_reporting` role
+  (no new grant) and, unlike that script, also pushes a content-free, per-signal
+  *count* of flagged identities plus a staleness timestamp to Prometheus via
+  Pushgateway — deliberately never a per-identity label, for the same reason
+  `orchestration-mcp/app/metrics.py` gives for never labeling a metric by user. Two new
+  alert rules, `NexusRagQueryAnomalyDetected`/`NexusRagQueryAnomalyDetectionStale`, ship
+  in `infra/observability/prometheus/rules/nexus-rag.yml`.
+
+  **Validated against a live environment.** A real `docker compose up`, real
+  `bob-query`/`alice-ingest` Keycloak tokens, and 32 top_k=1 `/debug/rag_search` calls as
+  `bob-query` plus 11 as `alice-ingest` (who holds no `rag-query` role) produced real
+  `audit_log` rows; `docker compose --profile anomaly-detection run --rm
+  detect-query-anomalies` correctly flagged `bob-query` for `high_volume` +
+  `narrow_probe_shaped` and `alice-ingest` for `high_denial_ratio`, with
+  `boundary_mapping=0` for both. With `--profile observability`'s `pushgateway`/
+  `prometheus` also up, a second run's metrics landed in Pushgateway (confirmed
+  content-free — no `actor_sub`/username in the payload), Prometheus scraped them, and
+  `NexusRagQueryAnomalyDetected` fired for the three expected signal labels and stayed
+  silent for `boundary_mapping`. Also confirmed the fail-open path: running the job
+  before Pushgateway was up printed a `WARNING` and still exited 0.
+
+  This live run also caught a real inaccuracy in the original design write-up, corrected
+  before merge: `boundary_mapping` was described (here, in `detect_query_anomalies.py`'s
+  docstring, and in `docs/threat-model.md`) as "filter-boundary mapping" — probing where
+  an FR-26 classification/releasability/access-scope filter's edge sits. Sending
+  `alice-ingest` 11 queries produced 11 `query.denied` rows and zero `query` rows,
+  which is the tell: `rag_search.py`'s only `query.denied` path is the coarse missing-
+  `rag-query`-role gate (`if not claims.can_query`), not a per-query FR-26 mismatch — an
+  out-of-scope query returns a *successful* empty result, never a denial. So the signal
+  as built can only fire when an identity's `rag-query` grant changes state mid-window
+  and is used immediately after (a role revoked then reinstated, or a delayed token
+  refresh picking up a just-granted role) — still worth a look, just narrower than the
+  original "probing an access boundary" framing claimed. `docs/threat-model.md`
+  section 4 and `detect_query_anomalies.py`'s docstring both carry the corrected
+  description.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

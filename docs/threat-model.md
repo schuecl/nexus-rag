@@ -254,7 +254,13 @@ identity over a lookback window —
   text" suggestion, since #125 means there is no query text to diff;
   `result_count` carries the same probing shape without needing content;
 - **boundary_mapping**: repeated denial-then-success sequences within a
-  short window — mapping where a filter's edge sits —
+  short window — narrower than it sounds, and narrower than #426's own
+  suggested framing: `rag_search.py`'s only `query.denied` path is the
+  coarse missing-`rag-query`-role gate, not a per-query FR-26 mismatch (an
+  out-of-scope query returns a *successful* empty result, never a denial —
+  confirmed live, see `detect_query_anomalies.py`'s module docstring), so
+  this actually detects an identity's `rag-query` grant changing state
+  mid-window and being used immediately after, not filter-boundary probing —
 
 and publishes only a **count of flagged identities per signal** (plus a
 staleness timestamp) to Prometheus via Pushgateway, gated by two new alert
@@ -263,10 +269,17 @@ Actual `actor_sub`/`actor_username` attribution exists only in the script's
 own stdout report — the same audience `docs/governance.md`'s "Query
 confidentiality and user privacy" already names as able to read `audit_log`.
 
-**Honest confidence label:** implemented, and the aggregation/exposition
-logic is unit tested against constructed audit rows
-(`tests/unit/test_detect_query_anomalies.py`); the live-Postgres fetch path
-has not been exercised end to end. **Deliberately not built here:**
+**Honest confidence label:** validated against a live environment. The
+aggregation/exposition logic is unit tested against constructed audit rows
+(`tests/unit/test_detect_query_anomalies.py`); the full path — real
+`docker compose up`, real `bob-query`/`alice-ingest` tokens driving real
+`/debug/rag_search` calls, the compose job reading real `audit_log` rows
+through `nexus_rag_audit_reporting`, a real Pushgateway push, and a real
+Prometheus alert firing on exactly the flagged signals — was exercised end
+to end (`docs/dev-setup.md`'s "What's stubbed vs working"). That run is also
+what caught `boundary_mapping`'s original "filter-boundary mapping"
+description as wrong (see above) before merge. **Deliberately not built
+here:**
 detection rules inside the environment's actual SIEM (Splunk/Elastic/
 ArcSight/QRadar query languages are environment-specific and outside this
 repo's testable surface — the audit rows already reach a SIEM via #73's
@@ -290,7 +303,7 @@ each attack-surface section above is actually answering.
 | Separate vector namespaces per classification/tenant | **Correct** | #229/#267, see membership-inference section above |
 | Treat embeddings/payloads with the same controls as source documents | **Bounded, not eliminated** | see retrieved-content-leakage section — collection split + NetworkPolicy + RO/RW keys narrow reach; payload is not encrypted at rest |
 | No third-party prompt egress | **Correct by architecture** | Generation is self-hosted Ollama, not a vendor API |
-| Monitor for systematic/reconnaissance-shaped queries | **Implemented, tested against mocks** | #426: `scripts/detect_query_anomalies.py` mines FR-31's audit trail for per-identity query-rate, denial-ratio, narrow-result-probing, and denial-then-success boundary-mapping signals, with a content-free/bounded Prometheus alert on top — see "Reconnaissance-shaped query detection" below |
+| Monitor for systematic/reconnaissance-shaped queries | **Validated against a live environment** | #426: `scripts/detect_query_anomalies.py` mines FR-31's audit trail for per-identity query-rate, denial-ratio, narrow-result-probing, and denial-then-success signals, with a content-free/bounded Prometheus alert on top, exercised end to end against a real stack — see "Reconnaissance-shaped query detection" below |
 | Document integrity / tamper-evidence | **Correct** | #285, see poisoning section above |
 | Human review of content before it becomes retrievable | **Correct** | FR-11/FR-12 gate, and #284 makes it actually see content, not just metadata |
 

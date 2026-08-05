@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Issue #426 (#127 gap #4 / threat-model residual): detect reconnaissance-
 shaped retrieval patterns from the FR-31 audit log -- one identity issuing
-many near-identical or systematically narrow queries, or mapping the access
-filter's boundary by alternating denials and successes. #127 named this
-threat explicitly: an authorized `rag-query` user can probe with crafted
-queries and use the result set (including an *absent* result) to infer
-whether a specific document exists in the corpus. The audit log has carried
-every field this needs since #72/#73 shipped; nothing read it for this
-purpose until now.
+many near-identical or systematically narrow queries, or immediately using
+a `rag-query` grant that just changed state. #127 named the core threat
+explicitly: an authorized `rag-query` user can probe with crafted queries
+and use the result set (including an *absent* result) to infer whether a
+specific document exists in the corpus. The audit log has carried every
+field this needs since #72/#73 shipped; nothing read it for this purpose
+until now.
 
 Why this connects to Postgres directly, as its own SELECT-only role, the same
 way `calibrate_tagging_advisory.py` (#309) does: NFR-2 makes every
@@ -45,9 +45,20 @@ Signals computed per `actor_sub` over a lookback window, from `query` and
   `result_count` already carries that signal without needing content.
 - **boundary_mapping**: count of `query.denied` -> `query` (success)
   transitions for the same actor within `--sequence-window-seconds` of each
-  other, at or above `--sequence-threshold`. A denial immediately followed by
-  a differently-scoped success is the filter-boundary-mapping shape #426
-  names explicitly -- probing where the edge of an access filter sits.
+  other, at or above `--sequence-threshold`. Narrower than #426's suggested
+  "filter-boundary mapping" framing turned out to be live: `rag_search.py`'s
+  only `query.denied` path is the coarse missing-`rag-query`-role gate
+  (`if not claims.can_query`), not a per-query FR-26 classification/
+  releasability/access-scope mismatch -- an out-of-scope query returns a
+  *successful* empty result, never a denial (confirmed against a live
+  stack: sending an unscoped identity 11 queries produced 11 `query.denied`
+  rows and zero `query` rows, so there was nothing for a denial-then-success
+  transition to match). What this signal actually detects is an identity's
+  `rag-query` grant changing state mid-window and being used immediately
+  after -- e.g. a role revoked then reinstated, or a delayed token refresh
+  picking up a just-granted role -- which is still worth a human look, just
+  a different (narrower, rarer) shape than probing where an access filter's
+  edge sits.
 
 Deliberately NOT a per-identity Prometheus label. `orchestration-mcp/app/
 metrics.py`'s module docstring already rejects that design for this exact

@@ -474,7 +474,11 @@ global `NexusRagQueryDeniedSpike` volume alert (`high_denial_ratio`), a high
 share of successful queries resolving to 0-1 chunks (`narrow_probe_shaped` —
 the substitute for near-duplicate-query-text detection, since #125 means
 there is no query text to diff), and repeated denial-then-success sequences
-within a short window (`boundary_mapping`).
+within a short window (`boundary_mapping` — narrower than "filter-boundary
+mapping" sounds; confirmed live that `rag_search.py`'s only `query.denied`
+path is the coarse missing-`rag-query`-role gate, not a per-query FR-26
+mismatch, so this actually flags a `rag-query` grant changing state
+mid-window and being used immediately after).
 
 ```bash
 python scripts/detect_query_anomalies.py --lookback-minutes 60
@@ -493,9 +497,10 @@ labeling a metric by user. Attribution — which identity was actually flagged
 `nexus_rag_audit_reporting` credential (`docs/governance.md`'s "Query
 confidentiality and user privacy" names that audience). The pure aggregation
 and exposition logic is unit tested in
-`tests/unit/test_detect_query_anomalies.py` against constructed audit rows;
-the DB fetch itself needs a live Postgres and has not been exercised end to
-end (see `docs/dev-setup.md`'s "What's stubbed vs working").
+`tests/unit/test_detect_query_anomalies.py` against constructed audit rows,
+and the full path — DB fetch, Pushgateway export, and the resulting
+Prometheus alert — has been **validated against a live environment** (see
+`docs/dev-setup.md`'s "What's stubbed vs working").
 
 Connects to Postgres as its own dedicated, SELECT-only-on-`audit_log` role
 (`nexus_rag_audit_reporting`) rather than through any of the four services —
