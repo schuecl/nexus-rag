@@ -20,8 +20,8 @@ Scope and honest limits:
 - These are **ingress** policies. Egress is deliberately not restricted here:
   the chart's services must reach an external Postgres and Keycloak (see
   values.yaml's externalPostgres/externalKeycloak), and, when qdrant/milvus/
-  nats/embeddingService/objectStore are configured in external mode, those
-  addresses too -- none of which this chart knows. A
+  nats/embeddingService/objectStore/rerankerService are configured in
+  external mode, those addresses too -- none of which this chart knows. A
   default-deny egress policy would have to be written against the actual
   cluster's CIDRs and DNS, which belongs with the deployment, not the chart.
   networkPolicy.denyEgressByDefault is offered for operators who want to opt
@@ -119,6 +119,12 @@ spec:
         - port: {{ .Values.milvus.service.port }}
           protocol: TCP
 {{- end }}
+{{- if .Values.rerankerService.enabled }}
+{{/*
+Only meaningful when this chart deploys reranker-service itself -- an
+external tei/cohere endpoint's ingress policy isn't this chart's to set
+(issue #419).
+*/}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -142,6 +148,7 @@ spec:
       ports:
         - port: {{ .Values.rerankerService.service.port }}
           protocol: TCP
+{{- end }}
 {{- if .Values.embeddingService.enabled }}
 {{/*
 Only meaningful when this chart deploys the embedding service itself -- an

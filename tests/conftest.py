@@ -12,6 +12,24 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Fail fast, naming the cause, when the interpreter is too old. CI runs 3.11
+# and 3.12; the realistic way to end up below that locally is PATH shadowing --
+# a system pytest/pip/mypy (e.g. RHEL 9's Python 3.9) resolving ahead of the
+# activated venv's. The symptoms surface several layers from the cause: pip
+# "cannot find" pinned versions (requires-python metadata hides them from an
+# old resolver), mypy reports bogus datetime.UTC / zip(strict=) errors across
+# services/common. Refusing to collect beats debugging those one by one.
+# Placed before the third-party imports below so an interpreter whose
+# site-packages lacks them raises this message, not "No module named jwt".
+if sys.version_info < (3, 11):  # noqa: UP036 -- guards interpreters below ruff's target
+    raise RuntimeError(
+        f"this suite needs Python >= 3.11, but pytest is running under "
+        f"{sys.version.split()[0]} ({sys.executable}). Activate the venv "
+        "(`source .venv-test/bin/activate`) and compare `which python pytest "
+        "pip mypy` against it -- a system-wide tool is probably shadowing the "
+        "venv's copy. See docs/testing.md ('Running locally')."
+    )
+
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa

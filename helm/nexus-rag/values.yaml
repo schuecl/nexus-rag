@@ -419,11 +419,16 @@ embeddingService:
     # true selects https:// for the URL built from host/port above.
     tls: false
     # Which wire protocol the endpoint above speaks. "ollama" (default) is
-    # Ollama's native /api/embeddings, unauthenticated
-    # -- what the self-deployed instance (enabled: true) always speaks too,
-    # and what any Ollama-*compatible* external endpoint speaks. "openai"
+    # Ollama's native /api/embeddings (embeddings) and /api/generate
+    # (captioning/classification/PII-LLM, issue #418), unauthenticated --
+    # what the self-deployed instance (enabled: true) always speaks too, and
+    # what any Ollama-*compatible* external endpoint speaks. "openai"
     # targets an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud
-    # provider) via /v1/embeddings, authenticated with apiKey below.
+    # provider) via /v1/embeddings and /v1/chat/completions, authenticated
+    # with apiKey below. One switch for both wire protocols since they're
+    # always the same physical endpoint (see the comment above) -- see
+    # templates/ingestion-worker-deployment.yaml's EMBEDDING_API_COMPATIBILITY/
+    # COMPLETION_API_COMPATIBILITY, both sourced from this one field.
     apiCompatibility: ollama
     # Only meaningful (and only sent as an Authorization: Bearer header) when
     # apiCompatibility is "openai" and existingSecret is set -- Ollama's
@@ -459,7 +464,46 @@ embeddingService:
 # ---------------------------------------------------------------------------
 
 rerankerService:
+  # Either this chart deploys a dedicated reranker-service instance (enabled:
+  # true, default) or it connects to an already-running cross-encoder/rerank
+  # endpoint elsewhere (enabled: false + external.host below) -- same
+  # enabled/external choice as embeddingService, issue #419.
   enabled: true
+  # Only read when enabled is false.
+  external:
+    host: ""
+    port: 8080
+    # true selects https:// for the URL built from host/port above.
+    tls: false
+    # Which wire protocol the endpoint above speaks. "internal" (default) is
+    # this chart's own reranker-service shape (POST {query, chunks: [{id,
+    # text}]} -> [{id, score}]) -- what the self-deployed instance (enabled:
+    # true) always speaks, and what any reranker-service-*compatible*
+    # external endpoint speaks. Two genuinely external shapes, decided in
+    # issue #419:
+    #   "tei"    -- HuggingFace text-embeddings-inference's native /rerank:
+    #               POST {query, texts: [...]}  -> [{index, score}, ...].
+    #               Recommended default for a real external endpoint: this is
+    #               what this project's own reranker-service conceptually is
+    #               (a hosted cross-encoder), and the most likely thing
+    #               already running in an air-gapped enclave.
+    #   "cohere" -- the Jina/Cohere-style /v1/rerank convention: POST
+    #               {model, query, documents: [...], top_n} -> {results:
+    #               [{index, relevance_score}, ...]}. Also what vLLM's own
+    #               /rerank, /v1/rerank, /v2/rerank speak (vLLM does NOT
+    #               speak the "tei" shape above despite hosting cross-encoder
+    #               rerankers too) -- set this when pointing at a vLLM
+    #               instance rather than a TEI one. `model` is sent from
+    #               rerankerService.model, same field the self-deployed
+    #               image loads.
+    apiCompatibility: internal
+    # Only meaningful (and only sent as an Authorization: Bearer header) when
+    # apiCompatibility is "tei" or "cohere" and existingSecret is set --
+    # reranker-service's own native path takes rerankerService.sharedSecret
+    # instead (unaffected by this block).
+    apiKey:
+      existingSecret: ""
+      secretKey: "api-key"
   image:
     repository: reranker-service
     # NFR-16: matches Chart.yaml's appVersion, not :latest. Since #295 this
@@ -467,6 +511,9 @@ rerankerService:
     # tag, and the release PR bumps this together with appVersion --
     # scripts/check_version_consistency.py fails CI if they disagree.
     tag: "0.5.0"
+  # Also the model name sent to an external endpoint in "cohere" mode's
+  # request body (vLLM/Cohere-style rerank requires it); unused in "tei"
+  # mode, which doesn't take a model field.
   model: "cross-encoder/ms-marco-MiniLM-L6-v2"
   replicas: 1
   # Issue #216: /rerank has no authorization model of its own -- reachability

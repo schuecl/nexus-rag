@@ -70,6 +70,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from common.completion_client import request_completion
+
 logger = logging.getLogger("ingestion-worker")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
@@ -213,17 +215,9 @@ async def suggest_pii_llm_findings(text: str) -> list[PiiLlmFinding] | None:
     prompt = PROMPT_TEMPLATE.format(text=text[:PII_LLM_SCAN_LIMIT])
     try:
         async with httpx.AsyncClient(timeout=PII_LLM_REQUEST_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": PII_LLM_MODEL,
-                    "prompt": prompt,
-                    "format": "json",
-                    "stream": False,
-                },
+            raw = await request_completion(
+                client, OLLAMA_URL, PII_LLM_MODEL, prompt, json_format=True
             )
-            resp.raise_for_status()
-            raw = str(resp.json().get("response", ""))
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         logger.warning("PII LLM advisory request failed: %s: %s", type(exc).__name__, exc)
         return None
@@ -312,17 +306,9 @@ async def verify_pii_findings(
     prompt = VERIFY_PROMPT_TEMPLATE.format(spans=spans)
     try:
         async with httpx.AsyncClient(timeout=PII_LLM_REQUEST_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": PII_LLM_MODEL,
-                    "prompt": prompt,
-                    "format": "json",
-                    "stream": False,
-                },
+            raw = await request_completion(
+                client, OLLAMA_URL, PII_LLM_MODEL, prompt, json_format=True
             )
-            resp.raise_for_status()
-            raw = str(resp.json().get("response", ""))
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         logger.warning("PII LLM verification request failed: %s: %s", type(exc).__name__, exc)
         return None
