@@ -225,6 +225,56 @@ looks complete until you check what it actually observes.
   actually seeing content; it doesn't claim the generation model is immune
   to what it reads once reviewed.
 
+### 4. Reconnaissance-shaped query patterns (detection, not prevention)
+
+*Section 1 above is about closing the membership-inference channel itself
+(score suppression, per-classification collections). This is the
+complementary control OWASP and #127 gap #4 both ask for: since the channel
+can't be fully closed for an A-I/A-II adversary (rank order is a residual
+signal, see "Considered and rejected" below), can an operator at least detect
+that someone is probing it?*
+
+[#426](https://github.com/schuecl/nexus-rag/issues/426) implements this as
+`scripts/detect_query_anomalies.py`, an offline batch job over the audit log
+— not a Prometheus per-identity label. That deliberately-rejected design is
+worth stating explicitly: `orchestration-mcp/app/metrics.py`'s own docstring
+already argues a per-user metric label "would rebuild exactly the
+surveillance surface #125 removed from the audit log," and #426's own
+suggested direction flagged the same cardinality risk. The script instead
+authenticates as the same `nexus_rag_audit_reporting` SELECT-only role
+`calibrate_tagging_advisory.py` (#309) uses, computes four signals per
+identity over a lookback window —
+
+- **high_volume**: raw attempt-rate spike (naive scripted probing);
+- **high_denial_ratio**: a sustained personal denial rate, distinct from
+  `NexusRagQueryDeniedSpike`'s global volume threshold, which a slow,
+  methodical single-identity prober can stay under;
+- **narrow_probe_shaped**: a high share of successful queries resolving to 0
+  or 1 chunks — the substitute for #426's literal "near-duplicate query
+  text" suggestion, since #125 means there is no query text to diff;
+  `result_count` carries the same probing shape without needing content;
+- **boundary_mapping**: repeated denial-then-success sequences within a
+  short window — mapping where a filter's edge sits —
+
+and publishes only a **count of flagged identities per signal** (plus a
+staleness timestamp) to Prometheus via Pushgateway, gated by two new alert
+rules (`NexusRagQueryAnomalyDetected`, `NexusRagQueryAnomalyDetectionStale`).
+Actual `actor_sub`/`actor_username` attribution exists only in the script's
+own stdout report — the same audience `docs/governance.md`'s "Query
+confidentiality and user privacy" already names as able to read `audit_log`.
+
+**Honest confidence label:** implemented, and the aggregation/exposition
+logic is unit tested against constructed audit rows
+(`tests/unit/test_detect_query_anomalies.py`); the live-Postgres fetch path
+has not been exercised end to end. **Deliberately not built here:**
+detection rules inside the environment's actual SIEM (Splunk/Elastic/
+ArcSight/QRadar query languages are environment-specific and outside this
+repo's testable surface — the audit rows already reach a SIEM via #73's
+export, so a deployment can build the equivalent there); and automated
+scheduling of the batch job itself (it shares this gap with
+`calibrate_tagging_advisory.py` — both are "run manually or on a schedule"
+with nothing in this repo that schedules them).
+
 ## OWASP RAG Security Cheat Sheet — control-by-control
 
 Recorded because the controls that are already right are the expensive ones,
@@ -240,7 +290,7 @@ each attack-surface section above is actually answering.
 | Separate vector namespaces per classification/tenant | **Correct** | #229/#267, see membership-inference section above |
 | Treat embeddings/payloads with the same controls as source documents | **Bounded, not eliminated** | see retrieved-content-leakage section — collection split + NetworkPolicy + RO/RW keys narrow reach; payload is not encrypted at rest |
 | No third-party prompt egress | **Correct by architecture** | Generation is self-hosted Ollama, not a vendor API |
-| Monitor for systematic/reconnaissance-shaped queries | **Not done** | FR-31 records every query and #72/#73 now provide metrics and a SIEM export path, but nothing reads either for this purpose yet — the substrate exists, the detection logic doesn't. Not filed as a build here; recorded as the natural next consumer of #72/#73 |
+| Monitor for systematic/reconnaissance-shaped queries | **Implemented, tested against mocks** | #426: `scripts/detect_query_anomalies.py` mines FR-31's audit trail for per-identity query-rate, denial-ratio, narrow-result-probing, and denial-then-success boundary-mapping signals, with a content-free/bounded Prometheus alert on top — see "Reconnaissance-shaped query detection" below |
 | Document integrity / tamper-evidence | **Correct** | #285, see poisoning section above |
 | Human review of content before it becomes retrievable | **Correct** | FR-11/FR-12 gate, and #284 makes it actually see content, not just metadata |
 
@@ -287,8 +337,9 @@ which score-suppression already answers without touching recall.
 |---|---|
 | Retrieved content persisting in the chat plane beyond purge's reach | Decided ([#286](https://github.com/schuecl/nexus-rag/issues/286)): accepted risk; purge event signals it ([`chat-plane-purge.md`](chat-plane-purge.md)) |
 | Qdrant payload cleartext not encrypted at rest | Bounded by collection split/NetworkPolicy/RO-RW keys, not eliminated; depends on deployment storage layer |
-| No detection/alerting on reconnaissance-shaped query patterns | Substrate (#72 metrics, #73 SIEM) exists; no detection logic built on top of it yet |
 | Rank-order residual membership-inference channel | Accepted, unmitigated — see "Considered and rejected" above |
+| SIEM-side detection rules for the patterns #426 flags | Not built here — environment-specific SIEM query languages are outside this repo's testable surface; the flagged-event data already reaches a SIEM via #73's export |
+| Automated scheduling of the offline audit-reporting jobs (calibration, #426's detector) | Both are "run manually or on a schedule" per their own docs; nothing in this repo schedules either one |
 
 ## Related
 
@@ -300,4 +351,6 @@ the "not done" framing of), [`roles-and-permissions.md`](roles-and-permissions.m
 [#127](https://github.com/schuecl/nexus-rag/issues/127) (the issue this
 document answers), [#286](https://github.com/schuecl/nexus-rag/issues/286)
 (chat-plane persistence — decided, see
-[`chat-plane-purge.md`](chat-plane-purge.md)).
+[`chat-plane-purge.md`](chat-plane-purge.md)), [#426](https://github.com/schuecl/nexus-rag/issues/426)
+(reconnaissance-shaped query detection, closing #127 gap #4 — see section 4 above),
+[`docs/observability.md`](observability.md) (the alert rules #426 adds).

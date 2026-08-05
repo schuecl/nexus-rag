@@ -420,9 +420,12 @@ longer exists. Per-service Postgres roles
 `roles-and-permissions.md` gap G2, **validated live**) mean **no application
 role can `SELECT` `audit_log` at all** — every service's role is
 insert-only on that table. The only role that can read it is
-`nexus_rag_audit_reporting`, a narrow, offline-only credential used solely
-by `scripts/calibrate_tagging_advisory.py` and never wired into any
-service's request path.
+`nexus_rag_audit_reporting`, a narrow, offline-only credential used by
+`scripts/calibrate_tagging_advisory.py` and, since
+[#426](https://github.com/schuecl/nexus-rag/issues/426),
+`scripts/detect_query_anomalies.py` — never wired into any service's
+request path. Both are offline jobs, not API routes, so "no API route reads
+the audit log" (above) still holds.
 
 What's left, and it's a smaller, named residual rather than the original
 open-ended one:
@@ -455,7 +458,7 @@ the split below is what actually ships today, not a proposal:
 | Actor, timestamp, action | Accountability (FR-31) | `nexus_rag_audit_reporting`, bootstrap superuser |
 | Allow/deny outcome + reason | FR-26 verification | Same |
 | Applied filter *shape* (embeds sub/groups/org) | Proving the filter was enforced | Same |
-| Result count + `result_document_ids` | Accountability / anomaly detection | Same |
+| Result count + `result_document_ids` | Accountability / anomaly detection ([#426](https://github.com/schuecl/nexus-rag/issues/426): `scripts/detect_query_anomalies.py` is that consumer) | Same |
 | **Raw query text** | — | **Nobody — never written** |
 | **Document content** | — | **Nobody, via audit** |
 

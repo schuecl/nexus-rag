@@ -135,7 +135,7 @@ Least privilege between components, as deployed by compose/chart:
 | `nexus_rag_ingestion_worker` Postgres role | `ingestion-worker` | `SELECT`/`UPDATE` on documents, `SELECT` on vocabulary, **INSERT-only** on `audit_log`; no session/OAuth tables | same |
 | `nexus_rag_orchestration_mcp` Postgres role | `orchestration-mcp` | `SELECT` on `classification_levels`, **INSERT-only** on `audit_log`; cannot read `documents` | same |
 | `grafana_ro` Postgres role | dashboards | `SELECT` on `document_metrics` only | `GRANT` in db-roles setup |
-| `nexus_rag_audit_reporting` Postgres role | `scripts/calibrate_tagging_advisory.py` (offline, #309) | `SELECT` on `audit_log` and `classification_levels` only | `GRANT` in `apply-service-grants.sh` (#309) |
+| `nexus_rag_audit_reporting` Postgres role | `scripts/calibrate_tagging_advisory.py` (offline, #309), `scripts/detect_query_anomalies.py` (offline, #426) | `SELECT` on `audit_log` and `classification_levels` only | `GRANT` in `apply-service-grants.sh` (#309) |
 | Reranker shared secret (#216) | `orchestration-mcp` → `reranker-service` | `/rerank` | HMAC-style header check |
 | Object-store credential | `ingestion-api` (put), purge path (delete) | originals bucket | store-side policy; no read-back route exists in the app |
 | LiteLLM master key, Keycloak client secret | chat plane / OIDC confidential client | out of this repo's enforcement scope | respective services |
@@ -220,10 +220,13 @@ assumed:
   suite — all references across the three services construct a row to
   insert. So §2's "no route exposes the audit log" is still true at the
   database layer, and reading the trail is only possible as one dedicated,
-  standalone identity: `nexus_rag_audit_reporting` (#309), used solely by the
+  standalone identity: `nexus_rag_audit_reporting` (#309), used by the
   offline `scripts/calibrate_tagging_advisory.py` job to measure suggester-
-  vs-curator agreement (never wired into any service's request path) — the
-  deliberate DBA/SIEM act NFR-2's export path describes.
+  vs-curator agreement and, since #426, by
+  `scripts/detect_query_anomalies.py` to flag reconnaissance-shaped query
+  patterns (`docs/threat-model.md` section 4) — neither wired into any
+  service's request path. The deliberate DBA/SIEM act NFR-2's export path
+  describes.
 - **`orchestration-mcp` cannot read `documents` at all.** Chunk text comes from
   Qdrant, so the retrieval path's entire database surface is `SELECT` on
   `classification_levels` (to build the FR-26 filter) plus `INSERT` on

@@ -17,6 +17,18 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- Detection of reconnaissance-shaped retrieval patterns (#426, closing #127
+  gap #4): `scripts/detect_query_anomalies.py` mines the FR-31 audit log for
+  four per-identity signals over a lookback window — attempt-rate spikes,
+  a sustained personal denial ratio, a high share of queries resolving to
+  0-1 chunks (narrow, membership-inference-shaped probing), and repeated
+  denial-then-success sequences (filter-boundary mapping). Run on demand or
+  scheduled via `docker compose --profile anomaly-detection run --rm
+  detect-query-anomalies`; reporting only, reusing the existing
+  `nexus_rag_audit_reporting` role (no new grant). Publishes a content-free,
+  bounded per-signal count to Prometheus via Pushgateway — never a
+  per-identity label — behind two new alert rules,
+  `NexusRagQueryAnomalyDetected` and `NexusRagQueryAnomalyDetectionStale`.
 - `ingestion-worker`'s image-captioning, LLM classification-suggestion, and
   LLM PII-advisory calls (`VISION_MODEL`/`CLASSIFICATION_MODEL`/`PII_LLM_MODEL`)
   can now target an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud

@@ -100,3 +100,30 @@ groups:
         annotations:
           summary: "Query authorization denials spiked"
           description: "More than twenty denied retrieval attempts occurred in ten minutes; correlate with SIEM audit events."
+
+  # Issue #426 (#127 gap #4): scripts/detect_query_anomalies.py pushes these
+  # via Pushgateway -- see that script's module docstring. Deliberately no
+  # identity in either metric: nexus_rag_query_anomaly_flagged_identities is
+  # a *count* of identities per signal, not a per-identity series (same
+  # cardinality/privacy reasoning as orchestration-mcp/app/metrics.py).
+  # Attribution (which actor_sub) lives only in the script's own stdout
+  # report and the audit log itself, both already gated to holders of the
+  # nexus_rag_audit_reporting credential.
+  - name: nexus-rag-security
+    rules:
+      - alert: NexusRagQueryAnomalyDetected
+        expr: max_over_time(nexus_rag_query_anomaly_flagged_identities[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconnaissance-shaped query pattern detected"
+          description: "At least one identity was flagged by the most recent detect_query_anomalies.py run for signal {{ $labels.signal }}. Run the script directly (or check its last stdout report) to identify the actor_sub -- Prometheus deliberately carries no identity for this metric."
+
+      - alert: NexusRagQueryAnomalyDetectionStale
+        expr: time() - nexus_rag_query_anomaly_last_run_timestamp_seconds > 7200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconnaissance-pattern detection has not run recently"
+          description: "detect_query_anomalies.py has not reported to Pushgateway in over two hours (the default assumes an hourly schedule; adjust this threshold if this deployment runs it less often). A stopped detector is a silent blind spot, not just a missed run."

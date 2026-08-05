@@ -1027,6 +1027,27 @@ the docs, not a silent "it works" — flag it if you find one.
   `flagged=4 approved_unchanged=2 approved_corrected=1 rejected=1 acted_on_rate=50.00%`
   — the exact tally the four decisions above should produce — including a correct
   `--history-dir` trend line on a second run.
+- **Reconnaissance-shaped query detection (issue #426, #127 gap #4)** —
+  `scripts/detect_query_anomalies.py` mines `query`/`query.denied` audit rows over a
+  lookback window (default 60 minutes) for four per-identity signals: raw attempt-rate
+  (`high_volume`), a sustained personal denial rate distinct from the global
+  `NexusRagQueryDeniedSpike` volume alert (`high_denial_ratio`), a high share of
+  successful queries resolving to 0-1 chunks (`narrow_probe_shaped` — the substitute
+  for near-duplicate-query-text detection, since #125 means no query text exists to
+  diff), and repeated denial-then-success sequences within a short window
+  (`boundary_mapping`, i.e. filter-boundary mapping). Run on demand or on a schedule
+  with `docker compose --profile anomaly-detection run --rm detect-query-anomalies`;
+  reporting only by default, same posture as the calibration script. Reuses the same
+  `nexus_rag_audit_reporting` role (no new grant) and, unlike that script, also pushes
+  a content-free, per-signal *count* of flagged identities plus a staleness timestamp
+  to Prometheus via Pushgateway — deliberately never a per-identity label, for the same
+  reason `orchestration-mcp/app/metrics.py` gives for never labeling a metric by user.
+  Two new alert rules, `NexusRagQueryAnomalyDetected`/`NexusRagQueryAnomalyDetectionStale`,
+  ship in `infra/observability/prometheus/rules/nexus-rag.yml`. **Tested against mocks
+  only** (the pure aggregation/exposition logic —
+  `tests/unit/test_detect_query_anomalies.py` — against constructed audit rows) — the DB
+  fetch itself, the `anomaly-detection` compose profile, and the alert rules have not
+  been exercised against a live stack.
 - **Uploader notifications on curator decisions (FR-15)** — approving or rejecting a
   document writes an in-app `Notification` row for the uploader
   (`common/models.py`/`app/routes/notifications.py`), with the rejection reason

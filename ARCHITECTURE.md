@@ -316,6 +316,13 @@ material to cite, not instructions to follow — the same marker-plus-notice pat
 carried in the tool's own MCP docstring, so it doesn't depend on one particular client
 surfacing docstrings to its model. This is a mitigation, not a guarantee (§7).
 
+**Reconnaissance-shaped query detection (issue #426):** the `audit_log insert` step above is
+also §4.6's `nexus_rag_audit_reporting` role's second consumer. `scripts/detect_query_anomalies.py`
+(offline, not part of this sequence) mines `query`/`query.denied` rows for per-identity
+query-rate, denial-ratio, narrow-result-probing, and denial-then-success boundary-mapping
+signals — see `docs/threat-model.md` section 4 for the full detection design and its
+deliberate choice not to use a per-identity Prometheus label.
+
 ### 4.4 Ingestion UI login
 
 Replaces the old pasted-access-token dev workaround. Every underlying fetch call (upload,
@@ -563,7 +570,7 @@ Closed since this section was written (#133): `ingestion-api` (:8001),
 `ingestion-worker` (:8004), and `reranker-service` (:8003) all expose `/metrics`
 too, so ingestion throughput, queue depth, and worker processing duration are
 measured. The full stack that consumes them — Prometheus, Loki, Tempo,
-Alertmanager, 13 Grafana dashboards, 10 alert rules — ships as a Compose profile
+Alertmanager, 13 Grafana dashboards, 12 alert rules — ships as a Compose profile
 (`docs/dev-setup.md`) and, for clusters with no monitoring stack of their own, as
 the separately-installed `helm/observability` chart (#257, `docs/observability.md`).
 Pyroscope also ships in the Compose profile; all four services push it

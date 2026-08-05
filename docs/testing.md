@@ -19,6 +19,7 @@ manual local-judge Q→C→A evaluation.
 | Q→C→A quality (issue #74) | `scripts/evaluate_rag_quality.py` + `golden_queries.json` | Manual, host-side; not a CI gate | Real LibreChat Agent generation plus ordered `/debug/rag_search` contexts, scored by the local Ollama judge for contextual relevance/recall/precision, faithfulness, answer relevance/correctness, citation validity, and abstention behavior |
 | Browser CSRF + logout (issue #187) | `scripts/verify_browser_csrf_logout.py` | `e2e.yml` job `browser-verify` (same `needs-e2e` gating as golden-query) | Real Chromium against a real `docker compose up`: HttpOnly/readable cookie attributes, missing/mismatched/matching `X-CSRF-Token` (NFR-14), and a full Keycloak RP-initiated logout actually ending the SSO session (issue #254) rather than just the server-side logic `services/ingestion-api/tests` already covers with `TestClient` |
 | Tagging-advisory calibration | `scripts/calibrate_tagging_advisory.py` | Manual or scheduled (`docker compose --profile calibration run`), not in any CI workflow | Suggester-vs-curator agreement over time for Phase 1-3's advisories (FR-13/FR-16/FR-30/FR-32) — reporting only, no pass/fail gate by default |
+| Reconnaissance-shaped query detection (issue #426) | `scripts/detect_query_anomalies.py` | Manual or scheduled (`docker compose --profile anomaly-detection run`), not in any CI workflow | Per-identity query-rate, denial-ratio, narrow-result-probing, and denial-then-success boundary-mapping signals over the audit log (#127 gap #4) — reporting only, no pass/fail gate; a content-free, bounded count per signal is also pushed to Pushgateway for `NexusRagQueryAnomalyDetected`/`NexusRagQueryAnomalyDetectionStale` |
 | Mutation | `services/common/pyproject.toml` `[tool.mutmut]` | `e2e.yml` (nightly, **enforced ≥80% kill rate**, issue #78) | Test-suite strength on claims/access-filter/metadata/versioning |
 
 Design notes:
@@ -458,6 +459,43 @@ floor. The pure aggregation logic is unit tested in
 rows; the DB fetch itself needs a live Postgres seeded with real curator
 decisions and has not been exercised end to end (see
 `docs/dev-setup.md`'s "What's stubbed vs working").
+
+## Reconnaissance-shaped query detection (issue #426, #127 gap #4)
+
+FR-31 records every `query`/`query.denied` audit row, and #72/#73 shipped
+metrics and SIEM export, but nothing read either for the threat #127 names
+explicitly: an authorized `rag-query` user probing with crafted queries to
+infer whether a specific document exists in the corpus, including one
+outside their own filter. `scripts/detect_query_anomalies.py` mines the same
+`nexus_rag_audit_reporting` trail `calibrate_tagging_advisory.py` uses (no
+new grant) and flags, per identity over a lookback window: a raw attempt-rate
+spike (`high_volume`), a sustained personal denial rate distinct from the
+global `NexusRagQueryDeniedSpike` volume alert (`high_denial_ratio`), a high
+share of successful queries resolving to 0-1 chunks (`narrow_probe_shaped` —
+the substitute for near-duplicate-query-text detection, since #125 means
+there is no query text to diff), and repeated denial-then-success sequences
+within a short window (`boundary_mapping`).
+
+```bash
+python scripts/detect_query_anomalies.py --lookback-minutes 60
+
+# Or via the compose one-shot, against the dev stack's own Postgres.
+docker compose --profile anomaly-detection run --rm detect-query-anomalies
+```
+
+Reporting only, same posture as the calibration script above. What reaches
+Prometheus (via Pushgateway, same mechanism `publish_rag_quality_metrics.py`
+uses) is a *count* of flagged identities per signal plus a staleness
+timestamp — deliberately no `actor_sub`/`actor_username` label, for the same
+cardinality/privacy reason `orchestration-mcp/app/metrics.py` gives for never
+labeling a metric by user. Attribution — which identity was actually flagged
+— is only in the script's own stdout report, read by whoever holds the
+`nexus_rag_audit_reporting` credential (`docs/governance.md`'s "Query
+confidentiality and user privacy" names that audience). The pure aggregation
+and exposition logic is unit tested in
+`tests/unit/test_detect_query_anomalies.py` against constructed audit rows;
+the DB fetch itself needs a live Postgres and has not been exercised end to
+end (see `docs/dev-setup.md`'s "What's stubbed vs working").
 
 Connects to Postgres as its own dedicated, SELECT-only-on-`audit_log` role
 (`nexus_rag_audit_reporting`) rather than through any of the four services —

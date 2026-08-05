@@ -1492,6 +1492,36 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Issue #426 (#127 gap #4): same shape as calibrate-tagging-advisory above
+  # -- not started by a plain `docker compose up`, run on demand or on a
+  # schedule with `docker compose --profile anomaly-detection run --rm
+  # detect-query-anomalies`. Connects directly to Postgres as the same
+  # nexus_rag_audit_reporting role (no new grant needed) rather than through
+  # any service. The Pushgateway export is best-effort -- see
+  # detect_query_anomalies.py's `publish()`, which warns and continues
+  # rather than failing the run if Pushgateway (the `observability` profile)
+  # is not up.
+  detect-query-anomalies:
+    profiles: ["anomaly-detection"]
+    security_opt: ["no-new-privileges:true"]
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["python3", "detect_query_anomalies.py"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_rag}
+      AUDIT_REPORTING_DB_USER: ${AUDIT_REPORTING_DB_USER:-nexus_rag_audit_reporting}
+      AUDIT_REPORTING_DB_PASSWORD: ${AUDIT_REPORTING_DB_PASSWORD:-nexus_rag_audit_reporting}
+      RAG_ANOMALY_PUSHGATEWAY_URL: ${RAG_ANOMALY_PUSHGATEWAY_URL:-http://pushgateway:9091}
+    depends_on:
+      ensure-db-roles:
+        condition: service_completed_successfully
+      lock-down-db-grants:
+        condition: service_completed_successfully
+    restart: "no"
+
   # The classification-matrix corpus (#198): not started by a plain
   # `docker compose up`. Two on-demand steps, both inside the compose network
   # because a host-side token carries issuer 127.0.0.1:8080 and the services
