@@ -7,6 +7,7 @@ contract itself."""
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from app import reranking
 
@@ -396,3 +397,128 @@ async def test_degraded_path_also_collapses(monkeypatch):
     assert [c["id"] for c in reranked] == ["a", "c"]
     assert "reranking unavailable" in note
     assert "1 overlap-adjacent duplicate(s) collapsed" in note
+
+
+class TestRelevanceFloor:
+    """Issue #394: candidates below RERANK_SCORE_FLOOR are dropped, and a
+    query where everything drops returns [] so rag_search's existing
+    no-results guidance fires instead of the least-bad top_k."""
+
+    def test_load_floor_unset_is_off(self, monkeypatch):
+        monkeypatch.delenv("RERANK_SCORE_FLOOR", raising=False)
+
+        assert reranking._load_score_floor() is None
+
+    def test_load_floor_parses_a_number(self, monkeypatch):
+        monkeypatch.setenv("RERANK_SCORE_FLOOR", "-5.0")
+
+        assert reranking._load_score_floor() == -5.0
+
+    def test_load_floor_bad_value_disables_with_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("RERANK_SCORE_FLOOR", "very strict")
+
+        with caplog.at_level("WARNING"):
+            assert reranking._load_score_floor() is None
+
+        assert "relevance floor disabled" in caplog.text
+
+    async def test_below_floor_candidates_are_dropped_and_noted(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+        candidates = [_candidate("good", "text"), _candidate("bad", "text")]
+        _mock_reranker(monkeypatch, {"good": 2.0, "bad": -9.0})
+
+        reranked, note = await reranking.rerank("q", candidates, top_k=5)
+
+        assert [c["id"] for c in reranked] == ["good"]
+        assert "1 candidate(s) below the relevance floor (-5.0)" in note
+
+    async def test_all_below_floor_returns_empty(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+        candidates = [_candidate("a", "text"), _candidate("b", "text")]
+        _mock_reranker(monkeypatch, {"a": -9.0, "b": -11.0})
+
+        reranked, note = await reranking.rerank("q", candidates, top_k=5)
+
+        assert reranked == []
+        assert "2 candidate(s) below the relevance floor" in note
+
+    async def test_floor_off_keeps_todays_behavior(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", None)
+        candidates = [_candidate("a", "text"), _candidate("b", "text")]
+        _mock_reranker(monkeypatch, {"a": -9.0, "b": -11.0})
+
+        reranked, note = await reranking.rerank("q", candidates, top_k=5)
+
+        assert [c["id"] for c in reranked] == ["a", "b"]
+        assert "floor" not in note
+
+    async def test_score_exactly_at_the_floor_survives(self, monkeypatch):
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+        candidates = [_candidate("edge", "text")]
+        _mock_reranker(monkeypatch, {"edge": -5.0})
+
+        reranked, _note = await reranking.rerank("q", candidates, top_k=5)
+
+        assert [c["id"] for c in reranked] == ["edge"]
+
+    async def test_floor_applies_to_the_boosted_score(self, monkeypatch):
+        # A boost can lift a borderline candidate over the floor -- the floor
+        # judges what the ranking actually sorted on, not the raw score.
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+        candidates = [_candidate("t", "table")]
+        _mock_reranker(monkeypatch, {"t": -6.0})
+
+        reranked, _note = await reranking.rerank(
+            "q", candidates, top_k=5, content_type_boosts={"table": 0.5}
+        )
+
+        assert [c["id"] for c in reranked] == ["t"]  # -6.0 * 0.5 = -3.0 >= -5.0
+
+    async def test_degraded_path_has_no_scores_so_no_floor(self, monkeypatch):
+        async def fail_post(self, url, json=None, **kwargs):
+            raise httpx.ConnectError("down")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fail_post)
+        monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+        candidates = [_candidate("a", "text")]
+
+        reranked, note = await reranking.rerank("q", candidates, top_k=5)
+
+        assert [c["id"] for c in reranked] == ["a"]
+        assert "unavailable" in note
+
+
+async def test_floor_filters_before_collapse_and_backfill_respects_it(monkeypatch):
+    """#394 + #395 interaction: the floor judges relevance first, then the
+    collapse dedups what remains -- so a below-floor chunk is reported as
+    below-floor (not as a collapsed duplicate), and the collapse's backfill
+    never resurrects a candidate the floor rejected."""
+    monkeypatch.setattr(reranking, "RERANK_SCORE_FLOOR", -5.0)
+    candidates = [
+        _chunk("a", "doc1", 4),  # relevant, kept
+        _chunk("b", "doc1", 5),  # adjacent to a, above floor -> collapsed
+        _chunk("c", "doc2", 0),  # below floor -> dropped by the floor
+        _chunk("d", "doc3", 9),  # above floor -> backfills
+    ]
+    _mock_reranker(monkeypatch, {"a": 3.0, "b": 2.0, "c": -9.0, "d": 0.5})
+
+    reranked, note = await reranking.rerank("q", candidates, top_k=3)
+
+    assert [c["id"] for c in reranked] == ["a", "d"]
+    assert "1 candidate(s) below the relevance floor (-5.0)" in note
+    assert "1 overlap-adjacent duplicate(s) collapsed" in note
+
+
+class TestFloorParseRejectsNonFinite:
+    """Review on #415: float() parses "inf"/"nan" happily. inf empties every
+    query -- a retrieval outage dressed as configuration -- and nan poisons
+    every comparison. Both must trip the warn-and-disable fallback."""
+
+    @pytest.mark.parametrize("raw", ["inf", "-inf", "nan", "NaN", "Infinity"])
+    def test_non_finite_values_disable_the_floor_with_a_warning(self, monkeypatch, caplog, raw):
+        monkeypatch.setenv("RERANK_SCORE_FLOOR", raw)
+
+        with caplog.at_level("WARNING"):
+            assert reranking._load_score_floor() is None
+
+        assert "not a finite number" in caplog.text

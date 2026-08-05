@@ -57,6 +57,12 @@ results_returned = Histogram(
     "Number of chunks returned to the caller.",
     buckets=(0, 1, 2, 5, 10, 20, 50),
 )
+below_relevance_floor_total = Counter(
+    "nexus_rag_below_relevance_floor_total",
+    "Candidates dropped because their cross-encoder score fell below "
+    "RERANK_SCORE_FLOOR (issue #394). A query where every candidate dropped "
+    "surfaces separately as queries_total{outcome='empty'}.",
+)
 
 
 def render() -> tuple[bytes, str]:

@@ -173,6 +173,9 @@ spec:
             {{- end }}
             - name: CONTENT_TYPE_BOOSTS
               value: {{ .Values.orchestrationMcp.contentTypeBoosts | quote }}
+            # #394 relevance floor: see orchestrationMcp.rerankScoreFloor.
+            - name: RERANK_SCORE_FLOOR
+              value: {{ .Values.orchestrationMcp.rerankScoreFloor | quote }}
           livenessProbe:
             httpGet:
               path: /health
