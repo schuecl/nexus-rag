@@ -668,6 +668,18 @@ orchestrationMcp:
   # cross-encoder scores during reranking, e.g. '{"table": 1.15}'. Empty
   # string (the default) means no boost -- every content type weighted 1.0.
   contentTypeBoosts: ""
+  # Issue #394: minimum (boosted) cross-encoder score a candidate needs to
+  # be returned at all; a query where every candidate falls below it
+  # returns the explicit no-match message instead of its least-bad top_k.
+  # Empty (the default) disables the floor -- turning it on is a
+  # deployment decision. Measured starting point on the dev corpus: -5.0
+  # (answerable best-chunks scored -2.5..+8.9, unanswerable -11.3..-2.8).
+  # Those are raw cross-encoder logits from this chart's own
+  # reranker-service; an external reranker (rerankerService.external, #419)
+  # in "tei"/"cohere" mode usually returns a normalized 0..1 score, where
+  # -5.0 would never fire -- re-tune against whatever model it serves.
+  # An unparseable value logs a warning and leaves the floor off.
+  rerankScoreFloor: ""
 
 # ---------------------------------------------------------------------------
 # ingestion-worker (FR-3..FR-6, NFR-11) -- the durable JetStream consumer

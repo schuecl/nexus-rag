@@ -57,6 +57,18 @@ changed in the running system, with the issue/PR reference for the trail.
   shape despite hosting cross-encoder rerankers too, so `"cohere"` is the
   mode to use against vLLM). Authenticates with a bearer token from
   `rerankerService.external.apiKey` in `"tei"`/`"cohere"` mode.
+- Optional retrieval relevance floor (#394): set `RERANK_SCORE_FLOOR`
+  (Compose) / `orchestrationMcp.rerankScoreFloor` (chart) to the minimum
+  post-rerank cross-encoder score a chunk needs to be returned. A query where
+  every candidate falls below it returns the explicit "no approved document
+  covering the question was found" message — counted as an `empty` query
+  outcome and audit-logged with the reason — instead of its least-bad `top_k`.
+  Unset (the default) keeps today's behavior; `-5.0` is the measured
+  permissive starting point on the dev corpus, and the value should be
+  re-tuned after any reranker model change. Per-candidate drops are visible
+  as `nexus_rag_below_relevance_floor_total`. The floor is applied to the
+  score the ranking actually sorted on, so it composes with `#419`'s external
+  reranker modes — re-tune it against whatever model that endpoint serves.
 
 - `docs/observability.md` now documents how to run the Q→C→A evaluation on a
   schedule instead of by hand (#388): the CronJob shape that publishes to the
