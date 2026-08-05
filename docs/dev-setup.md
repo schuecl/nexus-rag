@@ -2002,6 +2002,39 @@ the docs, not a silent "it works" — flag it if you find one.
   OpenAI-API-compliant server (a local vLLM instance, etc.) was reachable in this
   environment to validate the `"openai"` path end-to-end. Treat that path as implemented and
   unit-tested, not yet live-validated, until someone runs it against a real endpoint.
+- **OpenAI-API-compliant vision/classification/PII-LLM completion client (issue #418, Phase 1
+  of the ask split from #403's Note; reranking is tracked separately as #419)** — the three
+  remaining Ollama-native call sites (`app/captioning.py`'s `_caption_one`, `app/classification_
+  suggestion.py`'s `suggest_classification`, `app/pii_llm_advisory.py`'s
+  `suggest_pii_llm_findings`/`verify_pii_findings`) previously hardcoded `/api/generate`,
+  unlike embeddings (#403). Factored the request/response wire protocol out to a shared
+  `common/completion_client.py`, selected by `COMPLETION_API_COMPATIBILITY` (`"ollama"`,
+  default, unchanged behavior, vs. `"openai"`: `/v1/chat/completions`, `Authorization: Bearer
+  COMPLETION_API_KEY` when set, images carried as `image_url`/base64-data-URI content parts for
+  the vision case) and wired through the same `embeddingService.external.apiCompatibility`/
+  `.apiKey` Helm fields as `EMBEDDING_API_COMPATIBILITY` — one config knob, not a second one
+  that could drift from it, since captioning/classification/PII-LLM already point at that same
+  instance (see `embeddingService`'s own values.yaml comment). `helm lint`/`helm template`
+  (`host-spawn helm`) were run across the new env-var block, including both the
+  present-and-populated and absent-when-no-feature-enabled cases. **Validated against a live
+  environment**, not just mocks: `docker compose up -d ollama` (standalone, not the full stack)
+  against the pinned `ollama/ollama:0.32.1`, then `common.completion_client.request_completion`
+  called directly (not through the full worker pipeline) against the real container's
+  `/v1/chat/completions` and `/api/generate` endpoints. Text case (`qwen2.5:0.5b-instruct`,
+  `json_format=True`, the classification/PII-LLM shape): both wire protocols returned real
+  model output, the OpenAI-compatible response's JSON parsed cleanly through the same
+  `_parse_response` logic the callers use. Vision case (`moondream`, a synthetic two-square
+  red/blue PNG): both wire protocols returned a caption that named the actual colors present,
+  confirming the OpenAI-compatible `image_url`/data-URI content-part shape is accepted by a
+  real server, not just internally consistent with itself. **Tested against mocks only**:
+  `tests/unit/common/test_completion_client.py` (`respx`-mocked, both wire protocols, request
+  shape/response parsing/error handling) and the existing `captioning`/`classification_
+  suggestion`/`pii_llm_advisory` test suites in `services/ingestion-worker/tests/`, which pass
+  unmodified against the refactor since they mock at the HTTP boundary, not the Python call.
+  Not exercised: a full document ingestion round trip with `VISION_MODEL`/`CLASSIFICATION_MODEL`/
+  `PII_LLM_MODEL` set to `"openai"` compatibility mode end-to-end through the worker's JetStream
+  consumer — the direct-client check above validates the wire protocol, not the full pipeline
+  wiring.
 - **Batched chunk embedding (issue #396)** — `ingestion-worker/app/embedding.py`'s
   `embed_texts` sends `EMBEDDING_BATCH_SIZE` (default 32) chunks per request through the
   new `common.embedding_client.request_embeddings` instead of one request per chunk;

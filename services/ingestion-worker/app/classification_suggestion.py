@@ -46,6 +46,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from common.completion_client import request_completion
+
 logger = logging.getLogger("ingestion-worker")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
@@ -153,17 +155,9 @@ async def suggest_classification(
     )
     try:
         async with httpx.AsyncClient(timeout=CLASSIFICATION_REQUEST_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": CLASSIFICATION_MODEL,
-                    "prompt": prompt,
-                    "format": "json",
-                    "stream": False,
-                },
+            raw = await request_completion(
+                client, OLLAMA_URL, CLASSIFICATION_MODEL, prompt, json_format=True
             )
-            resp.raise_for_status()
-            raw = str(resp.json().get("response", ""))
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         logger.warning("classification suggestion request failed: %s: %s", type(exc).__name__, exc)
         return None

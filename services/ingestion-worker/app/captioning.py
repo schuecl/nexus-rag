@@ -55,6 +55,7 @@ import httpx
 
 from app import metrics
 from app.parsing import ParsedSection
+from common.completion_client import request_completion
 from common.log_safety import log_safe
 
 logger = logging.getLogger("ingestion-worker")
@@ -235,17 +236,14 @@ def extract_images(filename: str, content: bytes) -> list[ExtractedImage]:
 
 
 async def _caption_one(client: httpx.AsyncClient, image: ExtractedImage) -> str | None:
-    resp = await client.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={
-            "model": VISION_MODEL,
-            "prompt": CAPTION_PROMPT,
-            "images": [base64.b64encode(image.data).decode("ascii")],
-            "stream": False,
-        },
+    caption = await request_completion(
+        client,
+        OLLAMA_URL,
+        VISION_MODEL,
+        CAPTION_PROMPT,
+        images=[base64.b64encode(image.data).decode("ascii")],
     )
-    resp.raise_for_status()
-    caption = str(resp.json().get("response", "")).strip()
+    caption = caption.strip()
     return caption or None
 
 

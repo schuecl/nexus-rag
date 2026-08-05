@@ -15,6 +15,19 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Added
+
+- `ingestion-worker`'s image-captioning, LLM classification-suggestion, and
+  LLM PII-advisory calls (`VISION_MODEL`/`CLASSIFICATION_MODEL`/`PII_LLM_MODEL`)
+  can now target an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud
+  chat-completion endpoint) instead of only Ollama's native `/api/generate`
+  (#418, Phase 1 of the ask split from #403's Note; reranking is tracked
+  separately as #419). Shares `embeddingService.external.apiCompatibility`/
+  `.apiKey` with the embedding client (#403) — one config knob, since all
+  four features point at the same instance — through a new
+  `common/completion_client.py`. Vision prompts carry the image as an
+  `image_url`/base64-data-URI content part in the OpenAI-compatible case.
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed

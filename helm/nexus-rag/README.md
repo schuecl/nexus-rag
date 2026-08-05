@@ -199,9 +199,15 @@ configured. `common/embedding_client.py` is the shared client both
 
 Also note this same instance serves
 `ingestionWorker.visionModel`/`classificationModel`/`piiLlmModel` when those
-are set (still Ollama-native calls, `common/embedding_client.py` doesn't
-cover those) — an external endpoint needs every model this deployment
-actually uses provisioned on it, not just `embeddingService.model`.
+are set — an external endpoint needs every model this deployment actually
+uses provisioned on it, not just `embeddingService.model`. Issue #418 gave
+those three features the same `"ollama"`/`"openai"` choice: they share
+`embeddingService.external.apiCompatibility`/`apiKey` (one switch, since
+it's always the same physical endpoint), just against
+`common/completion_client.py`'s `/api/generate` (Ollama) or
+`/v1/chat/completions` (OpenAI-compatible) shape instead of the embedding
+one. `captioning.py`'s vision prompts carry the image as an
+`image_url`/base64-data-URI content part in the OpenAI-compatible case.
 
 ## Network policy (issue #110)
 

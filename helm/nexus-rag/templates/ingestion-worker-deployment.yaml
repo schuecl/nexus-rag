@@ -142,6 +142,26 @@ spec:
                   name: {{ .Values.embeddingService.external.apiKey.existingSecret }}
                   key: {{ .Values.embeddingService.external.apiKey.secretKey }}
             {{- end }}
+            {{- if or .Values.ingestionWorker.visionModel .Values.ingestionWorker.classificationModel .Values.ingestionWorker.piiLlmModel }}
+            # Issue #418: which wire protocol OLLAMA_URL above speaks for
+            # captioning/classification/PII-LLM's chat-completion calls --
+            # "ollama" (default, common/completion_client.py) or "openai".
+            # Sourced from the same embeddingService.external fields as
+            # EMBEDDING_API_COMPATIBILITY above, since all four features
+            # point at the same instance (see embeddingService's own
+            # comment) -- one config knob, not a second one that could drift
+            # from it. Only injected when at least one of the three features
+            # below is enabled, matching their own absent-when-unset posture.
+            - name: COMPLETION_API_COMPATIBILITY
+              value: {{ .Values.embeddingService.external.apiCompatibility | quote }}
+            {{- if and (eq .Values.embeddingService.external.apiCompatibility "openai") .Values.embeddingService.external.apiKey.existingSecret }}
+            - name: COMPLETION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.embeddingService.external.apiKey.existingSecret }}
+                  key: {{ .Values.embeddingService.external.apiKey.secretKey }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.ingestionWorker.visionModel }}
             # Issue #92: opt-in image/figure captioning at ingestion. Absent
             # (not just empty) when unset, matching the code's

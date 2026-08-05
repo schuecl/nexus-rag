@@ -419,11 +419,16 @@ embeddingService:
     # true selects https:// for the URL built from host/port above.
     tls: false
     # Which wire protocol the endpoint above speaks. "ollama" (default) is
-    # Ollama's native /api/embeddings, unauthenticated
-    # -- what the self-deployed instance (enabled: true) always speaks too,
-    # and what any Ollama-*compatible* external endpoint speaks. "openai"
+    # Ollama's native /api/embeddings (embeddings) and /api/generate
+    # (captioning/classification/PII-LLM, issue #418), unauthenticated --
+    # what the self-deployed instance (enabled: true) always speaks too, and
+    # what any Ollama-*compatible* external endpoint speaks. "openai"
     # targets an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud
-    # provider) via /v1/embeddings, authenticated with apiKey below.
+    # provider) via /v1/embeddings and /v1/chat/completions, authenticated
+    # with apiKey below. One switch for both wire protocols since they're
+    # always the same physical endpoint (see the comment above) -- see
+    # templates/ingestion-worker-deployment.yaml's EMBEDDING_API_COMPATIBILITY/
+    # COMPLETION_API_COMPATIBILITY, both sourced from this one field.
     apiCompatibility: ollama
     # Only meaningful (and only sent as an Authorization: Bearer header) when
     # apiCompatibility is "openai" and existingSecret is set -- Ollama's
