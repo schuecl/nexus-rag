@@ -71,6 +71,17 @@ changed in the running system, with the issue/PR reference for the trail.
   logged once per endpoint. An unparseable or `< 1` value falls back to the
   default 32 with a `WARNING` log, same degrade-loudly discipline as
   `DB_POOL_RECYCLE_SECONDS` above.
+- `rag_search` now collapses same-document, adjacent-index chunk pairs after
+  reranking, keeping the better-ranked side and backfilling the freed slot
+  from the rest of the already-fetched candidate pool (#395, closes #395).
+  FR-4's chunk overlap means neighbouring chunks share text by construction,
+  so a query matching that shared region previously could return two
+  near-identical `top_k` slots instead of one; measured on an 82-document/
+  1278-chunk dev corpus at 5% of `top_k=5` slots and 7.5% of `top_k=10`
+  slots. Applies to both the cross-encoder and degraded (reranker
+  unreachable) paths, and the response note reports how many were
+  collapsed. Cross-document near-duplicates are out of scope (FR-7
+  supersession already covers the intended-duplicate case).
 - Embedding requests can now target an OpenAI-API-compliant hosted model
   (vLLM, TGI, a cloud embedding endpoint), not just an Ollama-compatible one
   (#403, Phase 2 of #401): `ingestion-worker`'s `embed_texts` and
