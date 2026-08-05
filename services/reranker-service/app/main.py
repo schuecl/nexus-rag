@@ -23,6 +23,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import metrics
 
@@ -169,6 +170,35 @@ if not RERANKER_SHARED_SECRET:  # pragma: no cover - startup-time side effect
         "unauthorized caller and retrieved chunk content."
     )
 
+
+class _SecurityHeadersMiddleware:
+    """Issues #444/#445: X-Content-Type-Options + Referrer-Policy on every
+    response. Minimal inline equivalent of
+    common/security_headers.py's SecurityHeadersMiddleware -- this service
+    doesn't depend on services/common (see _setup_tracing/_setup_profiling
+    above for the same split, and services/common/common/security_headers.py's
+    docstring for why this can't just be imported)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [
+                    *message.get("headers", []),
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"referrer-policy", b"no-referrer"),
+                ]
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 _model: CrossEncoder | None = None
 
 
@@ -204,6 +234,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="nexus-rag reranker-service", lifespan=lifespan)
+app.add_middleware(_SecurityHeadersMiddleware)
 # #134: request spans that honor the traceparent orchestration-mcp's httpx
 # instrumentation sends, so this service's spans nest under the caller's
 # `rerank` span.

@@ -405,6 +405,16 @@ Implementation notes:
   it back as a header, which a cross-site attacker can't. `deps.verify_csrf` checks
   cookie == header on every state-changing route, and is a no-op for bearer-token callers
   (no session cookie means nothing CSRF can forge in the first place).
+- Clickjacking (#444): CSRF alone doesn't cover a framing attack — a victim's browser
+  loading the portal in an invisible frame still has the portal's own JS reading and
+  echoing the CSRF cookie correctly, since the request is same-origin. `ingestion-api`
+  sends `X-Frame-Options: DENY` on every response (via the shared
+  `common/security_headers.py` middleware, also carrying `X-Content-Type-Options: nosniff`
+  and `Referrer-Policy: no-referrer` on this and the other two HTTP-facing services, #445)
+  so approve/reject/correct — single-click, high-consequence actions, since approval is
+  what makes a document's chunks retrievable (FR-11) — can't be triggered from a framed
+  page. `frame-ancestors 'none'` (the CSP-native form of the same protection) is tracked
+  separately as part of #443's Content-Security-Policy work.
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 

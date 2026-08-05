@@ -50,6 +50,7 @@ from app.rag_search import (
 from common.claims import OIDC_ISSUERS
 from common.logging_setup import setup_logging
 from common.profiling import setup_profiling
+from common.security_headers import SecurityHeadersMiddleware
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -262,3 +263,8 @@ app = mcp_server.streamable_http_app(
         allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
     ),
 )
+# #445: X-Content-Type-Options/Referrer-Policy on /health and /metrics -- this
+# app is the bare Starlette instance streamable_http_app() returns, so
+# add_middleware() (not FastAPI's `.middleware("http")` decorator) is what's
+# available here.
+app.add_middleware(SecurityHeadersMiddleware)

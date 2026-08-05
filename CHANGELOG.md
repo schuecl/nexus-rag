@@ -17,6 +17,19 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- Static security response headers on every HTTP-facing service (#444,
+  #445, found by an OWASP ZAP scan): `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer` on `ingestion-api`, `orchestration-mcp`
+  and `reranker-service`, plus `X-Frame-Options: DENY` on `ingestion-api`
+  specifically, closing the clickjacking gap NFR-14's CSRF protection
+  doesn't cover on the curation UI's approve/reject/correct actions (see
+  `ARCHITECTURE.md` §4.4). Shared as one ASGI middleware
+  (`services/common/common/security_headers.py`); `reranker-service`
+  carries its own small inline duplicate rather than taking a new
+  dependency on `services/common`, consistent with how it already
+  duplicates its tracing/profiling setup. `Content-Security-Policy`
+  (the third finding from the same scan) is tracked separately as #443 —
+  it needs template-level nonce plumbing, not a static header.
 - A containerized integration test layer (#428): `tests/integration/`, run
   against a live Postgres by a new opt-in `e2e.yml` job (`integration`, same
   `needs-e2e`-label gating as the golden-query/browser-verify jobs). First
