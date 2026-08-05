@@ -15,6 +15,7 @@ manual local-judge Q→C→A evaluation.
 | Unit | `tests/unit/common/` | `ci.yml` (every PR, py 3.11 + 3.12) | Claims parsing & signature verification, the FR-26 access filter, FR-18 metadata enforcement, classification ranking, FR-7 supersede guards, object store (incl. path-traversal), job-queue publishing |
 | Unit | `services/*/tests/` | `ci.yml` job `service-tests` (one invocation per service) | FR-4 chunking (boundaries/overlap, atomic tables, oversized chunks), FR-3/NFR-7 parsing (incl. zip-bomb guard, table extraction), FR-25 reranking (incl. degraded-mode fallback), plus the #106-#109 regression guards |
 | BDD security scenarios | `tests/e2e/features/access_control.feature` | `ci.yml` (in-process, no stack needed) | The Section 6 invariants as readable Gherkin: approved-only status, clearance ceiling, releasability holdings, cross-org isolation, curator scoping, supersede guards |
+| Containerized integration (issue #428) | `tests/integration/` | `e2e.yml` job `integration` (same `needs-e2e` gating as golden-query) | NFR-2 append-only audit-log enforcement, verified against a real Postgres role/grant, not a mock -- see "Containerized integration layer" below |
 | Retrieval quality + leak check | `scripts/evaluate_retrieval.py` + `golden_queries.json` | `e2e.yml` (nightly, manual, or a PR labeled `needs-e2e`) | Full `docker compose up` → seed → golden-query run; fails on recall misses and on any pending/rejected/superseded leak (FR-26/FR-30/FR-32) |
 | Q→C→A quality (issue #74) | `scripts/evaluate_rag_quality.py` + `golden_queries.json` | Manual, host-side; not a CI gate | Real LibreChat Agent generation plus ordered `/debug/rag_search` contexts, scored by the local Ollama judge for contextual relevance/recall/precision, faithfulness, answer relevance/correctness, citation validity, and abstention behavior |
 | Browser CSRF + logout (issue #187) | `scripts/verify_browser_csrf_logout.py` | `e2e.yml` job `browser-verify` (same `needs-e2e` gating as golden-query) | Real Chromium against a real `docker compose up`: HttpOnly/readable cookie attributes, missing/mismatched/matching `X-CSRF-Token` (NFR-14), and a full Keycloak RP-initiated logout actually ending the SSO session (issue #254) rather than just the server-side logic `services/ingestion-api/tests` already covers with `TestClient` |
@@ -170,7 +171,8 @@ handled at the corpus's classification.
   `docker compose build` of all custom images.
 - **`.github/workflows/e2e.yml`** (nightly, manual, and a PR labeled
   `needs-e2e`): full-stack golden-query e2e; browser-verify (issue #187,
-  same gating as golden-query -- see above); mutation testing (enforced
+  same gating as golden-query -- see above); the containerized integration
+  layer (issue #428, same gating -- see below); mutation testing (enforced
   ≥80% kill rate as of issue #78, nightly/manual only regardless of label,
   see below). Reports uploaded as artifacts.
 - **`.github/workflows/security.yml`** (PR + weekly): `bandit`,
@@ -312,6 +314,78 @@ risked on a token-quirk workaround. If a `PATCH`-capable credential becomes
 available later, folding both rulesets back into one is a cleanup, not a
 requirement.
 
+## Containerized integration layer (issue #428)
+
+`tests/unit`/`tests/e2e` mock or use in-memory SQLite (no live infra); the
+golden-query/browser-verify jobs boot the *entire* app stack (all four
+custom services, LibreChat, Ollama). Neither is the right shape for a
+property that needs one specific piece of real infra and nothing else --
+`tests/integration/` is that middle tier, run by `e2e.yml`'s `integration`
+job under the same opt-in `needs-e2e` gating as golden-query/browser-verify
+(a role/grant bootstrap plus an `ingestion-api` image build is too slow to
+pay on every PR touching the stack).
+
+**What it covers today: NFR-2 only.** `tests/integration/test_nfr2_audit_log_
+append_only.py` connects directly (no app code in the loop) as each of the
+three application database roles and the dedicated audit-reporting role, and
+asserts against a live Postgres that `INSERT`/`SELECT`/`UPDATE`/`DELETE`
+succeed or fail exactly as `infra/postgres/grant-matrix.sql` says they
+should. This is the property a mock structurally cannot prove --
+`tests/unit/common` runs against in-memory SQLite, which has no privilege
+system to enforce, so a regression in the grant scripts (accidentally
+granting `UPDATE` to an application role, say) would pass every existing
+test and previously would only have been caught live/manually. Verified to
+actually catch that class of regression: manually re-granting `SELECT` to
+`nexus_rag_ingestion_api` on a live stack and rerunning the suite turns
+`test_select_denied[ingestion-api]` red with "DID NOT RAISE"; revoking it
+again turns the suite back green.
+
+**What it doesn't cover yet, and why:** the job stands up Postgres only,
+not Qdrant/NATS/Keycloak, because nothing in `tests/integration/` today
+exercises them -- standing up unused containers "for completeness" would
+just be padding. Two follow-ups extend this:
+
+- **Issue #439** (NFR-11 crash-redelivery, NFR-13 live revert-on-partial-
+  failure): needs Qdrant + NATS, and a fault-injection seam that doesn't
+  exist yet. `docs/testing.md` and issue #77 previously noted this
+  deliberately wasn't added, to keep production code free of test-only
+  branches -- #439 tracks the design decision on how to add one (or avoid
+  needing one) before writing the tests.
+- **Issue #440** (`ingestion-api` route-layer tests, `orchestration-mcp/app/
+  rag_search.py`): needs Qdrant + Keycloak, to replace the mocked
+  equivalents currently standing in for a real vector store and real OIDC
+  tokens in those two modules' "measured but not gated" coverage (see
+  "Coverage policy" below).
+
+**Reproducing the job locally**, e.g. to debug a failure or extend the
+suite: `docker-compose.ci-integration.yml` overlays a host-reachable port
+onto Postgres (the base `docker-compose.yml` deliberately gives it none --
+every other service reaches it over the compose network as `postgres:5432`,
+and nothing outside this job's own pytest process needs it from the host).
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.ci-integration.yml
+docker compose up -d postgres
+# Same bootstrap sequence a normal `up` runs via depends_on, driven directly
+# since this job never starts ingestion-api (whose healthcheck the compose
+# graph's lock-down-db-grants normally waits on) -- --no-deps skips that
+# dependency once migrate-db-schema has created the tables it actually needs:
+docker compose run --rm ensure-db-roles
+docker compose run --rm migrate-db-schema
+docker compose run --rm --no-deps grant-service-privileges
+docker compose run --rm --no-deps lock-down-db-grants
+
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest tests/integration -v
+
+docker compose down -v
+```
+
+Without a live Postgres reachable (e.g. running `pytest tests/integration`
+directly against a workstation with nothing listening on `localhost:5432`),
+the whole tree skips cleanly with a message pointing back at this section,
+rather than failing with a confusing connection error --
+`tests/integration/conftest.py`'s `_require_live_postgres` fixture.
+
 ## Coverage policy
 
 The enforced `--cov-fail-under=85` applies to:
@@ -334,9 +408,10 @@ The enforced `--cov-fail-under=85` applies to:
 
 The ingestion-api route layer and `rag_search.py` are intentionally measured
 but not yet gated — they need the integration layer (live Postgres/Qdrant/
-Keycloak via containers) to test meaningfully, which is tracked as a
-follow-up. That is a real gap, stated plainly rather than hidden behind a
-lower repo-wide number.
+Keycloak via containers) to test meaningfully. Issue #428 added that layer
+(see "Containerized integration layer" above); pointing these two at it and
+folding them into this gate is issue #440. That is a real gap, stated
+plainly rather than hidden behind a lower repo-wide number.
 
 ## Mutation testing (enforced ≥80%)
 
@@ -590,15 +665,20 @@ baseline capture, not a regression fix.
   (download the prior artifact or commit a baseline) and gate on it — the
   harness supports it (issue #71); the cross-run persistence in `e2e.yml` is the
   remaining step.
-- Integration layer with containerized Postgres/Qdrant/NATS/Keycloak
-  (NFR-11 crash-redelivery, NFR-2 append-only audit enforcement are only
-  covered live/manually today). NFR-13 revert-on-partial-failure now has a
-  committed mock-based regression test
-  (`services/ingestion-api/tests/test_curate_nfr13_revert.py`, issue #77) —
+- Issue #428 added the containerized integration layer itself
+  (`tests/integration/`, `e2e.yml`'s `integration` job) and closed its
+  NFR-2 append-only-audit-enforcement slice with a live-Postgres regression
+  test — see "Containerized integration layer" above. Two slices remain,
+  now tracked as their own issues rather than folded into this one:
+  **NFR-11 crash-redelivery** and **NFR-13's live revert-on-partial-failure**
+  (issue #439) — NFR-13 already has a committed mock-based regression test
+  (`services/ingestion-api/tests/test_curate_nfr13_revert.py`, issue #77);
   the remaining gap there is specifically a live run against a real
   Postgres/Qdrant pair, which needs a fault-injection hook (deliberately not
-  added yet, to keep production code free of test-only branches) rather than
-  just this integration layer.
+  added yet, to keep production code free of test-only branches) — and
+  **`ingestion-api` route tests / `rag_search.py`** against real containers
+  instead of mocks, with their coverage folded into `ci.yml`'s gate
+  (issue #440).
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
 - Issue #230's hash-pinned lockfiles cover the four services' and scripts'

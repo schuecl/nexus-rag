@@ -1,0 +1,24 @@
+# Overlay for .github/workflows/e2e.yml's `integration` job (issue #428) and
+# for reproducing that job locally -- see docs/testing.md's "Containerized
+# integration layer" section.
+#
+# docker-compose.yml's postgres service deliberately has no `ports:` at all
+# (every other custom service on that network reaches it as `postgres:5432`
+# internally; nothing needs it from the host in the normal dev-stack flow).
+# tests/integration's suite runs as a plain pytest process on the CI runner
+# / developer's host, not inside a container on the compose network the way
+# e2e.yml's `eval-retrieval` one-shot does -- so it needs a host-reachable
+# port. This overlay adds exactly that, and only that: a 127.0.0.1-bound
+# port, same binding discipline as qdrant/nats's own host ports in the base
+# file. Never applied to a normal `docker compose up`; always applied on top
+# of the base file, e.g.:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ci-integration.yml up -d postgres
+#
+# Qdrant and NATS already have 127.0.0.1-bound ports in the base file, so
+# once tests/integration grows Qdrant/NATS coverage (issue #439/#440) they
+# need no equivalent entry here.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

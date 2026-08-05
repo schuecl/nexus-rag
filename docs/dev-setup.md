@@ -1464,7 +1464,10 @@ the docs, not a silent "it works" — flag it if you find one.
   services, `SELECT` included in what was removed, because nothing outside the test suite
   ever reads it. **Validated live** (#278): every role was made to attempt both the
   operations it needs and the ones it must not have, against a real Postgres 16.14 -- see
-  `docs/roles-and-permissions.md` gap G2.
+  `docs/roles-and-permissions.md` gap G2. That manual check is now a committed, automated
+  regression test (issue #428): `tests/integration/test_nfr2_audit_log_append_only.py`,
+  run against a live Postgres by `e2e.yml`'s `integration` job -- see
+  `docs/testing.md`'s "Containerized integration layer" section.
 - **Object storage for original uploaded files (NFR-12)** — `common/object_store.py`'s
   `ObjectStore` interface, with a filesystem-backed dev implementation
   (`FilesystemObjectStore`, `OBJECT_STORE_PATH=/srv/object-store`, a new `object-store-data`

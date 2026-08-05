@@ -83,6 +83,17 @@ pytest tests/unit/common/test_purge.py::TestIdempotenceAndErrors::test_unknown_d
 # Full-stack e2e (identical to e2e.yml's golden-query job)
 docker compose up -d --wait
 docker compose --profile eval run --rm eval-retrieval
+
+# Containerized integration layer (identical to e2e.yml's `integration` job,
+# issue #428) -- NFR-2 audit-log append-only enforcement against a live
+# Postgres role/grant, not a mock. Full bootstrap sequence in docs/testing.md.
+export COMPOSE_FILE=docker-compose.yml:docker-compose.ci-integration.yml
+docker compose up -d postgres
+docker compose run --rm ensure-db-roles
+docker compose run --rm migrate-db-schema
+docker compose run --rm --no-deps grant-service-privileges
+docker compose run --rm --no-deps lock-down-db-grants
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest tests/integration -v
 ```
 
 ### Lint / types / security
@@ -170,7 +181,16 @@ independently of both.
   ci.yml's matrix string is the required check's name — see `docs/testing.md`),
   `app.reranking` in orchestration-mcp. `ingestion-api`'s route layer and
   `orchestration-mcp/app/rag_search.py` are measured but not gated — they need a
-  containerized integration layer to test meaningfully (open gap, not hidden).
+  containerized integration layer to test meaningfully; that layer now exists
+  (`tests/integration/`, issue #428) but pointing these two at it is still open
+  (issue #440, open gap, not hidden).
+- **A third pytest tree, `tests/integration/`** (issue #428), against a live
+  Postgres bootstrapped the same way the dev stack's own one-shots bootstrap
+  it — the property a mock/in-memory-SQLite tree structurally can't prove
+  (real role/grant enforcement). Opt-in like the golden-query/browser-verify
+  e2e jobs (`e2e.yml`'s `integration` job, `needs-e2e` label on a PR); skips
+  cleanly rather than failing if no live Postgres is reachable. See
+  `docs/testing.md`'s "Containerized integration layer" section.
 - **Mutation testing is an enforced ≥80% kill-rate gate** (`e2e.yml`, nightly;
   `scripts/check_mutation_score.py`, issue #78 — baseline 88%) against
   `claims.py`/`qdrant_filters.py`/`metadata.py`/`versioning.py` — the modules where

@@ -17,6 +17,26 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- A containerized integration test layer (#428): `tests/integration/`, run
+  against a live Postgres by a new opt-in `e2e.yml` job (`integration`, same
+  `needs-e2e`-label gating as the golden-query/browser-verify jobs). First
+  suite: `test_nfr2_audit_log_append_only.py`, which connects directly as
+  each application database role and the dedicated audit-reporting role and
+  asserts NFR-2's append-only enforcement — `INSERT`/`SELECT`/`UPDATE`/
+  `DELETE` succeed or fail exactly as `infra/postgres/grant-matrix.sql`
+  says they should — against a real Postgres, closing a gap in-memory
+  SQLite mocks structurally can't cover. `docker-compose.ci-integration.yml`
+  overlays a host-reachable port onto Postgres for this job/local
+  reproduction only; the base compose file's Postgres service still has
+  none. Validated against a live environment, including a deliberate
+  negative control (manually re-granting `SELECT` to the ingestion-api role
+  turns the corresponding test red; revoking it turns the suite back
+  green). Scoped deliberately to Postgres/NFR-2 only for this change —
+  extending the layer to Qdrant/NATS (NFR-11 crash-redelivery, NFR-13 live
+  revert-on-partial-failure, which need a fault-injection design decision
+  first) and Keycloak (gating `ingestion-api` route tests and
+  `orchestration-mcp/app/rag_search.py`'s coverage) are tracked separately
+  as #439 and #440.
 - Detection of reconnaissance-shaped retrieval patterns (#426, closing #127
   gap #4): `scripts/detect_query_anomalies.py` mines the FR-31 audit log for
   four per-identity signals over a lookback window — attempt-rate spikes,

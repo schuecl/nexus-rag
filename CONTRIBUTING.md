@@ -59,10 +59,13 @@ These run automatically on every PR (see `.github/workflows/`, added in #67):
 **Not required on every PR:** `e2e.yml`'s golden-query job — full
 `docker compose up` → seed → golden-query retrieval evaluation, failing on
 any recall miss or any forbidden (pending/rejected/superseded) document
-leaking into results. It runs nightly and on manual dispatch regardless; add
-the `needs-e2e` label to a PR to also run it there when a change is
-genuinely retrieval/ingestion-risky (see `docs/testing.md` for why it isn't
-a required check).
+leaking into results — and its `integration` job (#428) — `tests/integration/`
+against a live Postgres, bootstrapped the same way the dev stack's own
+one-shots bootstrap it, currently covering NFR-2's audit-log append-only
+enforcement. Both run nightly and on manual dispatch regardless; add the
+`needs-e2e` label to a PR to also run them there when a change is genuinely
+retrieval/ingestion-risky, or touches database roles/grants (see
+`docs/testing.md` for why neither is a required check).
 
 ## Coding conventions
 
