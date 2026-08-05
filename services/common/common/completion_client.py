@@ -58,10 +58,14 @@ def _openai_content(prompt: str, images: list[str] | None) -> str | list[dict[st
 
 
 def _parse_openai_response(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"malformed OpenAI-compatible completion response: expected a JSON object, "
+            f"got {type(payload).__name__}"
+        )
     try:
-        assert isinstance(payload, dict)
         return str(payload["choices"][0]["message"]["content"])
-    except (KeyError, IndexError, TypeError, AssertionError) as exc:
+    except (KeyError, IndexError, TypeError) as exc:
         raise ValueError(f"malformed OpenAI-compatible completion response: {exc}") from exc
 
 
