@@ -153,10 +153,17 @@ What self-deploy mode does for you:
   created from nothing. `templates/seaweedfs-statefulset.yaml` runs a
   `bucket-init` sidecar in the same pod as the main `weed server` container:
   it waits for the master to answer on `localhost`, then creates
-  `objectStore.seaweedfs.bucket`, tolerating "already exists" so it's safe
-  to re-run on every pod restart. Talking to `localhost` rather than the
-  Service means this needs no `networkPolicy` ingress rule of its own —
-  loopback traffic never leaves the pod.
+  `objectStore.seaweedfs.bucket`, retrying up to 20 times on failure.
+  `s3.bucket.create` against a bucket that already exists is a confirmed
+  no-op (exit 0, no error against a real cluster), so it's always safe to
+  re-run on every pod restart — and the retry isn't just for that: a live
+  cluster showed the master can answer `/cluster/status` before the filer
+  has registered with it, which transiently fails the actual bucket-create
+  call (`weed shell` can't discover the filer's address yet), so retrying
+  the create itself, not just the readiness probe ahead of it, is what
+  makes this reliable on a fresh install too. Talking to `localhost` rather
+  than the Service means this needs no `networkPolicy` ingress rule of its
+  own — loopback traffic never leaves the pod.
 - **Credential wiring.** `objectStore.seaweedfs.auth.existingSecret` is the
   *same* Secret used two ways: `ingestion-api`/`ingestion-worker` read it as
   `OBJECT_STORE_S3_ACCESS_KEY`/`_SECRET_KEY` (same as external mode), and an

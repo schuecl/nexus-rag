@@ -159,11 +159,26 @@ spec:
               until wget -q -O /dev/null "http://$MASTER/cluster/status"; do
                 sleep 3
               done
-              # "|| true": s3.bucket.create against a bucket that already
-              # exists (every restart after the first) is the expected,
-              # idempotent case, not a failure.
-              echo "s3.bucket.create -name {{ .Values.objectStore.seaweedfs.bucket }}" \
-                | weed shell -master="$MASTER" || true
+              # Confirmed against a real cluster: the master answering
+              # /cluster/status does not mean the filer has registered with
+              # it yet -- `weed shell`'s s3.bucket.create discovers the
+              # filer's address through the master and can transiently fail
+              # ("missing address") in that window, especially on a pod
+              # restart where both start close together. Retry the actual
+              # command, not just the readiness probe above -- s3.bucket.create
+              # against a bucket that already exists is a confirmed no-op
+              # (exit 0, no error), so retrying is always safe, not just
+              # tolerable.
+              i=0
+              until echo "s3.bucket.create -name {{ .Values.objectStore.seaweedfs.bucket }}" \
+                  | weed shell -master="$MASTER"; do
+                i=$((i + 1))
+                if [ "$i" -ge 20 ]; then
+                  echo "giving up creating bucket {{ .Values.objectStore.seaweedfs.bucket }} after $i attempts" >&2
+                  break
+                fi
+                sleep 3
+              done
               exec sleep infinity
           resources:
             requests:
