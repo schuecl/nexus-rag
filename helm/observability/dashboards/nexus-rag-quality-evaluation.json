@@ -494,7 +494,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Eight latest aggregate scores. Blue is intentional: these local-judge measurements are comparative, not calibrated absolute pass/fail claims.",
+      "description": "Eight latest aggregate scores. Blue is intentional: these local-judge measurements are comparative, not calibrated absolute pass/fail claims. Seven are quality scores; abstention_accuracy is diagnostic only (#386) -- the judge scored a fabricated, non-abstaining answer as a correct abstention 2 times in 3 on qwen2.5:3b-instruct and 3 in 3 on qwen2.5:7b-instruct, so it is excluded from baseline comparison and no delta is published for it. A low value is worth investigating; a high one is not evidence the pipeline declines when it should.",
       "fieldConfig": {
         "defaults": {
           "color": {

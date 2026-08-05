@@ -50,6 +50,17 @@ CASE_METRICS = {
     "abstention_correct": "abstention_accuracy",
 }
 COMPARABILITY_FIELDS = ("judge_model", "judge_prompt_version", "golden_set_sha256")
+# #386: published, but never differenced against a baseline. The judge cannot
+# reliably tell a real abstention failure from a lucky pass -- shown an answer
+# that invented a policy instead of abstaining, qwen2.5:3b-instruct scored it a
+# correct abstention 2 times in 3 and qwen2.5:7b-instruct 3 times in 3. A delta
+# between two such numbers is noise, and worse, it feeds regression_status.
+#
+# This mirrors evaluate_rag_quality.py's _COMPARED_METRICS, which excludes the
+# same metric for the same reason. The two have to agree: the evaluator deciding
+# a metric is not comparable while the dashboard draws a delta for it would be a
+# disagreement the operator has no way to see.
+NON_COMPARABLE_METRICS = frozenset({"abstention_accuracy"})
 PROFILE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_GATEWAY = os.environ.get("RAG_QUALITY_PUSHGATEWAY_URL", "http://127.0.0.1:9092")
@@ -194,6 +205,8 @@ def build_exposition(
     if baseline_comparable and baseline is not None:
         _configuration(baseline)
         for field, metric in AGGREGATE_METRICS.items():
+            if metric in NON_COMPARABLE_METRICS:
+                continue
             current_value = aggregate_values[metric]
             baseline_value = _score(baseline.get(field), f"baseline.{field}")
             if current_value is None or baseline_value is None:

@@ -73,6 +73,21 @@ DEFAULT_PERSONA = os.environ.get("EVAL_PERSONA", "dave-admin")
 JUDGE_PROMPT_VERSION = "qca-v2"
 
 _CITATION_RE = re.compile(r"\[\s*([^\[\],]+?)\s*,\s*([^\[\]]+?)\s*\]")
+# The metrics a baseline comparison is allowed to draw a regression verdict
+# from. Deliberately NOT the same set as everything the report publishes.
+#
+# #386: abstention_accuracy is excluded. It cannot reliably tell a real failure
+# from a lucky pass -- shown an answer that invented a policy instead of
+# abstaining, qwen2.5:3b-instruct scored it a correct abstention 2 times in 3
+# and qwen2.5:7b-instruct 3 times in 3 (docs/testing.md carries the table).
+# Comparing a number that noisy against a baseline produces regression verdicts
+# that are themselves noise, in both directions: a spurious failure on a lucky
+# baseline, and -- worse -- silence when a real abstention regression is masked
+# by the judge's false positives.
+#
+# It is still computed, reported, and published. Excluding it from *comparison*
+# is what makes "diagnostic, not a gate" true in the code rather than only in
+# the docs.
 _COMPARED_METRICS = (
     "mean_contextual_relevancy",
     "mean_contextual_recall",
@@ -81,7 +96,6 @@ _COMPARED_METRICS = (
     "mean_answer_relevancy",
     "mean_answer_correctness",
     "mean_citation_validity",
-    "abstention_accuracy",
 )
 
 _RAG_SEARCH_OUTPUT_MARKERS = (
@@ -533,8 +547,9 @@ def evaluate(
         "queries": queries,
     }
     for metric in _COMPARED_METRICS:
-        if metric == "abstention_accuracy":
-            continue
+        # #386 removed abstention_accuracy from _COMPARED_METRICS, which also
+        # retired the special case that used to skip it here -- it is a ratio of
+        # booleans, not a mean of per-case scores, and is computed below.
         per_query_name = metric.removeprefix("mean_")
         report[metric] = _mean([query.get(per_query_name) for query in queries])
     abstentions = [
@@ -623,6 +638,11 @@ def print_report(report: dict[str, Any]) -> None:
     print("  Scores are relative, not absolute; compare only with the same judge/prompt.")
     for metric in _COMPARED_METRICS:
         print(f"  {metric}: {report[metric]}")
+    # Printed separately, and labelled, because #386 took it out of
+    # _COMPARED_METRICS: it is reported but never compared against a baseline,
+    # and a reader scanning this block should not have to know that to
+    # interpret the number.
+    print(f"  abstention_accuracy: {report['abstention_accuracy']}  (diagnostic, not compared)")
     print(f"  tool_call_failures: {report['tool_call_failures']}")
     print(f"  evaluation_errors: {len(report['errors'])}")
     undetermined = report.get("abstention_undetermined", 0)
@@ -632,7 +652,7 @@ def print_report(report: dict[str, Any]) -> None:
         print(
             f"  WARNING: {undetermined} abstention case(s) undetermined -- the judge "
             f"({report['judge_model']}) returned null instead of true/false, so they are "
-            "excluded from abstention_accuracy. A larger judge model generally fixes this."
+            "excluded from abstention_accuracy (already diagnostic-only, see #386)."
         )
     for query in report["queries"]:
         print(

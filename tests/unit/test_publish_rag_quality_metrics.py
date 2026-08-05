@@ -315,3 +315,46 @@ def test_evaluator_report_feeds_the_publisher_without_losing_abstention_coverage
 
     assert 'nexus_rag_quality_evaluation_score{metric="abstention_accuracy"} 1' in current
     assert "nexus_rag_quality_evaluation_abstention_undetermined 1" in current
+
+
+def test_abstention_accuracy_is_published_but_never_differenced():
+    """#386: the score stays, the baseline delta goes.
+
+    The evaluator excludes abstention_accuracy from _COMPARED_METRICS because
+    the judge cannot tell a real abstention failure from a lucky pass. The
+    publisher has to agree -- an evaluator that calls a metric incomparable
+    while the dashboard draws a delta for it is a disagreement the operator has
+    no way to see.
+    """
+    baseline = _report(abstention_accuracy=1.0)
+    current = _report(abstention_accuracy=0.0)
+
+    exposition, _ = build_exposition(current, baseline, regression_tolerance=0.05)
+
+    assert 'nexus_rag_quality_evaluation_score{metric="abstention_accuracy"} 0' in exposition
+    assert 'nexus_rag_quality_evaluation_baseline_delta{metric="abstention_accuracy"}' not in (
+        exposition
+    )
+
+
+def test_an_abstention_collapse_alone_does_not_flag_a_regression():
+    """1.0 -> 0.0 is the largest possible drop and still must not set
+    regression_status, since the number it moved is not trustworthy."""
+    baseline = _report(abstention_accuracy=1.0)
+    current = _report(abstention_accuracy=0.0)
+
+    exposition, _ = build_exposition(current, baseline, regression_tolerance=0.05)
+
+    assert "nexus_rag_quality_evaluation_regression_status 0" in exposition
+
+
+def test_a_real_quality_regression_is_still_flagged():
+    """Guard against over-correcting: excluding one metric must not blunt the
+    others."""
+    baseline = _report(mean_faithfulness=0.95)
+    current = _report(mean_faithfulness=0.50)
+
+    exposition, _ = build_exposition(current, baseline, regression_tolerance=0.05)
+
+    assert "nexus_rag_quality_evaluation_regression_status 1" in exposition
+    assert 'nexus_rag_quality_evaluation_baseline_delta{metric="faithfulness"}' in exposition

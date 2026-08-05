@@ -101,26 +101,35 @@ judge is useful for comparing two
 configurations, not for an absolute quality claim. Baselines are therefore
 rejected when the judge model, judge-prompt version, or golden-set hash differs.
 
-**The abstention metric is the weakest score here, and knowingly so.** Measured
-directly against `qwen2.5:3b-instruct` (the default judge) on the
-travel-policy-abstention case, with the four approved sample-corpus documents
-as context:
+**`abstention_accuracy` is diagnostic only — it is not a quality score (#386).**
+Measured on the travel-policy-abstention case with the four approved
+sample-corpus documents as context, 3 runs per cell:
 
-| judge prompt | answer correctly abstains | answer fails to abstain |
-|---|---|---|
-| `qca-v1` | `null` 3/3 — run reported FAILED | `null` 3/3 |
-| `qca-v2` | `true` 3/3 | `false` 1/3, `true` 2/3 |
+| judge | judge prompt | answer correctly abstains | answer **fails** to abstain |
+|---|---|---|---|
+| `qwen2.5:3b-instruct` | `qca-v1` | `null` 3/3 — run reported FAILED | `null` 3/3 |
+| `qwen2.5:3b-instruct` | `qca-v2` | `true` 3/3 | `false` 1/3, `true` 2/3 |
+| `qwen2.5:7b-instruct` | `qca-v2` | — | `true` 3/3 |
 
 `qca-v2` fixes the case the shipped golden set actually exercises — both
 `expected_abstention` cases have no on-topic evidence, so a working pipeline
-abstains and the judge now says so. What it does not fix is the 3B judge's
-ability to *catch* a failed abstention: shown an answer that invented a
-reimbursement policy outright, it still called it a correct abstention two times
-in three. So `abstention_correct: true` from a 3B judge is weak evidence, and
-`abstention_accuracy` should not be read as a guard against the pipeline
-answering when it should have declined. Use `--judge-model qwen2.5:7b-instruct`
-if that specific property matters; the 7B model has not been measured on the
-failed-abstention direction here either.
+abstains and the judge now says so.
+
+What no judge tested here fixes is the other direction: **catching an answer
+that should have abstained and didn't.** Shown an answer that invented a
+reimbursement policy outright, the 3B judge called it a correct abstention 2
+times in 3, and the 7B judge 3 times in 3 — no better, and in that test worse.
+An earlier version of this document suggested `--judge-model
+qwen2.5:7b-instruct` as a mitigation for exactly this; that claim was never
+measured and the measurement does not support it, so it is gone rather than
+softened.
+
+The consequence is deliberate and encoded, not just documented:
+`abstention_accuracy` is **excluded from `_COMPARED_METRICS`**, so it does not
+participate in baseline comparison and cannot raise or suppress a regression
+verdict. It is still computed, reported, and published — a `0.0` there is worth
+investigating — but a `1.0` is not evidence the pipeline declines when it
+should. Read it as a smoke signal, not a gate.
 
 A judge that will not commit to true/false is recorded as **undetermined** —
 excluded from `abstention_accuracy`, counted in `abstention_undetermined`, and
