@@ -15,6 +15,8 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-05
+
 ### Changed
 
 - `abstention_accuracy` is now diagnostic-only and no longer participates in
@@ -127,6 +129,39 @@ changed in the running system, with the issue/PR reference for the trail.
   `networkPolicy.extraMilvusClients` — previously missing entirely, despite
   holding the same cleartext chunk payload the Qdrant policy exists to
   protect (#402).
+- `objectStore.enabled: true` deploys a single-node bundled SeaweedFS
+  instance (`weed server -s3 -filer`) instead of requiring an external
+  S3-compatible endpoint, joining Qdrant/Milvus/NATS/the embedding
+  service's existing self-deploy-or-connect pattern (#407, closes #404).
+  Default stays `false` — external-only was this chart's only object-store
+  behavior before this issue, so an upgrade must not start provisioning a
+  new `StatefulSet`/PVC without an explicit opt-in; confirmed the default
+  render is byte-identical before/after. `externalObjectStore` is renamed
+  to `objectStore.external` for consistency with the other components'
+  shape. A same-pod bucket-init sidecar creates the bucket at startup,
+  retrying the actual `s3.bucket.create` call (not just the readiness
+  probe) — live minikube testing surfaced a real startup race where the
+  master answers `/cluster/status` before the filer has registered with
+  it, which the old readiness-only retry silently rode past. The
+  `seaweedfs` `NetworkPolicy` opens the S3 port only to
+  `ingestion-api`/`ingestion-worker`; master/volume/filer stay unreachable
+  from the rest of the cluster.
+- The golden-query harness gains dense-leg headroom (#397, closes #397):
+  two new paraphrase queries share no content word with their target
+  document (verified against every seeded document's text, title
+  included), so only dense similarity — not BM25 — can rank the target
+  into `top_k=2`, making a dense-leg regression (a broken task prefix, a
+  swapped model) visible as a recall miss for the first time. The
+  original five queries saturate recall@5 at 1.0 for any pipeline given
+  the seeded corpus's size, so they couldn't have caught one.
+  `evaluate_retrieval.py` also now actually fails the run on a recall
+  miss (`recall_misses()` + `--fail-on-miss`, default on) — despite
+  e2e.yml, `docs/testing.md`, `docs/threat-model.md`, and this file
+  describing that behavior all along, the compose eval run passes no
+  baseline and previously only exited non-zero on an FR-26 leak or a
+  baseline regression, printing `[MISS]` and exiting 0 on a plain recall
+  miss. Abstention queries (empty expect, recall `None`) are exempt —
+  their contract is the leak check, not recall.
 
 ### Fixed
 
@@ -149,6 +184,20 @@ changed in the running system, with the issue/PR reference for the trail.
   the #122 stamped embedding identity, so a corpus embedded before this fix
   is refused by the mismatch check rather than silently compared against
   newly-prefixed queries -- re-embed it with `python -m app.reembed`.
+- `scripts/export_release_bundle.sh` verifies each saved image tar is
+  actually complete instead of just present (#399, closes #399): on a
+  Docker daemon backed by the containerd image-store snapshotter,
+  `docker save` was found to exit 0 while silently writing a tar
+  containing only its own top-level manifest blob — every layer and the
+  config blob it references were absent. A same-host `docker load` check
+  didn't catch it, since it resolves those blobs from the daemon's local
+  content store instead of the tar itself. The script now parses each
+  tar's own OCI manifest and confirms every referenced blob is present at
+  the declared size, failing the export on the connected side instead of
+  shipping a bundle that only fails once it's on the disconnected side of
+  the air gap. `docs/releasing.md` documents the host prerequisite
+  (classic `overlay2` driver, not the containerd snapshotter) and the
+  `daemon.json` change to get there.
 
 ## [0.4.0] - 2026-08-04
 
