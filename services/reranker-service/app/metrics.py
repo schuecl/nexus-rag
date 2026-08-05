@@ -29,6 +29,14 @@ model_loaded = Gauge(
     "nexus_rag_reranker_model_loaded",
     "1 once the cross-encoder model is loaded.",
 )
+oversized_chunks_total = Counter(
+    "nexus_rag_reranker_oversized_chunks_total",
+    "Chunks whose (query, chunk) pair exceeded the model's input window "
+    "(issue #393), by how they were handled: 'windowed' = scored as the max "
+    "over overlapping in-window pieces, 'truncated' = head-truncated by the "
+    "tokenizer (RERANKER_WINDOW_SCORING=false).",
+    ["handling"],
+)
 
 
 def render() -> tuple[bytes, str]:

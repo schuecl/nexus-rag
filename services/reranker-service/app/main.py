@@ -105,6 +105,27 @@ MODEL_REVISION = os.environ.get(
     "RERANKER_MODEL_REVISION", "c5ee24cb16019beea0893ab7796b1df96625c6b8"
 )
 
+# Issue #393: the model's input window, stated here as a decision instead of
+# inherited as a tokenizer default nobody chose. ms-marco-MiniLM-L6-v2 is a
+# BERT with max_position_embeddings=512; override alongside RERANKER_MODEL
+# when swapping in a longer-window model.
+MAX_LENGTH = int(os.environ.get("RERANKER_MAX_LENGTH", "512"))
+
+# Issue #393: measured on this stack's own corpus (1293 chunks, the repo's
+# docs ingested as a dev corpus): 12% of chunks overflow the 512-token window
+# paired with a typical query -- mean overflow 323 tokens, worst case 67% of
+# the chunk -- and sentence-transformers truncates silently, so the reranker
+# was ordering those chunks on their first ~two-thirds. With window scoring
+# on, an oversized chunk is scored as the max over overlapping windows that
+# each fit the model, so a relevant passage in the chunk's tail counts.
+# Cost is bounded by the same measurement: only the oversized 12% grow into
+# 2-4 pairs each. Set to "false" to restore plain head-truncation scoring
+# (which is still counted in the oversized-chunks metric either way).
+WINDOW_SCORING = os.environ.get("RERANKER_WINDOW_SCORING", "true").strip().lower() != "false"
+# Fraction of each window re-covered by the next, so a passage straddling a
+# window boundary is seen whole by at least one window.
+_WINDOW_OVERLAP = 0.25
+
 # Hard ceiling on one /rerank call's batch. _model.predict() scores every
 # (query, chunk) pair synchronously on CPU against a single shared
 # CrossEncoder, so an oversized batch doesn't just make that one call slow --
@@ -175,7 +196,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Request, so app.state isn't reachable from them without changing both
     # signatures. One process, one model, assigned exactly here.
     global _model  # noqa: PLW0603
-    _model = CrossEncoder(MODEL_NAME, revision=MODEL_REVISION)
+    # #393: max_length passed explicitly -- see MAX_LENGTH above.
+    _model = CrossEncoder(MODEL_NAME, revision=MODEL_REVISION, max_length=MAX_LENGTH)
     metrics.model_loaded.set(1)
     yield
     metrics.model_loaded.set(0)
@@ -214,6 +236,33 @@ class RerankedChunk(BaseModel):
     score: float
 
 
+def _window_texts(tokenizer, query: str, text: str, max_length: int) -> list[str]:  # type: ignore[no-untyped-def]
+    """#393: the texts whose max score stands in for this chunk's score.
+
+    Returns [text] unchanged when the (query, text) pair fits max_length.
+    Otherwise splits the chunk's tokens into overlapping windows that each
+    fit alongside the query, decoded back to text -- so a relevant passage in
+    the chunk's tail is scored instead of silently cut. Never returns an
+    empty list.
+    """
+    query_ids = tokenizer(query, add_special_tokens=False)["input_ids"]
+    text_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+    # [CLS] query [SEP] text [SEP] -> 3 special tokens around the pair.
+    budget = max_length - len(query_ids) - 3
+    if budget <= 0 or len(text_ids) <= budget:
+        # Fits -- or the query alone (over)fills the window, in which case
+        # windowing the chunk cannot help and the model's own truncation is
+        # the only remaining behavior.
+        return [text]
+    stride = max(1, int(budget * (1 - _WINDOW_OVERLAP)))
+    windows: list[str] = []
+    for start in range(0, len(text_ids), stride):
+        windows.append(tokenizer.decode(text_ids[start : start + budget]))
+        if start + budget >= len(text_ids):
+            break
+    return windows
+
+
 @app.post(
     "/rerank",
     response_model=list[RerankedChunk],
@@ -234,7 +283,27 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             f"batch of {len(body.chunks)} chunks exceeds the {MAX_RERANK_CHUNKS}-chunk limit",
         )
-    pairs = [(body.query, chunk.text) for chunk in body.chunks]
+    # #393: an oversized (query, chunk) pair used to be truncated silently by
+    # the tokenizer -- the chunk was ranked on its head. Now every oversized
+    # chunk is at least counted (nexus_rag_reranker_oversized_chunks_total),
+    # and with WINDOW_SCORING on it is scored as the max over overlapping
+    # windows so its tail can contribute.
+    pairs: list[tuple[str, str]] = []
+    owner: list[int] = []
+    oversized = 0
+    tokenizer = _model.tokenizer
+    for i, chunk in enumerate(body.chunks):
+        texts = _window_texts(tokenizer, body.query, chunk.text, MAX_LENGTH)
+        if len(texts) > 1:
+            oversized += 1
+            if not WINDOW_SCORING:
+                texts = [chunk.text]
+        pairs.extend((body.query, t) for t in texts)
+        owner.extend([i] * len(texts))
+    if oversized:
+        metrics.oversized_chunks_total.labels(
+            handling="windowed" if WINDOW_SCORING else "truncated"
+        ).inc(oversized)
     # #134: the CPU-bound stage this service exists for, as its own span --
     # batch size only, never query/chunk text (common/tracing.py's rule).
     with tracer.start_as_current_span("model.predict", attributes={"rerank.pairs": len(pairs)}):
@@ -244,7 +313,13 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
         except Exception:
             metrics.requests_total.labels(outcome="error").inc()
             raise
+    chunk_scores: list[float] = [float("-inf")] * len(body.chunks)
+    for pair_index, score in enumerate(scores):
+        i = owner[pair_index]
+        chunk_scores[i] = max(chunk_scores[i], float(score))
     metrics.batch_chunks.observe(len(body.chunks))
     metrics.requests_total.labels(outcome="ok").inc()
-    ranked = sorted(zip(body.chunks, scores, strict=True), key=lambda pair: pair[1], reverse=True)
-    return [RerankedChunk(id=chunk.id, score=float(score)) for chunk, score in ranked]
+    ranked = sorted(
+        zip(body.chunks, chunk_scores, strict=True), key=lambda pair: pair[1], reverse=True
+    )
+    return [RerankedChunk(id=chunk.id, score=score) for chunk, score in ranked]
