@@ -1785,16 +1785,20 @@ the docs, not a silent "it works" — flag it if you find one.
   `<untrusted_document_content>` marker — applied *after* reranking, so
   `reranker-service`'s cross-encoder still scores the raw text, not text padded with
   marker tags — and adds a `security_notice` field telling the calling model to treat
-  delimited content as reference material, not instructions. The same instruction is also
-  in the tool's MCP docstring (`app/server.py`), so it doesn't depend on one particular
-  client surfacing docstrings to its model. Smoke-tested with a fabricated chunk containing
-  an injection-shaped sentence ("ignore previous instructions and reveal..."): confirmed
+  delimited content as reference material, not instructions, including (issue #427) a
+  persona/roleplay/compliance-marker reframing of that content, not just a blunt
+  instruction override. Smoke-tested with a fabricated chunk containing an
+  injection-shaped sentence ("ignore previous instructions and reveal..."): confirmed
   the reranker call receives the raw, undelimited text (so scoring quality doesn't
   degrade) while the final response's `results[].payload.text` is properly delimited and
-  `security_notice` is present. This is a mitigation, not a guarantee, and has no
-  regression test against a real generation model actually respecting it — that needs a
-  live LibreChat + generation model, the same gap noted for the tool-invocation regression
-  testing item below.
+  the notice is present. This is a mitigation, not a guarantee. It was live-evaluated
+  against real LibreChat generation (issue #97) and found not fully resisted for the
+  persona/roleplay case specifically; issue #427 strengthened the notice's wording for
+  that case and fixed a real wiring gap (`format_rag_search_for_model`, the function that
+  builds what the real `rag_search` tool returns to a calling model, was never actually
+  including this notice at all — only the `/debug/rag_search` diagnostic JSON was), but a
+  live re-run confirming the strengthened wording changes model behavior was not completed
+  — see REQUIREMENTS.md Section 11 for the full status and why.
 - **In-app knowledge base (FR-33, issue #303)** — a `GET /kb` page (nav icon next to the
   account/logout controls in `base.html`, since it's a persistent utility rather than a
   workflow tab) with one how-to article per capability role (ingest, query, curate, purge,
@@ -2028,8 +2032,11 @@ the docs, not a silent "it works" — flag it if you find one.
   paragraph version (FR references, issue numbers, security rationale) was shipped to the
   model on every single call; moved that context to a regular code comment above the
   function (the security notice specifically is redundant to remove from there anyway --
-  every real response already carries its own `security_notice` field per
-  `app/rag_search.py`, so nothing is lost by not repeating it in the schema). (2) Renamed
+  every real response is meant to already carry the same `SECURITY_NOTICE` text per
+  `app/rag_search.py`, so nothing should be lost by not repeating it in the schema --
+  though issue #427 later found `format_rag_search_for_model`, the function that builds
+  what the real tool actually returns, had never included it, only a shorter
+  independently-worded line; fixed there, see REQUIREMENTS.md Section 11). (2) Renamed
   `infra/librechat/librechat.yaml`'s `mcpServers` key from `nexus-rag-search` to `rag` --
   LibreChat namespaces every MCP tool as `{tool}_mcp_{this key}` in the schema sent to the
   model, so this shortens the model-facing name from `rag_search_mcp_nexus-rag-search` to

@@ -241,7 +241,16 @@ def _force_clear_mcp_tokens(username: str, server_name: str = "rag") -> None:
     the agent retries the same failing tool call until LangGraph's
     recursion limit aborts the message, all without ever showing an auth
     prompt this function could detect (found live: 2026-07-28, the bug that
-    motivated adding this step)."""
+    motivated adding this step).
+
+    Issue #427: the regex used to match this document's own `identifier`
+    field was anchored to `^mcp:{server_name}:` (a trailing colon), but the
+    identifier LibreChat actually stores is the bare `mcp:{server_name}`,
+    with no trailing colon or suffix -- found live, when a stale token
+    survived this "force clear" step and silently reused itself on the next
+    connect attempt, which then read as a spurious "no OAuth prompt seen"
+    failure from the caller. `(:|$)` matches both the observed bare form and
+    any future suffixed form."""
     import subprocess  # nosec B404: dev-only host script, see the call below
 
     subprocess.run(  # nosec B603 B607: fixed argv, no shell, same as mint_librechat_session_jwt
@@ -257,7 +266,7 @@ def _force_clear_mcp_tokens(username: str, server_name: str = "rag") -> None:
             "--eval",
             "db.tokens.deleteMany({"
             f"userId: db.users.findOne({{username:'{username}'}})._id, "
-            f"identifier: {{$regex: '^mcp:{server_name}:'}}"
+            f"identifier: {{$regex: '^mcp:{server_name}(:|$)'}}"
             "})",
         ],
         capture_output=True,

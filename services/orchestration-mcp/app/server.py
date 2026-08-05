@@ -119,10 +119,11 @@ mcp_server = MCPServer(
 # not something the calling model needs repeated on every call --
 # Authorization is read from the request's verified OAuth bearer header,
 # never a client-supplied argument, so the access filter (Section 6.1) can't
-# be spoofed from tool-call arguments; and every real response already carries its own
-# "security_notice" field (app/rag_search.py) marking retrieved content as
-# untrusted data, not instructions -- restating that in the tool
-# description would just be redundant token cost, not a lost safeguard.
+# be spoofed from tool-call arguments; and every real response already carries
+# the same SECURITY_NOTICE text (app/rag_search.py -- format_rag_search_for_model
+# includes it verbatim, issue #427) marking retrieved content as untrusted
+# data, not instructions -- restating that in the tool description would just
+# be redundant token cost, not a lost safeguard.
 @mcp_server.tool()
 async def rag_search(
     # #208: bounded like top_k, and as an Annotated Field for the same reason
