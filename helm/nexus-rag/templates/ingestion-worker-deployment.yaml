@@ -170,6 +170,9 @@ spec:
               value: {{ .Values.ingestionWorker.chunkTargetWords | quote }}
             - name: CHUNK_OVERLAP_RATIO
               value: {{ .Values.ingestionWorker.chunkOverlapRatio | quote }}
+            # #396 batching knob: see ingestionWorker.embeddingBatchSize.
+            - name: EMBEDDING_BATCH_SIZE
+              value: {{ .Values.ingestionWorker.embeddingBatchSize | quote }}
             # NFR-12: durable original-file storage (common/object_store.py).
             # Issue #404: objectStore.enabled selects the bundled SeaweedFS
             # instance instead of an external S3-compatible endpoint -- same

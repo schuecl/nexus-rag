@@ -640,6 +640,11 @@ ingestionWorker:
   # starting point.
   chunkTargetWords: 512
   chunkOverlapRatio: 0.15
+  # Issue #396: chunks embedded per request -- one bounded batch call instead
+  # of one request per chunk. Larger batches cut round trips but raise the
+  # embedding server's per-request memory. An unparseable or < 1 value logs a
+  # warning and falls back to 32 rather than failing the pod's startup.
+  embeddingBatchSize: 32
   # Issue #92: vision model for image/figure captioning at ingestion, served
   # by the same Ollama instance as embeddings (embeddingService). Empty
   # disables captioning entirely (no env var injected, no VLM calls). The
