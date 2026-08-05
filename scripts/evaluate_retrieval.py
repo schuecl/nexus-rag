@@ -3,7 +3,17 @@ Runs each query in golden_queries.json through the real rag_search pipeline
 (via orchestration-mcp's debug endpoint) and computes recall@K, precision@K,
 and first-relevant-rank against the expected documents -- plus a hard FR-26
 check that no unapproved (pending/rejected/superseded) chunk is ever returned,
-regardless of the querying persona's clearance.
+regardless of the querying persona's clearance. Any query below full recall@K
+fails the run (issue #397, `--fail-on-miss`), as does any FR-26 leak.
+
+Issue #397: the original five queries are short and keyword-heavy, and in the
+7-document dev corpus every one of them saturates at recall 1.0 through the
+BM25 leg alone (with only ~4 retrievable documents and top_k=5, the candidate
+set is the whole corpus). Two paraphrase-style queries with top_k=2 and zero
+content-word overlap with their target give the harness dense-leg headroom:
+BM25 scores nothing for them, so only dense similarity can rank the target
+into the top 2, and a dense-leg regression (e.g. a broken embedding prefix)
+becomes a visible recall miss instead of disappearing under fusion.
 
 That check is done by inspecting each returned chunk's own `status` payload
 field, not by matching golden_queries.json's `forbid` filenames against
@@ -180,6 +190,27 @@ def latest_prior_report(history_dir: Path, exclude: Path | None = None) -> Path 
     return reports[-1] if reports else None
 
 
+def recall_misses(report: dict) -> list[str]:
+    """Queries that failed to return every expected document (recall@K < 1.0).
+
+    This is what e2e.yml has always described as "fails on any recall miss
+    against the golden set" -- but until issue #397 nothing actually exited
+    non-zero on a miss: main() only failed on forbidden leaks and baseline
+    regressions, and the compose eval run passes no baseline. The gap was
+    invisible while every golden query saturated at recall 1.0 through BM25
+    alone; the paraphrase queries added for #397 are only worth having if a
+    miss on them fails the run.
+
+    Abstention queries (empty `expect`, recall None) are never misses -- their
+    contract is the FR-26 leak check, not recall.
+    """
+    return [
+        q["query"]
+        for q in report["queries"]
+        if q["recall_at_k"] is not None and q["recall_at_k"] < 1.0
+    ]
+
+
 # The headline quality metrics a regression is judged on. The forbidden-leak
 # count is handled separately -- any leak is a hard FR-26 failure, not a
 # tolerance-gated regression.
@@ -268,6 +299,13 @@ def main() -> None:
         default=True,
         help="exit non-zero if a metric regresses against the baseline (default: enabled)",
     )
+    parser.add_argument(
+        "--fail-on-miss",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="exit non-zero if any golden query returns less than full recall@K "
+        "(default: enabled -- this is the documented e2e contract)",
+    )
     args = parser.parse_args()
 
     golden_set = json.loads(args.golden_set.read_text())
@@ -302,6 +340,14 @@ def main() -> None:
         )
 
     failed = False
+    misses = recall_misses(report)
+    if misses and args.fail_on_miss:
+        print(
+            f"\nFAILED: {len(misses)} golden quer{'y' if len(misses) == 1 else 'ies'} "
+            f"missed expected documents (recall@K < 1.0): {misses}",
+            file=sys.stderr,
+        )
+        failed = True
     if report["total_forbidden_leaks"] > 0:
         print(
             "\nFAILED: forbidden (unapproved/rejected/superseded) content leaked into "
