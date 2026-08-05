@@ -30,10 +30,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 
 import httpx
 
+from app import metrics
 from common.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,56 @@ def collapse_adjacent_overlaps(ranked: list[dict], top_k: int) -> tuple[list[dic
     return kept, dropped
 
 
+def _load_score_floor() -> float | None:
+    """Issue #394: RERANK_SCORE_FLOOR, the minimum (boosted) cross-encoder
+    score a candidate needs to be returned at all. Unset/empty = no floor,
+    today's behavior. Parsed defensively -- read at import by the retrieval
+    service, so a typo must not take the service down; a rejected value is
+    logged and the floor stays off rather than silently guessing.
+    """
+    raw = os.environ.get("RERANK_SCORE_FLOOR", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("RERANK_SCORE_FLOOR=%r is not a number; relevance floor disabled", raw)
+        return None
+    # float() happily parses "nan"/"inf"/"-inf" (review on #415): inf would
+    # empty every query -- a full retrieval outage dressed as configuration --
+    # and nan poisons every >= comparison. Neither is a floor; refuse loudly.
+    if not math.isfinite(value):
+        logger.warning(
+            "RERANK_SCORE_FLOOR=%r is not a finite number; relevance floor disabled", raw
+        )
+        return None
+    return value
+
+
+# Issue #394: without a floor, every query returns its top_k least-bad
+# matches with full confidence -- an unanswerable question hands the
+# generation model plausible-looking, access-authorized, entirely irrelevant
+# passages, which is the failure abstention_accuracy then has to detect
+# downstream. The floor applies to the cross-encoder's (boosted) score, not
+# the fused RRF score: RRF emits rank-based values that aren't comparable
+# across queries, while the cross-encoder's roughly are (the issue's own
+# reasoning). Measured on this stack's dev corpus to pick a starting point:
+# answerable queries' best chunks scored -2.5 .. +8.9, unanswerable ones
+# -11.3 .. -2.8, with gross off-topic queries all below -6 -- so -5.0 is a
+# permissive floor that drops clearly-unrelated content while keeping a
+# 2.5-point margin to the hardest real query measured. Default off: turning
+# it on is a deployment decision, not something an upgrade should do silently
+# (a floor can hide results a deployment currently relies on).
+#
+# The scale is the serving model's, not this code's: those numbers are raw
+# cross-encoder logits from the internal reranker-service. A #419 external
+# endpoint ("tei"/"cohere") typically returns a normalized 0..1 relevance
+# score instead, where -5.0 is a silent no-op. Re-tune the floor against
+# whatever RERANKER_URL actually serves -- the mechanism is scale-agnostic,
+# the number is not.
+RERANK_SCORE_FLOOR = _load_score_floor()
+
+
 async def rerank(
     query: str,
     candidates: list[dict],
@@ -218,14 +270,31 @@ async def rerank(
         return base * weight
 
     ranked = sorted(candidates, key=_boosted_score, reverse=True)
+    # #394 before #395, deliberately: the floor judges relevance, the collapse
+    # judges redundancy among what remains. Filtering first means an
+    # irrelevant chunk can't survive by out-scoring its overlap neighbour,
+    # and the collapse's backfill only draws from candidates that cleared the
+    # floor.
+    below_floor = 0
+    if RERANK_SCORE_FLOOR is not None:
+        surviving = [c for c in ranked if _boosted_score(c) >= RERANK_SCORE_FLOOR]
+        below_floor = len(ranked) - len(surviving)
+        ranked = surviving
+        if below_floor:
+            metrics.below_relevance_floor_total.inc(below_floor)
     # #395: collapse over the full ranked pool, not a pre-truncated slice --
     # the freed slots backfill with the next-ranked distinct candidates.
-    kept, dropped = collapse_adjacent_overlaps(ranked, top_k)
+    kept, collapsed = collapse_adjacent_overlaps(ranked, top_k)
     note = "cross-encoder reranking applied"
     if boosts:
         note += f", content-type boosts applied {boosts}"
-    if dropped:
+    if below_floor:
+        # #394: surfacing "no good match" beats silently thinning results --
+        # and when everything drops, the caller's empty-results path already
+        # tells the model to say no approved document was found.
+        note += f"; {below_floor} candidate(s) below the relevance floor ({RERANK_SCORE_FLOOR})"
+    if collapsed:
         # The issue's other complaint was that the duplication "is not
         # visible in the response" -- so its removal is.
-        note += f"; {dropped} overlap-adjacent duplicate(s) collapsed"
+        note += f"; {collapsed} overlap-adjacent duplicate(s) collapsed"
     return kept, note

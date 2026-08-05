@@ -571,6 +571,37 @@ async def _run_rag_search(
     # is unreachable, which makes a quality drop invisible without this.
     if "unavailable" in rerank_note:
         metrics.reranker_fallback_total.inc()
+    if candidates and not reranked:
+        # #394: every candidate fell below the relevance floor. A full sibling
+        # of the two zero-result branches above, not a fall-through to the
+        # success path (review on #415): outcome="empty" so a dashboard
+        # watching queries_total sees floor-emptied queries as empty rather
+        # than as ordinary successes, and the FR-31 audit row carries the
+        # reason the way both existing empty branches do.
+        # _render_reference_text already turns the empty result list plus
+        # this note into the model-facing "no approved document covering the
+        # question was found" guidance -- the abstention the floor exists to
+        # enable.
+        result["results"] = []
+        result["note"] = (
+            "all retrieved candidates scored below the configured relevance floor; "
+            "no sufficiently relevant approved passage was found"
+        )
+        metrics.queries_total.labels(outcome="empty").inc()
+        metrics.results_returned.observe(0)
+        _audit(
+            claims,
+            "query",
+            _audit_query_detail(
+                query,
+                top_k=top_k,
+                applied_filter=filter_summary,
+                result_count=0,
+                note=result["note"],
+                timings_ms=_timings_ms(timings, started),
+            ),
+        )
+        return result
     # P1: delimit chunk text *after* reranking, not before -- reranker-service's
     # cross-encoder needs the raw text to score against the query, not text
     # padded with marker tags. Copy each result rather than mutating the dicts
