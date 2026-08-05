@@ -169,24 +169,28 @@ spec:
             - name: ORCHESTRATION_MCP_URL
               value: "http://{{ include "nexus-rag.fullname" . }}-orchestration-mcp:{{ .Values.orchestrationMcp.service.port }}"
             # NFR-12: durable original-file storage (common/object_store.py).
+            # Issue #404: objectStore.enabled selects the bundled SeaweedFS
+            # instance instead of an external S3-compatible endpoint -- same
+            # either/or as vectorBackend above, just without a second env var
+            # to select it (the S3 wire protocol is identical either way).
             - name: OBJECT_STORE_BACKEND
               value: "s3"
             - name: OBJECT_STORE_S3_ENDPOINT
-              value: {{ .Values.externalObjectStore.endpoint | quote }}
+              value: {{ include "nexus-rag.objectStoreEndpoint" . | quote }}
             - name: OBJECT_STORE_S3_BUCKET
-              value: {{ .Values.externalObjectStore.bucket | quote }}
+              value: {{ ternary .Values.objectStore.seaweedfs.bucket .Values.objectStore.external.bucket .Values.objectStore.enabled | quote }}
             - name: OBJECT_STORE_S3_REGION
-              value: {{ .Values.externalObjectStore.region | quote }}
+              value: {{ ternary .Values.objectStore.seaweedfs.region .Values.objectStore.external.region .Values.objectStore.enabled | quote }}
             - name: OBJECT_STORE_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.externalObjectStore.existingSecret }}
-                  key: {{ .Values.externalObjectStore.accessKeySecretKey }}
+                  name: {{ ternary .Values.objectStore.seaweedfs.auth.existingSecret .Values.objectStore.external.existingSecret .Values.objectStore.enabled }}
+                  key: {{ ternary .Values.objectStore.seaweedfs.auth.accessKeySecretKey .Values.objectStore.external.accessKeySecretKey .Values.objectStore.enabled }}
             - name: OBJECT_STORE_S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.externalObjectStore.existingSecret }}
-                  key: {{ .Values.externalObjectStore.secretKeySecretKey }}
+                  name: {{ ternary .Values.objectStore.seaweedfs.auth.existingSecret .Values.objectStore.external.existingSecret .Values.objectStore.enabled }}
+                  key: {{ ternary .Values.objectStore.seaweedfs.auth.secretKeySecretKey .Values.objectStore.external.secretKeySecretKey .Values.objectStore.enabled }}
             # NFR-11: publishes a job here on submit; ingestion-worker consumes it.
             # Issue #212: publish-only credential -- nats-configmap.yaml's
             # permissions deny this user any subscribe/consume permission.

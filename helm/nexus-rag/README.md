@@ -33,9 +33,10 @@ combination you're about to deploy before trusting it.
 - The air-gapped registry (`global.imageRegistry`) already has this
   project's four custom images (`ingestion-api`, `ingestion-worker`,
   `orchestration-mcp`, `reranker-service`) mirrored into it (NFR-1), plus
-  `qdrant/qdrant`, `milvus`, `ollama/ollama`, and/or `nats` for whichever of
-  those this chart is self-deploying — skip mirroring the ones you've
-  pointed at an `external.host` instead
+  `qdrant/qdrant`, `milvus`, `ollama/ollama`, `nats`, and/or
+  `chrislusf/seaweedfs` for whichever of those this chart is self-deploying —
+  skip mirroring the ones you've pointed at an `external.host`/set
+  `objectStore.enabled: false` for instead
 - A pre-created Secret matching `externalPostgres.existingSecret` /
   `externalPostgres.secretKey`, containing a full SQLAlchemy
   `DATABASE_URL` (`postgresql+psycopg://user:pass@host:5432/dbname`)
@@ -66,12 +67,17 @@ combination you're about to deploy before trusting it.
   approve/reject/supersede), `orchestration-mcp` gets the read-only one.
   Generate both however your cluster's secret-management practice calls for
   (e.g. `openssl rand -hex 32` for each) before creating the Secret.
-- An S3-compatible bucket (existing enterprise S3, Ceph RGW, ...) already
-  reachable at `externalObjectStore.endpoint`/`.bucket`, and a pre-created
-  Secret matching `externalObjectStore.existingSecret` containing an access
-  key (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
-  read/write access to it — original uploaded files are stored there,
-  independent of Qdrant/Postgres (NFR-12)
+- Object store (NFR-12), one of:
+  - **External (default, `objectStore.enabled: false`):** an S3-compatible
+    bucket (existing enterprise S3, Ceph RGW, ...) already reachable at
+    `objectStore.external.endpoint`/`.bucket`, and a pre-created Secret
+    matching `objectStore.external.existingSecret` containing an access key
+    (`.accessKeySecretKey`) and secret key (`.secretKeySecretKey`) with
+    read/write access to it
+  - **Bundled SeaweedFS (`objectStore.enabled: true`, issue #404):** a
+    pre-created Secret matching `objectStore.seaweedfs.auth.existingSecret`
+    containing the same two keys — this chart provisions SeaweedFS itself
+    and the bucket, see [Object store](#object-store-nfr-12-issue-404) below
 - Two pre-created Secrets, matching `nats.credentials.ingestionApi` and
   `.ingestionWorker` (`.existingSecret`/`.secretKey` each) — `ingestion-api`
   (publisher) and `ingestion-worker` (consumer) each authenticate to NATS
@@ -87,35 +93,89 @@ combination you're about to deploy before trusting it.
 ## External backing services
 
 Every non-custom backing service this chart touches now supports the same
-choice: deploy it (default) or connect to one that already exists.
-`externalPostgres`, `externalKeycloak`, and `externalObjectStore` have always
-been connect-only — this chart doesn't deploy Postgres, Keycloak, or an
-object store at all (see the assumption called out above). `qdrant`,
-`milvus`, `nats`, and `embeddingService` now support both:
+choice: deploy it or connect to one that already exists. `externalPostgres`
+and `externalKeycloak` remain connect-only — this chart doesn't deploy
+Postgres or Keycloak at all (see the assumption called out above; issue #404
+considered and declined changing this for those two specifically). `qdrant`,
+`milvus`, `nats`, `embeddingService`, and (issue #404) `objectStore` all
+support both:
 
-| Component | Self-deploy (default) | Connect to existing |
+| Component | Self-deploy | Connect to existing |
 |---|---|---|
-| Qdrant | `qdrant.enabled: true` | `qdrant.enabled: false` + `qdrant.external.host` |
-| Milvus | `milvus.enabled: true` | `milvus.enabled: false` + `milvus.external.host` |
-| NATS | `nats.enabled: true` | `nats.enabled: false` + `nats.external.host` |
-| Embedding | `embeddingService.enabled: true` | `embeddingService.enabled: false` + `embeddingService.external.host` |
+| Qdrant | `qdrant.enabled: true` (default) | `qdrant.enabled: false` + `qdrant.external.host` |
+| Milvus | `milvus.enabled: true` (default) | `milvus.enabled: false` + `milvus.external.host` |
+| NATS | `nats.enabled: true` (default) | `nats.enabled: false` + `nats.external.host` |
+| Embedding | `embeddingService.enabled: true` (default) | `embeddingService.enabled: false` + `embeddingService.external.host` |
+| Object store | `objectStore.enabled: true` | `objectStore.enabled: false` (default) + `objectStore.external.endpoint` |
+
+Object store is the one component where **connect is the default**, not
+self-deploy — see [Object store](#object-store-nfr-12-issue-404) below for
+why.
 
 Each `external` block also takes `.port` (defaults match the self-deployed
 Service port) and `.tls` (`false` by default; `true` selects `https://` for
-Qdrant/Milvus/the embedding service, `tls://` for NATS). The existing
-credential values still apply in external mode exactly as in self-deploy
-mode — `qdrant.apiKey`, `milvus.auth`, and `nats.credentials` all just point
-at a pre-created Secret, and nothing about that changes when the endpoint
-behind it is someone else's cluster instead of this chart's own
-StatefulSet. Setting `enabled: false` without the matching `external.host`
-fails the render with a specific message (`_helpers.tpl`'s
-`nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/`embeddingUrl`) rather than
-silently deploying a broken URL, same pattern as `oidcRedirectUri` below.
+Qdrant/Milvus/the embedding service, `tls://` for NATS). `objectStore.external`
+is the one exception — it takes a full `.endpoint` URL instead of separate
+`.host`/`.port`/`.tls`, unchanged from how `externalObjectStore.endpoint`
+worked before this issue. The existing credential values still apply in
+external mode exactly as in self-deploy mode — `qdrant.apiKey`, `milvus.auth`,
+and `nats.credentials` all just point at a pre-created Secret, and nothing
+about that changes when the endpoint behind it is someone else's cluster
+instead of this chart's own StatefulSet. Setting `enabled: false` without the
+matching `external.host`/`external.endpoint` fails the render with a specific
+message (`_helpers.tpl`'s
+`nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/`embeddingUrl`/`objectStoreEndpoint`)
+rather than silently deploying a broken URL, same pattern as
+`oidcRedirectUri` below.
 
 One thing `external` mode does **not** change: `networkPolicy`'s ingress
 rules for that component stop rendering entirely — they select this chart's
 own pod, which no longer exists. Protecting an external instance's ingress
 is that cluster's own concern.
+
+## Object store (NFR-12, issue #404)
+
+`objectStore.enabled` defaults to **`false`** — the opposite default from
+qdrant/milvus/nats/embeddingService above, deliberately. Before issue #404
+this chart didn't deploy an object store at all (`externalObjectStore` was
+connect-only, matching Postgres/Keycloak); an upgrade must not start
+deploying a new StatefulSet + 100Gi PVC that wasn't there before without an
+explicit opt-in. Set `objectStore.enabled: true` to bundle a single-node
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) instance
+(`weed server -s3 -filer`, one process providing S3, master, volume, and
+filer) instead of pointing at an existing S3-compatible endpoint.
+
+What self-deploy mode does for you:
+
+- **Bucket creation.** `common/object_store.py`'s S3 client assumes the
+  bucket already exists — true against a real external S3 (see
+  Prerequisites above), not true for a SeaweedFS instance this chart just
+  created from nothing. `templates/seaweedfs-statefulset.yaml` runs a
+  `bucket-init` sidecar in the same pod as the main `weed server` container:
+  it waits for the master to answer on `localhost`, then creates
+  `objectStore.seaweedfs.bucket`, tolerating "already exists" so it's safe
+  to re-run on every pod restart. Talking to `localhost` rather than the
+  Service means this needs no `networkPolicy` ingress rule of its own —
+  loopback traffic never leaves the pod.
+- **Credential wiring.** `objectStore.seaweedfs.auth.existingSecret` is the
+  *same* Secret used two ways: `ingestion-api`/`ingestion-worker` read it as
+  `OBJECT_STORE_S3_ACCESS_KEY`/`_SECRET_KEY` (same as external mode), and an
+  init container on the SeaweedFS pod renders it into the JSON identity file
+  SeaweedFS's own `-s3.config` flag requires (SeaweedFS doesn't take S3
+  credentials as env vars). One Secret, so the credential SeaweedFS enforces
+  and the one the apps present can never drift apart. That init container
+  assumes the Secret's values don't contain characters that break a JSON
+  string literal (quotes, backslashes) — true of any key generated the way
+  this README recommends elsewhere (`openssl rand -hex 32`), not guaranteed
+  for a hand-picked value.
+
+What it doesn't do: SeaweedFS's own clustering (separate master/volume/filer
+replicas, erasure coding across volume servers) — `objectStore.seaweedfs.replicas`
+above 1 will not schedule concurrently against the default `ReadWriteOnce`
+PVC, same caveat as Qdrant/NATS's single-node posture elsewhere in this
+README. This is "good enough for a bundled deployment," not how you'd run
+SeaweedFS at real object-storage scale — external mode is the better choice
+once a deployment's needs outgrow that.
 
 `embeddingService.external.apiCompatibility` selects which wire protocol the
 endpoint speaks: `"ollama"` (default) is Ollama's native
@@ -166,11 +226,12 @@ grant access to the wrong namespace while appearing configured, which is worse
 than an obvious outage. `helm install` prints both warnings.
 
 `networkPolicy.denyEgressByDefault` is **off** by default: every custom service
-needs the external Postgres and Keycloak, two also need the external object
-store, and any of Qdrant/Milvus/NATS/the embedding service running in
-`external` mode adds another address this chart doesn't know either. Turning
-it on without populating `networkPolicy.egressAllow` will break the
-deployment.
+needs the external Postgres and Keycloak, two also need the object store
+(external, or the bundled SeaweedFS — an in-cluster Service, but this policy
+doesn't special-case it), and any of Qdrant/Milvus/NATS/the embedding
+service running in `external` mode adds another address this chart doesn't
+know either. Turning it on without populating `networkPolicy.egressAllow`
+will break the deployment.
 
 ## reranker-service shared secret (issue #216)
 
@@ -232,9 +293,10 @@ Or supply a `values-production.yaml` override file with all of the above
 - Set up PodDisruptionBudgets or HorizontalPodAutoscalers — not included in
   this pass; add them if your cluster's baseline requires them. (NetworkPolicies
   *are* included — see [Network policy](#network-policy-issue-110) above.)
-- Harden `qdrant`'s or `embeddingService`'s `securityContext` — both run
-  upstream images (`qdrant/qdrant`, `ollama/ollama`) whose own user/filesystem
-  conventions this chart doesn't override. `ingestion-api`, `ingestion-worker`,
+- Harden `qdrant`'s, `embeddingService`'s, or the bundled `objectStore`
+  SeaweedFS instance's `securityContext` — all three run upstream images
+  (`qdrant/qdrant`, `ollama/ollama`, `chrislusf/seaweedfs`) whose own
+  user/filesystem conventions this chart doesn't override. `ingestion-api`, `ingestion-worker`,
   `orchestration-mcp`, and `reranker-service` (the four custom-built images)
   *do* run hardened: `services/*/Dockerfile` bakes in a fixed non-root UID/GID
   (10001), and their Deployments set `runAsNonRoot: true`,
@@ -264,10 +326,11 @@ property; it isn't something a Helm chart, Qdrant, or this project's
 application code can turn on by itself. What this chart does:
 
 - `qdrant.persistence.storageClassName`, `embeddingService.persistence.storageClassName`,
-  and `rerankerService.persistence.storageClassName` are all left overridable
-  (empty string = your cluster's default StorageClass, whatever that
-  provides) — point them at an encrypted StorageClass if your cluster offers
-  one, the same way you'd do for any other PVC-backed workload.
+  `rerankerService.persistence.storageClassName`, and (when `objectStore.enabled`)
+  `objectStore.seaweedfs.persistence.storageClassName` are all left
+  overridable (empty string = your cluster's default StorageClass, whatever
+  that provides) — point them at an encrypted StorageClass if your cluster
+  offers one, the same way you'd do for any other PVC-backed workload.
 - `externalPostgres` is, per this chart's scope, infrastructure you already
   manage separately — its encryption-at-rest posture is entirely that
   deployment's responsibility, not something a `DATABASE_URL` Secret

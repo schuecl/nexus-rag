@@ -154,6 +154,22 @@ selected by embeddingService.external.apiCompatibility.
 {{- end -}}
 
 {{/*
+Object store S3 endpoint URL. objectStore.enabled (self-deployed SeaweedFS)
+wins if true; otherwise objectStore.external.endpoint must be set -- fails
+the render rather than silently emitting a broken URL, same pattern as
+qdrantUrl/milvusUrl/natsUrl/embeddingUrl above. Issue #404.
+*/}}
+{{- define "nexus-rag.objectStoreEndpoint" -}}
+{{- if .Values.objectStore.enabled -}}
+{{- printf "http://%s-seaweedfs:%v" (include "nexus-rag.fullname" .) .Values.objectStore.seaweedfs.service.s3Port -}}
+{{- else if .Values.objectStore.external.endpoint -}}
+{{- .Values.objectStore.external.endpoint -}}
+{{- else -}}
+{{- fail "Set objectStore.external.endpoint when objectStore.enabled is false (external object store mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 OIDC browser-login callback URL for ingestion-api (ARCHITECTURE.md Section
 4.4), passed through as OIDC_REDIRECT_URI. ingestionApi.oidcRedirectUri wins
 if set explicitly; otherwise derived from ingestionApi.ingress.host, using

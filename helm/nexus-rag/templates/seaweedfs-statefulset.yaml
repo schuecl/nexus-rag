@@ -1,0 +1,193 @@
+{{- if .Values.objectStore.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-seaweedfs
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seaweedfs
+spec:
+  # Single-node config, same reasoning as qdrant-statefulset.yaml/
+  # nats-statefulset.yaml -- SeaweedFS's own multi-node clustering (separate
+  # master/volume/filer replicas, erasure coding across volume servers)
+  # isn't set up here. `weed server` runs master+volume+filer+S3 as one
+  # process for exactly this reason: it's the "good enough for a bundled
+  # deployment" mode, not the way you'd run SeaweedFS at real object-storage
+  # scale. Revisit if a deployment's document volume actually needs it.
+  serviceName: {{ include "nexus-rag.fullname" . }}-seaweedfs
+  replicas: {{ .Values.objectStore.seaweedfs.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "seaweedfs") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nexus-rag.labels" . | nindent 8 }}
+        app.kubernetes.io/component: seaweedfs
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Issue #404: S3 credential enforcement (weed's -s3.config) takes a
+      # JSON file of literal identities, not env-var references -- this
+      # init container renders it from the same Secret ingestion-api/
+      # ingestion-worker authenticate with (values.yaml's
+      # objectStore.seaweedfs.auth), so the credential SeaweedFS enforces and
+      # the one the apps present can never drift apart. Assumes the Secret's
+      # values don't contain characters that break JSON string literals
+      # (quotes, backslashes) -- true of any key generated the way this
+      # chart's README recommends (`openssl rand -hex 32`), but a hand-picked
+      # secret value could break this.
+      initContainers:
+        - name: s3-config
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.objectStore.seaweedfs.image) }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              cat <<EOF > /config/s3.json
+              {
+                "identities": [
+                  {
+                    "name": "nexus-rag",
+                    "credentials": [
+                      {"accessKey": "$S3_ACCESS_KEY", "secretKey": "$S3_SECRET_KEY"}
+                    ],
+                    "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+                  }
+                ]
+              }
+              EOF
+          env:
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.objectStore.seaweedfs.auth.existingSecret }}
+                  key: {{ .Values.objectStore.seaweedfs.auth.accessKeySecretKey }}
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.objectStore.seaweedfs.auth.existingSecret }}
+                  key: {{ .Values.objectStore.seaweedfs.auth.secretKeySecretKey }}
+          volumeMounts:
+            - name: s3-config
+              mountPath: /config
+      containers:
+        - name: seaweedfs
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.objectStore.seaweedfs.image) }}
+          # -filer/-s3: the S3 gateway is implemented on top of the filer, so
+          # both must run in this combined process for OBJECT_STORE_S3_*
+          # (common/object_store.py) to have anything to talk to.
+          # -ip=$(POD_IP): master/volume/filer advertise this address to each
+          # other; the pod's own IP is always reachable from itself
+          # regardless of DNS/headless-Service state at startup.
+          # -volume.max=0: let the mounted volume's disk space be the only
+          # limit, rather than SeaweedFS's own default cap on volume count.
+          args:
+            - server
+            - "-dir=/data"
+            - "-ip=$(POD_IP)"
+            - "-master.port={{ .Values.objectStore.seaweedfs.service.masterPort }}"
+            - "-volume.port={{ .Values.objectStore.seaweedfs.service.volumePort }}"
+            - "-volume.max=0"
+            - "-filer"
+            - "-filer.port={{ .Values.objectStore.seaweedfs.service.filerPort }}"
+            - "-s3"
+            - "-s3.port={{ .Values.objectStore.seaweedfs.service.s3Port }}"
+            - "-s3.config=/config/s3.json"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - name: s3
+              containerPort: {{ .Values.objectStore.seaweedfs.service.s3Port }}
+            - name: master
+              containerPort: {{ .Values.objectStore.seaweedfs.service.masterPort }}
+            - name: volume
+              containerPort: {{ .Values.objectStore.seaweedfs.service.volumePort }}
+            - name: filer
+              containerPort: {{ .Values.objectStore.seaweedfs.service.filerPort }}
+          volumeMounts:
+            - name: storage
+              mountPath: /data
+            - name: s3-config
+              mountPath: /config
+              readOnly: true
+          # /cluster/status is the master's documented health endpoint --
+          # this combined process's master sub-server is up once it answers,
+          # which in turn means volume/filer/s3 (started in the same
+          # `weed server` invocation) are at least scheduled to come up too.
+          readinessProbe:
+            httpGet:
+              path: /cluster/status
+              port: master
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /cluster/status
+              port: master
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.objectStore.seaweedfs.resources | nindent 12 }}
+        {{/*
+        Issue #404: common/object_store.py's S3Client never calls
+        create_bucket -- it assumes the bucket already exists, same as it
+        would against a real external S3 (see README's prerequisites).
+        Nothing else creates one for the bundled SeaweedFS instance, so
+        this chart has to. A sidecar in the same pod, talking to the main
+        container over localhost, rather than a separate Job: it needs
+        master+filer actually serving (not just scheduled), and doing that
+        over localhost means it needs no NetworkPolicy ingress rule of its
+        own -- loopback traffic never leaves the pod's network namespace,
+        so it isn't a source the templates/networkpolicies.yaml seaweedfs
+        policy needs to know about. Runs once, then sleeps -- container
+        exit code 0 would otherwise make the kubelet restart it in a loop
+        under this Pod's (default Always) restart policy.
+        */}}
+        - name: bucket-init
+          image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.objectStore.seaweedfs.image) }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              MASTER="127.0.0.1:{{ .Values.objectStore.seaweedfs.service.masterPort }}"
+              until wget -q -O /dev/null "http://$MASTER/cluster/status"; do
+                sleep 3
+              done
+              # "|| true": s3.bucket.create against a bucket that already
+              # exists (every restart after the first) is the expected,
+              # idempotent case, not a failure.
+              echo "s3.bucket.create -name {{ .Values.objectStore.seaweedfs.bucket }}" \
+                | weed shell -master="$MASTER" || true
+              exec sleep infinity
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+      volumes:
+        - name: s3-config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+        labels:
+          {{- include "nexus-rag.labels" . | nindent 10 }}
+          app.kubernetes.io/component: seaweedfs
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.objectStore.seaweedfs.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.objectStore.seaweedfs.persistence.size }}
+{{- end }}

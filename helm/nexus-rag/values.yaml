@@ -6,13 +6,19 @@
 # NFR-11's durable ingestion queue). It assumes LibreChat, LiteLLM, Keycloak,
 # and the cluster's existing generation-serving vLLM/Ollama (C7) are already
 # deployed and managed separately, and integrates with them via the config
-# below rather than deploying or bundling them.
+# below rather than deploying or bundling them. Issue #404: the object store
+# (NFR-12) can now optionally be added to that self-deployed list too --
+# objectStore.enabled: true bundles a SeaweedFS S3 gateway; false (default)
+# keeps the original connect-to-existing-S3-only behavior.
 #
 # Assumption called out explicitly (REQUIREMENTS.md doesn't name Postgres
 # among NFR-10's scoped components, unlike Qdrant): a Postgres instance is
 # also treated as existing cluster infrastructure this chart connects to,
-# not something it deploys. If that's wrong for your environment, this is
-# the section to revisit first.
+# not something it deploys. Keycloak is the same, and unlike the object
+# store, #404 declined to change that -- both need their own backup/HA/
+# accreditation posture well beyond what this chart's single-node
+# StatefulSet pattern provides. If that's wrong for your environment, this
+# is the section to revisit first.
 
 global:
   # Air-gapped registry (NFR-1) every image below is mirrored into. Prefixed
@@ -159,23 +165,77 @@ externalKeycloak:
     existingSecret: "nexus-rag-keycloak-client-secret"
     secretKey: "client-secret"
 
-externalObjectStore:
+objectStore:
   # NFR-12: durable storage for original uploaded files, independent of
   # Qdrant/Postgres (common/object_store.py). Only the S3-compatible backend
   # is meaningful here -- the filesystem backend (common/object_store.py's
   # FilesystemObjectStore) is dev-Compose-only, since it assumes a single
   # shared filesystem across every reader/writer, which doesn't hold once
-  # ingestion-api and ingestion-worker are separate pods. Any S3-compatible
-  # endpoint works: an existing enterprise S3, Ceph RGW, or another
-  # validated S3-compatible platform.
-  endpoint: "https://s3.example.mil"
-  bucket: "nexus-rag-documents"
-  region: "us-gov-west-1"
-  # Pre-created Secret (out-of-band, same pattern as externalPostgres above)
-  # containing both keys named below.
-  existingSecret: "nexus-rag-object-store"
-  accessKeySecretKey: "access-key"
-  secretKeySecretKey: "secret-key"
+  # ingestion-api and ingestion-worker are separate pods.
+  #
+  # Issue #404: either this chart deploys a bundled SeaweedFS S3 gateway
+  # (enabled: true, seaweedfs.* below) or it connects to an already-existing
+  # S3-compatible endpoint (enabled: false + external.* below -- an existing
+  # enterprise S3, Ceph RGW, or another validated S3-compatible platform;
+  # this was the chart's only option before #404). Same either/or pattern as
+  # qdrant/milvus/nats/embeddingService, but the default is false, not true:
+  # unlike those (self-deploy was already their pre-#401 behavior), external
+  # was this chart's only object-store behavior before #404 existed, and an
+  # upgrade must not silently start deploying a new StatefulSet + PVC that
+  # wasn't there before without an explicit opt-in.
+  enabled: false
+  external:
+    endpoint: "https://s3.example.mil"
+    bucket: "nexus-rag-documents"
+    region: "us-gov-west-1"
+    # Pre-created Secret (out-of-band, same pattern as externalPostgres
+    # above) containing both keys named below.
+    existingSecret: "nexus-rag-object-store"
+    accessKeySecretKey: "access-key"
+    secretKeySecretKey: "secret-key"
+  seaweedfs:
+    image:
+      repository: chrislusf/seaweedfs
+      # NFR-16: pinned to a specific, recent release -- never :latest.
+      tag: "4.40"
+    replicas: 1
+    # Bucket this chart pre-creates (templates/seaweedfs-bucket-init-job.yaml)
+    # against the self-deployed instance -- unlike external mode, nothing else
+    # ever creates it, and common/object_store.py's S3Client never calls
+    # create_bucket itself (it assumes the bucket already exists, same as a
+    # real external S3 would require).
+    bucket: "nexus-rag-documents"
+    # SeaweedFS's S3 gateway isn't actually region-sharded -- this is
+    # cosmetic, reported to the AWS SDK because boto3 requires some value.
+    region: "us-gov-west-1"
+    # Access/secret key pair minted into SeaweedFS's own S3 identity config
+    # at pod startup (templates/seaweedfs-statefulset.yaml's init container
+    # renders it from these two keys) *and* handed to ingestion-api/
+    # ingestion-worker as OBJECT_STORE_S3_ACCESS_KEY/_SECRET_KEY -- same
+    # Secret, same keys, so the credential SeaweedFS enforces and the one the
+    # app presents can never drift apart. Pre-created, same existingSecret
+    # pattern as qdrant.apiKey.
+    auth:
+      existingSecret: "nexus-rag-seaweedfs-keys"
+      accessKeySecretKey: "access-key"
+      secretKeySecretKey: "secret-key"
+    service:
+      s3Port: 8333
+      masterPort: 9333
+      volumePort: 8080
+      filerPort: 8888
+    persistence:
+      size: 100Gi
+      # NFR-6: see qdrant.persistence.storageClassName's comment below --
+      # same applies here.
+      storageClassName: ""
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
 
 # ---------------------------------------------------------------------------
 # Qdrant (C3 -- already decided; new to the cluster, so this chart deploys it

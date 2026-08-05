@@ -23,7 +23,7 @@ volumes:
   # NFR-12: original uploaded files, independent of Qdrant/Postgres. Shared
   # across ingestion-api and (once NFR-11 lands) ingestion-worker -- fine for
   # this single-node dev stack; production uses S3ObjectStore instead, which
-  # doesn't have this same-filesystem constraint (see helm's externalObjectStore).
+  # doesn't have this same-filesystem constraint (see helm's objectStore).
   object-store-data:
   nats-data:
 
@@ -451,7 +451,7 @@ services:
       ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
       # NFR-12: durable original-file storage -- filesystem here (dev-only,
       # see common/object_store.py's FilesystemObjectStore); production uses
-      # OBJECT_STORE_BACKEND=s3 (helm's externalObjectStore).
+      # OBJECT_STORE_BACKEND=s3 (helm's objectStore).
       OBJECT_STORE_BACKEND: filesystem
       OBJECT_STORE_PATH: /srv/object-store
       # NFR-11: publishes a job here on submit; ingestion-worker consumes it.

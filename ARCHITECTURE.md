@@ -522,22 +522,26 @@ flowchart TB
         p6[["external Postgres<br/>(Secret ref)"]]
         p7[["external Keycloak"]]
         p8[["existing LibreChat/LiteLLM/vLLM"]]
-        p9[["external object store<br/>(S3-compatible, Secret ref)"]]
+        p9[["object store<br/>(S3-compatible, Secret ref -- default;<br/>or bundled SeaweedFS, #404)"]]
     end
 ```
 
 Dev stands up *everything*, including throwaway LibreChat/LiteLLM/Keycloak instances, so
 the full OBO/MCP flow can be exercised locally. The Helm chart deploys only the boxes in
-the `new` component table (§2) — Postgres, Keycloak, and the object store are referenced
-via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUrl`,
-`externalObjectStore.endpoint`/`.bucket`), not deployed by the chart.
+the `new` component table (§2) — Postgres and Keycloak are referenced via `values.yaml`
+(`externalPostgres.existingSecret`, `externalKeycloak.issuerUrl`), not deployed by the
+chart. The object store defaults to that same external-reference posture
+(`objectStore.external.endpoint`/`.bucket`) but, unlike Postgres/Keycloak, can also be
+self-deployed as a bundled SeaweedFS StatefulSet (`objectStore.enabled: true`, issue #404).
 
 The `qdrant`/`milvus (StatefulSet)`, `nats (StatefulSet)`, and `embedding-service` boxes
 in the prod subgraph above are each the *default* posture, not the only one (issue #401):
 `qdrant.enabled`/`milvus.enabled`/`nats.enabled`/`embeddingService.enabled` set to `false`
-turns each into an `external.host`-referenced box instead, the same relationship Postgres/
-Keycloak/the object store already have to the chart — see `helm/nexus-rag/README.md`'s
-"External backing services" section.
+turns each into an `external.host`-referenced box instead. The object store box has the
+same either/or shape but the opposite default (issue #404): `objectStore.enabled: true`
+turns it into a bundled SeaweedFS StatefulSet instead of the `external.endpoint`-referenced
+box shown above. Postgres and Keycloak alone have no such toggle — see
+`helm/nexus-rag/README.md`'s "External backing services" section.
 
 ## 7. Known gaps
 

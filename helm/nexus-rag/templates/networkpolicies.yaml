@@ -18,11 +18,10 @@ receives full retrieved chunk text.
 Scope and honest limits:
 
 - These are **ingress** policies. Egress is deliberately not restricted here:
-  the chart's services must reach an external Postgres, Keycloak, and object
-  store (see values.yaml's externalPostgres/externalKeycloak/
-  externalObjectStore), and, when qdrant/milvus/nats/embeddingService are
-  configured in external mode, those addresses too -- none of which this
-  chart knows. A
+  the chart's services must reach an external Postgres and Keycloak (see
+  values.yaml's externalPostgres/externalKeycloak), and, when qdrant/milvus/
+  nats/embeddingService/objectStore are configured in external mode, those
+  addresses too -- none of which this chart knows. A
   default-deny egress policy would have to be written against the actual
   cluster's CIDRs and DNS, which belongs with the deployment, not the chart.
   networkPolicy.denyEgressByDefault is offered for operators who want to opt
@@ -206,6 +205,44 @@ spec:
               {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 14 }}
       ports:
         - port: {{ .Values.nats.service.clientPort }}
+          protocol: TCP
+{{- end }}
+{{- if .Values.objectStore.enabled }}
+{{/*
+Issue #404: only meaningful when this chart deploys the SeaweedFS S3 gateway
+itself -- an external S3-compatible endpoint's ingress policy isn't this
+chart's to set. Only the s3 port is allowed: unlike Qdrant's http+grpc ports
+(both are legitimate client protocols), ingestion-api/ingestion-worker only
+ever speak the S3 wire protocol, never SeaweedFS's master/volume/filer
+ports. The bucket-bootstrap step (seaweedfs-statefulset.yaml's bucket-init
+sidecar) needs those, but talks to them over localhost inside the same pod,
+which never crosses this policy at all.
+*/}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-seaweedfs
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seaweedfs
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "seaweedfs") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        # ingestion-api reads/writes originals on upload and purge;
+        # ingestion-worker reads them back to parse/chunk/embed.
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-api") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "ingestion-worker") | nindent 14 }}
+      ports:
+        - port: {{ .Values.objectStore.seaweedfs.service.s3Port }}
           protocol: TCP
 {{- end }}
 ---

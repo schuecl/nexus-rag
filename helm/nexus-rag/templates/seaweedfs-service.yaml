@@ -1,0 +1,30 @@
+{{- if .Values.objectStore.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-seaweedfs
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seaweedfs
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ .Values.objectStore.seaweedfs.service.s3Port }}
+      targetPort: s3
+      protocol: TCP
+      name: s3
+    - port: {{ .Values.objectStore.seaweedfs.service.masterPort }}
+      targetPort: master
+      protocol: TCP
+      name: master
+    - port: {{ .Values.objectStore.seaweedfs.service.volumePort }}
+      targetPort: volume
+      protocol: TCP
+      name: volume
+    - port: {{ .Values.objectStore.seaweedfs.service.filerPort }}
+      targetPort: filer
+      protocol: TCP
+      name: filer
+  selector:
+    {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "seaweedfs") | nindent 4 }}
+{{- end }}
