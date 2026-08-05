@@ -154,6 +154,22 @@ selected by embeddingService.external.apiCompatibility.
 {{- end -}}
 
 {{/*
+Reranker-service endpoint URL, same enabled/external pattern as Qdrant above.
+The self-deployed instance always speaks reranker-service's own native API;
+an external instance may speak that, TEI's, or the Cohere/Jina convention,
+selected by rerankerService.external.apiCompatibility. Issue #419.
+*/}}
+{{- define "nexus-rag.rerankerUrl" -}}
+{{- if .Values.rerankerService.enabled -}}
+{{- printf "http://%s-reranker-service:%v" (include "nexus-rag.fullname" .) .Values.rerankerService.service.port -}}
+{{- else if .Values.rerankerService.external.host -}}
+{{- printf "%s://%s:%v" (ternary "https" "http" .Values.rerankerService.external.tls) .Values.rerankerService.external.host .Values.rerankerService.external.port -}}
+{{- else -}}
+{{- fail "Set rerankerService.external.host when rerankerService.enabled is false (external reranker mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Object store S3 endpoint URL. objectStore.enabled (self-deployed SeaweedFS)
 wins if true; otherwise objectStore.external.endpoint must be set -- fails
 the render rather than silently emitting a broken URL, same pattern as

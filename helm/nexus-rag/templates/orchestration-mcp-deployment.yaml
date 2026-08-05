@@ -145,10 +145,26 @@ spec:
                   key: {{ .Values.embeddingService.external.apiKey.secretKey }}
             {{- end }}
             - name: RERANKER_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-reranker-service:{{ .Values.rerankerService.service.port }}"
-            {{- if .Values.rerankerService.sharedSecret.existingSecret }}
+              value: {{ include "nexus-rag.rerankerUrl" . | quote }}
+            - name: RERANKER_MODEL
+              value: {{ .Values.rerankerService.model | quote }}
+            # Issue #419: which wire protocol RERANKER_URL above speaks --
+            # "internal" (default, this chart's own reranker-service), "tei",
+            # or "cohere" (also what vLLM's own rerank endpoints speak).
+            - name: RERANKER_API_COMPATIBILITY
+              value: {{ .Values.rerankerService.external.apiCompatibility | quote }}
+            {{- if and (ne .Values.rerankerService.external.apiCompatibility "internal") .Values.rerankerService.external.apiKey.existingSecret }}
+            - name: RERANKER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rerankerService.external.apiKey.existingSecret }}
+                  key: {{ .Values.rerankerService.external.apiKey.secretKey }}
+            {{- end }}
+            {{- if and (eq .Values.rerankerService.external.apiCompatibility "internal") .Values.rerankerService.sharedSecret.existingSecret }}
             # Issue #216: same Secret/key reranker-service itself reads to
             # verify the header this sends (reranker-service-deployment.yaml).
+            # Only meaningful in "internal" mode -- an external tei/cohere
+            # endpoint authenticates with RERANKER_API_KEY above instead.
             - name: RERANKER_SHARED_SECRET
               valueFrom:
                 secretKeyRef:

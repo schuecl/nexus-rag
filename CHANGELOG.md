@@ -27,6 +27,18 @@ changed in the running system, with the issue/PR reference for the trail.
   four features point at the same instance — through a new
   `common/completion_client.py`. Vision prompts carry the image as an
   `image_url`/base64-data-URI content part in the OpenAI-compatible case.
+- `orchestration-mcp`'s reranking call can now target a genuinely external
+  reranker instead of only this chart's own `reranker-service` (#419, the
+  decision split from #418): `rerankerService.enabled: false` +
+  `rerankerService.external.host`, same enabled/external pattern as
+  `embeddingService`. `apiCompatibility` selects `"internal"` (default,
+  unchanged), `"tei"` (HuggingFace text-embeddings-inference's native
+  `/rerank`, the recommended default for a real external endpoint), or
+  `"cohere"` (the Jina/Cohere-style `/v1/rerank` convention — also what
+  vLLM's own rerank endpoints speak; vLLM does **not** speak the `"tei"`
+  shape despite hosting cross-encoder rerankers too, so `"cohere"` is the
+  mode to use against vLLM). Authenticates with a bearer token from
+  `rerankerService.external.apiKey` in `"tei"`/`"cohere"` mode.
 
 ## [0.5.0] - 2026-08-05
 

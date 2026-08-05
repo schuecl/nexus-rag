@@ -2035,6 +2035,35 @@ the docs, not a silent "it works" — flag it if you find one.
   `PII_LLM_MODEL` set to `"openai"` compatibility mode end-to-end through the worker's JetStream
   consumer — the direct-client check above validates the wire protocol, not the full pipeline
   wiring.
+- **External reranker wire formats (issue #419, the decision split from #418)** — `reranker-
+  service` isn't the "OpenAI-compatible chat completions" shape #418's other three features
+  are (no official OpenAI `/v1/rerank` endpoint exists), so this needed its own decision.
+  `orchestration-mcp/app/reranking.py`'s `rerank()` previously spoke only this chart's own
+  `reranker-service` shape, hardcoded. Added `RERANKER_API_COMPATIBILITY`: `"internal"`
+  (default, unchanged), `"tei"` (HuggingFace text-embeddings-inference's native `/rerank` --
+  the issue's recommended default for a real external endpoint), or `"cohere"` (the Jina/
+  Cohere-style `/v1/rerank` convention). Wired through new `rerankerService.enabled`/
+  `.external.{host,port,tls,apiCompatibility,apiKey,model}` Helm values (same enabled/external
+  pattern as `embeddingService`) and a new `nexus-rag.rerankerUrl` helper. **Web-researched
+  correction to the issue's own text**: the issue's Option 2 write-up assumed vLLM's rerank
+  endpoints might speak TEI's shape; they don't. vLLM's `/rerank`, `/v1/rerank`, `/v2/rerank`
+  are documented as compatible with "Jina AI's and Cohere's re-rank API interface" specifically
+  (`model`/`query`/`documents` in, `results: [{index, relevance_score}]` out) -- the `"cohere"`
+  mode above, not `"tei"`. Both shapes were implemented rather than only the recommended
+  default, since a concrete need for the second one (vLLM, already part of this stack per
+  CLAUDE.md) surfaced immediately rather than needing to be spun up as separate follow-up
+  work. **Tested against mocks only**: `services/orchestration-mcp/tests/test_reranking.py`'s
+  `TestTeiCompatibility`/`TestCohereCompatibility` classes (`monkeypatch`-mocked HTTP, request
+  shape/response-index-mapping/auth-header/fallback-on-outage for both new modes), 100%
+  line coverage on `app/reranking.py` under the service's own `--cov=app.reranking
+  --cov-fail-under=85` gate. No real TEI or vLLM server was reachable in this environment to
+  validate either wire format end-to-end. `helm lint`/`helm template` (`host-spawn helm`) were
+  run across every new value combination: default (self-deployed, unchanged rendering),
+  external `"tei"` with an `apiKey` secret, external `"cohere"` without one, and the
+  fail-closed case (`enabled: false` with no `external.host` set) -- confirmed each renders
+  the expected `RERANKER_URL`/`RERANKER_API_COMPATIBILITY`/`RERANKER_API_KEY` env vars (or
+  omits them correctly) and that `reranker-service`'s Deployment/Service/PVC/NetworkPolicy
+  stop rendering entirely in external mode, same as `embeddingService`'s existing pattern.
 - **Batched chunk embedding (issue #396)** — `ingestion-worker/app/embedding.py`'s
   `embed_texts` sends `EMBEDDING_BATCH_SIZE` (default 32) chunks per request through the
   new `common.embedding_client.request_embeddings` instead of one request per chunk;

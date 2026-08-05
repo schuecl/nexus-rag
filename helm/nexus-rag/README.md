@@ -97,8 +97,8 @@ choice: deploy it or connect to one that already exists. `externalPostgres`
 and `externalKeycloak` remain connect-only — this chart doesn't deploy
 Postgres or Keycloak at all (see the assumption called out above; issue #404
 considered and declined changing this for those two specifically). `qdrant`,
-`milvus`, `nats`, `embeddingService`, and (issue #404) `objectStore` all
-support both:
+`milvus`, `nats`, `embeddingService`, `rerankerService` (issue #419), and
+(issue #404) `objectStore` all support both:
 
 | Component | Self-deploy | Connect to existing |
 |---|---|---|
@@ -106,6 +106,7 @@ support both:
 | Milvus | `milvus.enabled: true` (default) | `milvus.enabled: false` + `milvus.external.host` |
 | NATS | `nats.enabled: true` (default) | `nats.enabled: false` + `nats.external.host` |
 | Embedding | `embeddingService.enabled: true` (default) | `embeddingService.enabled: false` + `embeddingService.external.host` |
+| Reranker | `rerankerService.enabled: true` (default) | `rerankerService.enabled: false` + `rerankerService.external.host` |
 | Object store | `objectStore.enabled: true` | `objectStore.enabled: false` (default) + `objectStore.external.endpoint` |
 
 Object store is the one component where **connect is the default**, not
@@ -114,19 +115,19 @@ why.
 
 Each `external` block also takes `.port` (defaults match the self-deployed
 Service port) and `.tls` (`false` by default; `true` selects `https://` for
-Qdrant/Milvus/the embedding service, `tls://` for NATS). `objectStore.external`
-is the one exception — it takes a full `.endpoint` URL instead of separate
-`.host`/`.port`/`.tls`, unchanged from how `externalObjectStore.endpoint`
-worked before this issue. The existing credential values still apply in
-external mode exactly as in self-deploy mode — `qdrant.apiKey`, `milvus.auth`,
-and `nats.credentials` all just point at a pre-created Secret, and nothing
-about that changes when the endpoint behind it is someone else's cluster
-instead of this chart's own StatefulSet. Setting `enabled: false` without the
-matching `external.host`/`external.endpoint` fails the render with a specific
-message (`_helpers.tpl`'s
-`nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/`embeddingUrl`/`objectStoreEndpoint`)
-rather than silently deploying a broken URL, same pattern as
-`oidcRedirectUri` below.
+Qdrant/Milvus/the embedding service/the reranker, `tls://` for NATS).
+`objectStore.external` is the one exception — it takes a full `.endpoint` URL
+instead of separate `.host`/`.port`/`.tls`, unchanged from how
+`externalObjectStore.endpoint` worked before this issue. The existing
+credential values still apply in external mode exactly as in self-deploy
+mode — `qdrant.apiKey`, `milvus.auth`, and `nats.credentials` all just point
+at a pre-created Secret, and nothing about that changes when the endpoint
+behind it is someone else's cluster instead of this chart's own StatefulSet.
+Setting `enabled: false` without the matching `external.host`/`external.endpoint`
+fails the render with a specific message (`_helpers.tpl`'s
+`nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/`embeddingUrl`/`rerankerUrl`/
+`objectStoreEndpoint`) rather than silently deploying a broken URL, same
+pattern as `oidcRedirectUri` below.
 
 One thing `external` mode does **not** change: `networkPolicy`'s ingress
 rules for that component stop rendering entirely — they select this chart's
@@ -209,6 +210,38 @@ it's always the same physical endpoint), just against
 one. `captioning.py`'s vision prompts carry the image as an
 `image_url`/base64-data-URI content part in the OpenAI-compatible case.
 
+## Reranker external mode (issue #419)
+
+`rerankerService.external.apiCompatibility` selects which wire protocol the
+endpoint speaks — three options, not the usual two, because unlike the
+embedding/completion case above there is no single obvious "OpenAI-compatible"
+target for reranking (no official OpenAI `/v1/rerank` endpoint exists):
+
+- `"internal"` (default): this chart's own `reranker-service` shape (`POST
+  {query, chunks: [{id, text}]}` → `[{id, score}]`) — what the self-deployed
+  instance (`enabled: true`) always speaks, and what any
+  `reranker-service`-*compatible* external endpoint speaks too.
+- `"tei"`: HuggingFace [text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference)'s
+  native `/rerank` (`POST {query, texts: [...]}` → `[{index, score}, ...]`).
+  **Recommended default for a genuinely external endpoint** — this project's
+  own `reranker-service` conceptually *is* a hosted cross-encoder endpoint,
+  and TEI is the most likely thing already running in an air-gapped enclave
+  for exactly this workload.
+- `"cohere"`: the Jina/Cohere-style `/v1/rerank` convention (`POST {model,
+  query, documents: [...], top_n}` → `{results: [{index, relevance_score}]}`).
+  **This is what vLLM's own `/rerank`, `/v1/rerank`, `/v2/rerank` endpoints
+  speak** — vLLM does *not* speak the `"tei"` shape above despite also being
+  able to host cross-encoder rerankers, so point this chart at vLLM with
+  `"cohere"`, not `"tei"`. `model` in the request body comes from
+  `rerankerService.model`, the same field the self-deployed image loads.
+
+`"tei"`/`"cohere"` authenticate with a bearer token from
+`rerankerService.external.apiKey.existingSecret` — same `existingSecret`
+pattern as everywhere else in this chart, sent only when that Secret is
+configured. `rerankerService.sharedSecret` (see below) is `"internal"`-mode
+only and is not sent in `"tei"`/`"cohere"` mode. `orchestration-mcp/app/
+reranking.py`'s `rerank()` is the single call site for all three shapes.
+
 ## Network policy (issue #110)
 
 `networkPolicy.enabled` defaults to **true**. Qdrant, NATS, the embedding
@@ -242,11 +275,17 @@ than an obvious outage. `helm install` prints both warnings.
 needs the external Postgres and Keycloak, two also need the object store
 (external, or the bundled SeaweedFS — an in-cluster Service, but this policy
 doesn't special-case it), and any of Qdrant/Milvus/NATS/the embedding
-service running in `external` mode adds another address this chart doesn't
-know either. Turning it on without populating `networkPolicy.egressAllow`
-will break the deployment.
+service/the reranker running in `external` mode adds another address this
+chart doesn't know either. Turning it on without populating
+`networkPolicy.egressAllow` will break the deployment.
 
 ## reranker-service shared secret (issue #216)
+
+Applies only when `rerankerService.external.apiCompatibility` is `"internal"`
+(the default, self-deployed or a `reranker-service`-compatible external
+endpoint) — see [Reranker external mode](#reranker-external-mode-issue-419)
+above for the `"tei"`/`"cohere"` case, which authenticates with
+`rerankerService.external.apiKey` instead.
 
 `/rerank` receives full retrieved chunk text — post-access-filter content
 already cleared for a specific caller, per FR-26 — and, before this issue, had
