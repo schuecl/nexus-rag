@@ -10,9 +10,12 @@ Confidence label, per this repo's convention: **validated live** as of v0.1.0
 8m42s, green) — tag push through image/chart publish through GitHub Release
 creation ran end to end exactly as documented below. The air-gapped export
 (`scripts/export_release_bundle.sh`) has since been confirmed working too,
-pulling and bundling the published v0.1.0 images and chart. Anything that
-turns out to differ in practice gets corrected here in the same PR that
-fixes it.
+pulling and bundling the published v0.1.0 images and chart -- that
+confirmation predates #399's finding that `docker save` can silently produce
+an incomplete tar on a containerd-snapshotter-backed daemon, and did not
+catch it (a same-host `docker load` check, which #399's fix replaced,
+false-positives in exactly that case). Anything that turns out to differ in
+practice gets corrected here in the same PR that fixes it.
 
 ## Versioning scheme
 
@@ -90,6 +93,36 @@ never delete or re-point a version tag that the workflow ran for.
 The connected/disconnected boundary is explicit: CI publishes to GHCR;
 a human (or transfer process) carries a bundle across; the cluster only ever
 sees the internal registry.
+
+**Host prerequisite for the connected side.** `scripts/export_release_bundle.sh`
+requires `jq`, and the Docker daemon it runs against must use the classic
+`overlay2` storage driver, not the containerd image-store snapshotter. On a
+snapshotter-backed daemon, `docker save` has been observed (#399) to exit 0
+while silently omitting every layer and the image config blob from the tar —
+the export script now catches this and refuses to bundle (`verify_image_tar`),
+but the underlying `docker save` behavior can't be fixed from the script.
+Check which driver is active:
+
+```bash
+docker info | grep -i "storage driver\|driver-type"
+# containerd snapshotter active: "Storage Driver: overlayfs" +
+#   "driver-type: io.containerd.snapshotter.v1"
+# classic (wanted): "Storage Driver: overlay2", no driver-type line
+```
+
+If the snapshotter is active, disable it and restart the daemon (drops any
+running containers, so restart `docker compose up` afterward too):
+
+```bash
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "features": {
+    "containerd-snapshotter": false
+  }
+}
+EOF
+sudo systemctl restart docker
+```
 
 **Connected side** — build the transfer bundle:
 

@@ -9,11 +9,46 @@
 #
 # Usage: scripts/export_release_bundle.sh X.Y.Z [source-registry]
 #   source-registry defaults to ghcr.io/schuecl/nexus-rag
+#   requires jq (verifies each saved image tar is self-contained -- see
+#   verify_image_tar below)
 set -euo pipefail
 
 VERSION="${1:?usage: export_release_bundle.sh X.Y.Z [source-registry]}"
 REGISTRY="${2:-ghcr.io/schuecl/nexus-rag}"
 SERVICES=(ingestion-api ingestion-worker orchestration-mcp reranker-service)
+
+# `docker save` on a daemon backed by the containerd image-store snapshotter
+# has been observed here to report success while writing a tar that contains
+# only its own top-level manifest blob -- every layer and the config blob
+# the manifest references are silently absent, and `docker load` doesn't
+# catch it because it resolves those blobs from the daemon's local content
+# store instead of the tar. So verify the tar itself: for every blob its OCI
+# manifest references, confirm that blob is actually present in the archive
+# at the expected size.
+verify_image_tar() {
+  local tar_path="$1" svc="$2"
+  local manifest_digest oci_manifest listing
+  manifest_digest=$(tar xf "$tar_path" -O index.json | jq -r '.manifests[0].digest' | sed 's/^sha256://')
+  oci_manifest=$(tar xf "$tar_path" -O "blobs/sha256/${manifest_digest}")
+  listing=$(tar tvf "$tar_path")
+  while IFS=$'\t' read -r digest size; do
+    local path="blobs/sha256/${digest#sha256:}"
+    local actual
+    actual=$(awk -v p="$path" '$NF==p {print $3}' <<<"$listing")
+    if [ -z "$actual" ]; then
+      echo "export verification failed for ${svc}: ${tar_path} is missing ${path}" \
+           "(referenced by the image manifest, expected ${size} bytes) -- check whether" \
+           "this daemon's containerd image-store snapshotter is dropping blobs from" \
+           "docker save (docker info | grep snapshotter)" >&2
+      return 1
+    fi
+    if [ "$actual" -ne "$size" ]; then
+      echo "export verification failed for ${svc}: ${tar_path}'s ${path} is ${actual} bytes," \
+           "manifest expects ${size} -- tar is truncated" >&2
+      return 1
+    fi
+  done < <(jq -r '[.config, .layers[]] | .[] | "\(.digest)\t\(.size)"' <<<"$oci_manifest")
+}
 
 case "$VERSION" in
   v*) echo "pass the bare version (X.Y.Z), not the git tag (${VERSION})" >&2; exit 1 ;;
@@ -28,9 +63,11 @@ echo ">> pulling images from ${REGISTRY}"
 for svc in "${SERVICES[@]}"; do
   ref="${REGISTRY}/${svc}:${VERSION}"
   docker pull "$ref"
-  docker save -o "$workdir/images/${svc}-${VERSION}.tar" "$ref"
   docker inspect --format '{{index .RepoDigests 0}}' "$ref" \
     >> "$workdir/image-digests.txt"
+
+  docker save -o "$workdir/images/${svc}-${VERSION}.tar" "$ref"
+  verify_image_tar "$workdir/images/${svc}-${VERSION}.tar" "$svc"
 done
 
 echo ">> pulling chart"
