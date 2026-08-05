@@ -143,3 +143,36 @@ class TestLeakDetectionIsIdentityNotFilename:
 
         assert report["total_forbidden_leaks"] == 1
         assert report["queries"][0]["unapproved_leaks"] == returned
+
+
+class TestRecallMisses:
+    """Issue #397: a recall miss must be able to fail the run -- e2e.yml always
+    documented that contract, but nothing computed it before."""
+
+    @staticmethod
+    def _query(query: str, recall: float | None) -> dict:
+        return {"query": query, "recall_at_k": recall}
+
+    def test_full_recall_everywhere_is_no_miss(self):
+        report = {"queries": [self._query("a", 1.0), self._query("b", 1.0)]}
+
+        assert evaluate_retrieval.recall_misses(report) == []
+
+    def test_partial_recall_is_a_miss(self):
+        # Multi-expect query where only some expected documents returned:
+        # "any recall miss" means every expected document, not at-least-one.
+        report = {"queries": [self._query("a", 0.5)]}
+
+        assert evaluate_retrieval.recall_misses(report) == ["a"]
+
+    def test_zero_recall_is_a_miss(self):
+        report = {"queries": [self._query("a", 1.0), self._query("b", 0.0)]}
+
+        assert evaluate_retrieval.recall_misses(report) == ["b"]
+
+    def test_abstention_queries_are_never_misses(self):
+        # Empty `expect` -> recall None: their contract is the FR-26 leak
+        # check, not recall.
+        report = {"queries": [self._query("abstain", None)]}
+
+        assert evaluate_retrieval.recall_misses(report) == []
