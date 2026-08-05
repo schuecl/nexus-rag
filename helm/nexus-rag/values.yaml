@@ -189,11 +189,11 @@ externalObjectStore:
 vectorBackend: qdrant
 
 qdrant:
-  # Issue #401: either this chart deploys Qdrant (enabled: true, default) or
-  # it connects to an already-running Qdrant cluster (enabled: false +
-  # external.host below) -- never both, mirroring the either/or relationship
-  # between qdrant and milvus above at the vectorBackend level. Ignored
-  # entirely when vectorBackend is "milvus".
+  # Either this chart deploys Qdrant (enabled: true, default) or it connects
+  # to an already-running Qdrant cluster (enabled: false + external.host
+  # below) -- never both, mirroring the either/or relationship between
+  # qdrant and milvus above at the vectorBackend level. Ignored entirely
+  # when vectorBackend is "milvus".
   enabled: true
   # Only read when enabled is false. qdrant.apiKey below still applies in
   # external mode -- point it at a Secret holding the *existing* cluster's
@@ -251,8 +251,8 @@ qdrant:
 # embedded etcd and local storage -- the single-node evaluation deployment,
 # matching the chart's single-node Qdrant posture.
 milvus:
-  # Issue #401: same either/or self-deploy-vs-external pattern as
-  # qdrant.enabled above. Ignored entirely when vectorBackend is "qdrant".
+  # Same either/or self-deploy-vs-external pattern as qdrant.enabled above.
+  # Ignored entirely when vectorBackend is "qdrant".
   enabled: true
   # Only read when enabled is false.
   external:
@@ -281,9 +281,9 @@ milvus:
   resources: {}
 
 nats:
-  # Issue #401: either this chart deploys NATS (enabled: true, default) or it
-  # connects to an already-running JetStream cluster (enabled: false +
-  # external.host below).
+  # Either this chart deploys NATS (enabled: true, default) or it connects
+  # to an already-running JetStream cluster (enabled: false + external.host
+  # below).
   enabled: true
   # Only read when enabled is false. nats.credentials below still applies in
   # external mode -- ingestion-api/ingestion-worker still authenticate as
@@ -333,15 +333,12 @@ nats:
 # ---------------------------------------------------------------------------
 
 embeddingService:
-  # Issue #401: either this chart deploys a dedicated embedding-serving
-  # Ollama instance (enabled: true, default) or it connects to an
-  # already-running Ollama-compatible instance elsewhere (enabled: false +
-  # external.host below). Note this instance also serves
-  # ingestionWorker.visionModel/classificationModel/piiLlmModel when those
-  # are set -- an external endpoint must have every model this deployment
-  # uses provisioned on it, not just embeddingService.model. An
-  # OpenAI-API-compliant hosted model (as opposed to an Ollama-compatible
-  # one) is not yet supported -- see issue #401's Phase 2.
+  # Either this chart deploys a dedicated embedding-serving Ollama instance
+  # (enabled: true, default) or it connects to an already-running instance
+  # elsewhere (enabled: false + external.host below). Note this instance
+  # also serves ingestionWorker.visionModel/classificationModel/piiLlmModel
+  # when those are set -- an external endpoint must have every model this
+  # deployment uses provisioned on it, not just embeddingService.model.
   enabled: true
   # Only read when enabled is false.
   external:
@@ -349,8 +346,8 @@ embeddingService:
     port: 11434
     # true selects https:// for the URL built from host/port above.
     tls: false
-    # Issue #403: which wire protocol the endpoint above speaks.
-    # "ollama" (default) is Ollama's native /api/embeddings, unauthenticated
+    # Which wire protocol the endpoint above speaks. "ollama" (default) is
+    # Ollama's native /api/embeddings, unauthenticated
     # -- what the self-deployed instance (enabled: true) always speaks too,
     # and what any Ollama-*compatible* external endpoint speaks. "openai"
     # targets an OpenAI-API-compliant hosted model (vLLM, TGI, a cloud
@@ -645,8 +642,8 @@ networkPolicy:
   # Additional NetworkPolicyPeer entries for the backing stores, for callers
   # this chart does not deploy (a migration job, a debug pod, an operator).
   extraQdrantClients: []
-  # Issue #402: same idea, for the Milvus NetworkPolicy (only rendered when
-  # vectorBackend is "milvus").
+  # Same idea, for the Milvus NetworkPolicy (only rendered when vectorBackend
+  # is "milvus").
   extraMilvusClients: []
   extraEmbeddingClients: []
 

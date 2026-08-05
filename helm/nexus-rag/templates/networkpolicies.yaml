@@ -21,8 +21,8 @@ Scope and honest limits:
   the chart's services must reach an external Postgres, Keycloak, and object
   store (see values.yaml's externalPostgres/externalKeycloak/
   externalObjectStore), and, when qdrant/milvus/nats/embeddingService are
-  configured in external mode (issue #401), those addresses too -- none of
-  which this chart knows. A
+  configured in external mode, those addresses too -- none of which this
+  chart knows. A
   default-deny egress policy would have to be written against the actual
   cluster's CIDRs and DNS, which belongs with the deployment, not the chart.
   networkPolicy.denyEgressByDefault is offered for operators who want to opt
@@ -39,8 +39,8 @@ Scope and honest limits:
 */}}
 {{- if and (eq .Values.vectorBackend "qdrant") .Values.qdrant.enabled }}
 {{/*
-Issue #401: only meaningful when this chart is the one deploying Qdrant --
-an external Qdrant cluster's own ingress policy is that cluster's operator's
+Only meaningful when this chart is the one deploying Qdrant -- an external
+Qdrant cluster's own ingress policy is that cluster's operator's
 responsibility, not something this chart can express (it doesn't run there).
 */}}
 ---
@@ -81,11 +81,10 @@ spec:
 {{- end }}
 {{- if and (eq .Values.vectorBackend "milvus") .Values.milvus.enabled }}
 {{/*
-Issue #402: Milvus is the either/or alternative to Qdrant (#160) and holds
-the same cleartext chunk payload at every classification level, so it needs
-the same ingress protection Qdrant gets above -- previously missing
-entirely. Issue #401: only meaningful when this chart deploys Milvus itself,
-same reasoning as the Qdrant block above.
+Milvus is the either/or alternative to Qdrant and holds the same cleartext
+chunk payload at every classification level, so it needs the same ingress
+protection Qdrant gets above. Only meaningful when this chart deploys Milvus
+itself, same reasoning as the Qdrant block above.
 */}}
 ---
 apiVersion: networking.k8s.io/v1
@@ -146,8 +145,8 @@ spec:
           protocol: TCP
 {{- if .Values.embeddingService.enabled }}
 {{/*
-Issue #401: only meaningful when this chart deploys the embedding service
-itself -- an external instance's ingress policy isn't this chart's to set.
+Only meaningful when this chart deploys the embedding service itself -- an
+external instance's ingress policy isn't this chart's to set.
 */}}
 ---
 apiVersion: networking.k8s.io/v1
@@ -180,8 +179,8 @@ spec:
 {{- end }}
 {{- if .Values.nats.enabled }}
 {{/*
-Issue #401: only meaningful when this chart deploys NATS itself -- an
-external cluster's ingress policy isn't this chart's to set.
+Only meaningful when this chart deploys NATS itself -- an external
+cluster's ingress policy isn't this chart's to set.
 */}}
 ---
 apiVersion: networking.k8s.io/v1

@@ -3,8 +3,8 @@
 # alternative to the Qdrant StatefulSet, never deployed alongside it as the
 # active backend. Standalone mode with embedded etcd and local storage: the
 # single-node evaluation posture, matching the chart's single-node Qdrant.
-# Issue #401: also skipped when milvus.enabled is false -- that means an
-# external Milvus cluster instead (milvus.external.*).
+# Also skipped when milvus.enabled is false -- that means an external
+# Milvus cluster instead (milvus.external.*).
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

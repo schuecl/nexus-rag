@@ -94,10 +94,10 @@ capabilities:
 {{- end -}}
 
 {{/*
-Issue #401: Qdrant endpoint URL. qdrant.enabled (self-deploy) wins if true;
-otherwise qdrant.external.host must be set -- fails the render rather than
-silently emitting a broken URL, same reasoning as oidcRedirectUri below.
-Only meaningful when vectorBackend is "qdrant"; callers must gate on that
+Qdrant endpoint URL. qdrant.enabled (self-deploy) wins if true; otherwise
+qdrant.external.host must be set -- fails the render rather than silently
+emitting a broken URL, same reasoning as oidcRedirectUri below. Only
+meaningful when vectorBackend is "qdrant"; callers must gate on that
 themselves (this helper doesn't know the caller's context).
 */}}
 {{- define "nexus-rag.qdrantUrl" -}}
@@ -111,8 +111,8 @@ themselves (this helper doesn't know the caller's context).
 {{- end -}}
 
 {{/*
-Issue #401: Milvus endpoint URL, same enabled/external pattern as Qdrant
-above. Only meaningful when vectorBackend is "milvus".
+Milvus endpoint URL, same enabled/external pattern as Qdrant above. Only
+meaningful when vectorBackend is "milvus".
 */}}
 {{- define "nexus-rag.milvusUrl" -}}
 {{- if .Values.milvus.enabled -}}
@@ -125,7 +125,7 @@ above. Only meaningful when vectorBackend is "milvus".
 {{- end -}}
 
 {{/*
-Issue #401: NATS client URL, same enabled/external pattern as Qdrant above.
+NATS client URL, same enabled/external pattern as Qdrant above.
 */}}
 {{- define "nexus-rag.natsUrl" -}}
 {{- if .Values.nats.enabled -}}
@@ -138,10 +138,10 @@ Issue #401: NATS client URL, same enabled/external pattern as Qdrant above.
 {{- end -}}
 
 {{/*
-Issue #401: embedding-service endpoint URL, same enabled/external pattern as
-Qdrant above. The self-deployed instance always speaks Ollama's native API;
-an external instance may speak either that or an OpenAI-API-compliant one,
-selected by embeddingService.external.apiCompatibility (issue #403).
+Embedding-service endpoint URL, same enabled/external pattern as Qdrant
+above. The self-deployed instance always speaks Ollama's native API; an
+external instance may speak either that or an OpenAI-API-compliant one,
+selected by embeddingService.external.apiCompatibility.
 */}}
 {{- define "nexus-rag.embeddingUrl" -}}
 {{- if .Values.embeddingService.enabled -}}

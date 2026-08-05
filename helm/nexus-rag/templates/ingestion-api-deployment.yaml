@@ -56,7 +56,7 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
-            # #160/#401: either/or vector backend -- exactly one of the
+            # #160: either/or vector backend -- exactly one of the
             # QDRANT_*/MILVUS_* blocks below renders, matching vectorBackend.
             - name: VECTOR_BACKEND
               value: {{ .Values.vectorBackend | quote }}

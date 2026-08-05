@@ -58,7 +58,7 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
-            # #160/#401: either/or vector backend -- exactly one of the
+            # #160: either/or vector backend -- exactly one of the
             # QDRANT_*/MILVUS_* blocks below renders, matching vectorBackend.
             - name: VECTOR_BACKEND
               value: {{ .Values.vectorBackend | quote }}
@@ -129,9 +129,9 @@ spec:
               value: {{ include "nexus-rag.embeddingUrl" . | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
-            # Issue #403: which wire protocol OLLAMA_URL above speaks --
-            # "ollama" (default, common/embedding_client.py) or "openai" for
-            # an OpenAI-API-compliant hosted model.
+            # Which wire protocol OLLAMA_URL above speaks -- "ollama"
+            # (default, common/embedding_client.py) or "openai" for an
+            # OpenAI-API-compliant hosted model.
             - name: EMBEDDING_API_COMPATIBILITY
               value: {{ .Values.embeddingService.external.apiCompatibility | quote }}
             {{- if and (eq .Values.embeddingService.external.apiCompatibility "openai") .Values.embeddingService.external.apiKey.existingSecret }}
