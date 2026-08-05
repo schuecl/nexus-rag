@@ -182,8 +182,10 @@
           </span>
         </span>
         <!-- Issue #215: logout is a state change -- POST with the CSRF header,
-             not a link a third-party page can embed. -->
-        <button type="button" class="account-action" onclick="logout()">Log out</button>
+             not a link a third-party page can embed. Issue #443: wired below
+             via addEventListener rather than an inline handler attribute --
+             CSP's script-src nonce covers script elements, not those. -->
+        <button type="button" class="account-action" id="logoutButton">Log out</button>
       </div>
     </div>
   </header>
@@ -204,7 +206,7 @@
 
   {{ classification_banner('bottom') }}
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     // Auth is a browser session cookie (ARCHITECTURE.md Section 4.4).
     // Mutating requests also echo the sibling CSRF cookie in a header
     // (NFR-14); a cross-site caller cannot read this cookie.
@@ -228,6 +230,8 @@
       const data = await res.json();
       window.location.href = data.redirect || '/';
     }
+
+    document.getElementById('logoutButton')?.addEventListener('click', logout);
   </script>
   <script src="{{ url_for('static', path='/portal.js') }}" defer></script>
   {% block scripts %}{% endblock %}

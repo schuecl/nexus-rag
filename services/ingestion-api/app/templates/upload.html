@@ -350,7 +350,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
   window.portalUploadConfig = {
     noReleasabilityRestriction: {{ no_releasability_restriction | tojson }},
     maxUploadBytes: 52428800,

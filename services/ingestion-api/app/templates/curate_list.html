@@ -51,7 +51,7 @@ the only action available here; metadata editing requires a
       {% endfor %}
     </select>
   </label>
-  <button type="button" onclick="loadDocuments()">Refresh</button>
+  <button type="button" id="refreshDocumentsButton">Refresh</button>
   <span class="doc-count" id="docCount"></span>
 </div>
 
@@ -61,7 +61,7 @@ the only action available here; metadata editing requires a
 
 {% block scripts %}
 <script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}">
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
 const RELEASABILITY = {{ releasability | tojson }};
 // Issue #123: purge is a deliberately separate authority from curation (see
@@ -298,6 +298,7 @@ document.getElementById('docSearch').addEventListener('input', () => {
 });
 document.getElementById('docStatusFilter').addEventListener('change', loadDocuments);
 document.getElementById('docClassificationFilter').addEventListener('change', loadDocuments);
+document.getElementById('refreshDocumentsButton')?.addEventListener('click', loadDocuments);
 
 loadDocuments();
 </script>

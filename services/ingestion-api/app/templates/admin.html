@@ -206,7 +206,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
   const form = document.getElementById('bannerForm');
   const textEl = document.getElementById('bannerText');
   const levelEl = document.getElementById('bannerLevel');

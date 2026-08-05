@@ -10,14 +10,14 @@
 Correct Classification/Releasability/Access scope below before approving if the uploader's
 tags need fixing -- corrections are re-checked against your own curator authority
 the same as the original tags.</p>
-<button onclick="loadQueue()">Refresh</button>
+<button type="button" id="refreshQueueButton">Refresh</button>
 <div id="queue"></div>
 <div id="result" class="msg" hidden></div>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', path='/curation.js') }}?v={{ asset_version }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}">
 const CLASSIFICATIONS = {{ classifications | map(attribute=0) | list | tojson }};
 const RELEASABILITY = {{ releasability | tojson }};
 // Keyed by doc id from the last /curate/queue load -- approve() reads a
@@ -444,6 +444,7 @@ async function reject(id) {
   loadQueue();
 }
 
+document.getElementById('refreshQueueButton')?.addEventListener('click', loadQueue);
 loadQueue();
 </script>
 {% endblock %}

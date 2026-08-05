@@ -12,7 +12,7 @@
 </form>
 <div id="result" class="msg"></div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 document.getElementById('searchForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;

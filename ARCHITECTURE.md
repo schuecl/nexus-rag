@@ -405,6 +405,19 @@ Implementation notes:
   it back as a header, which a cross-site attacker can't. `deps.verify_csrf` checks
   cookie == header on every state-changing route, and is a no-op for bearer-token callers
   (no session cookie means nothing CSRF can forge in the first place).
+- Content-Security-Policy (#443): `app/csp.py`'s `ContentSecurityPolicyMiddleware`
+  generates one nonce per request (`request.state.csp_nonce`) and sends it as the CSP
+  header's `script-src` nonce-source on every response; every inline `<script>` block
+  across the nine templates carries `nonce="{{ csp_nonce }}"` to match, and `frame-ancestors
+  'none'`/`object-src 'none'`/`base-uri 'self'` close off the other injection vectors a CSP
+  covers. This is the defense-in-depth layer behind Jinja2 autoescaping (today's only
+  defense against a missed-escape XSS reaching a curator/admin session) — a future template
+  edit that reintroduces unescaped interpolation still can't get a `<script>` to execute
+  without also carrying that request's nonce. The four inline `onclick="..."` attributes
+  this required removing (base.html's logout button, curate.html/curate_list.html's
+  Refresh buttons, notifications.html's Refresh button) are now wired via
+  `addEventListener` instead — a nonce covers `<script>` elements, not attribute-based
+  event handlers, so those would otherwise have silently stopped firing under this policy.
 
 ### 4.5 Re-ingestion / versioning (FR-7)
 

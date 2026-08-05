@@ -36,7 +36,7 @@
 
 {% block scripts %}
 {% if login_popup_text %}
-<script>
+<script nonce="{{ csp_nonce }}">
   document.getElementById('bannerAccept').addEventListener('click', () => {
     document.getElementById('bannerModalBackdrop').remove();
     document.getElementById('loginButton').hidden = false;

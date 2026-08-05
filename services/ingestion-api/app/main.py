@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app import metrics
+from app.csp import ContentSecurityPolicyMiddleware
 from app.deps import get_current_user_optional
 from app.recovery import reconcile_forever
 from app.routes import admin, auth, curate, notifications, search, upload
@@ -90,6 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 APP_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
+# #443: per-response nonce + Content-Security-Policy header on every response.
+app.add_middleware(ContentSecurityPolicyMiddleware)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.middleware("http")(metrics.http_metrics_middleware)
 # #134: one request span per route, with incoming traceparent honored; the
@@ -167,7 +170,7 @@ def _asset_version() -> str:
 ASSET_VERSION = _asset_version()
 
 
-def _page_context(session: Session, current_user: UserClaims | None) -> dict:
+def _page_context(request: Request, session: Session, current_user: UserClaims | None) -> dict:
     """Context every rendered page needs.
 
     Issue #166: the classification banner goes through here rather than each
@@ -194,6 +197,10 @@ def _page_context(session: Session, current_user: UserClaims | None) -> dict:
         # context every page gets, not just _login_page's below.
         "app_name": (settings.app_name if settings else "") or DEFAULT_APP_NAME,
         "logo_url": (settings.logo_url if settings else "") or None,
+        # #443: every inline <script> block on the page must carry this same
+        # per-request value (app/csp.py's ContentSecurityPolicyMiddleware) or
+        # the CSP header sent alongside it blocks it from running.
+        "csp_nonce": request.state.csp_nonce,
     }
 
 
@@ -214,7 +221,7 @@ def _login_page(request: Request, session: Session) -> HTMLResponse:
     of whoever is or isn't signed in, so it belongs on this page too.
     """
     settings = session.get(PortalSettings, 1)
-    ctx = _page_context(session, None)
+    ctx = _page_context(request, session, None)
     ctx["login_button_text"] = (settings.login_button_text if settings else "") or (
         DEFAULT_LOGIN_BUTTON_TEXT
     )
@@ -239,7 +246,9 @@ def login_declined_page(
     acceptance popup. No current_user dependency at all -- a visitor who just
     declined the banner is by definition not signed in yet, and this page
     itself requires no authority to view."""
-    return templates.TemplateResponse(request, "login_declined.html", _page_context(session, None))
+    return templates.TemplateResponse(
+        request, "login_declined.html", _page_context(request, session, None)
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -251,7 +260,7 @@ def upload_page(
     if current_user is None:
         return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
-    ctx.update(_page_context(session, current_user))
+    ctx.update(_page_context(request, session, current_user))
     return templates.TemplateResponse(request, "upload.html", ctx)
 
 
@@ -273,7 +282,9 @@ def admin_page(
     """
     if current_user is None:
         return _login_page(request, session)
-    return templates.TemplateResponse(request, "admin.html", _page_context(session, current_user))
+    return templates.TemplateResponse(
+        request, "admin.html", _page_context(request, session, current_user)
+    )
 
 
 @app.get("/curate", response_class=HTMLResponse)
@@ -285,7 +296,7 @@ def curate_page(
     if current_user is None:
         return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
-    ctx.update(_page_context(session, current_user))
+    ctx.update(_page_context(request, session, current_user))
     return templates.TemplateResponse(request, "curate.html", ctx)
 
 
@@ -309,7 +320,7 @@ def curate_list_page(
     if current_user is None:
         return _login_page(request, session)
     ctx = _live_controlled_vocab(session)
-    ctx.update(_page_context(session, current_user))
+    ctx.update(_page_context(request, session, current_user))
     return templates.TemplateResponse(request, "curate_list.html", ctx)
 
 
@@ -322,7 +333,7 @@ def notifications_page(
     if current_user is None:
         return _login_page(request, session)
     return templates.TemplateResponse(
-        request, "notifications.html", _page_context(session, current_user)
+        request, "notifications.html", _page_context(request, session, current_user)
     )
 
 
@@ -334,7 +345,9 @@ def search_page(
 ) -> HTMLResponse:
     if current_user is None:
         return _login_page(request, session)
-    return templates.TemplateResponse(request, "search.html", _page_context(session, current_user))
+    return templates.TemplateResponse(
+        request, "search.html", _page_context(request, session, current_user)
+    )
 
 
 @app.get("/kb", response_class=HTMLResponse)
@@ -356,5 +369,5 @@ def kb_page(
     # same reasoning as upload_page below -- can't drift from what
     # POST /documents/batch enforces.
     ctx = _live_controlled_vocab(session)
-    ctx.update(_page_context(session, current_user))
+    ctx.update(_page_context(request, session, current_user))
     return templates.TemplateResponse(request, "kb.html", ctx)

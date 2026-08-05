@@ -3,12 +3,12 @@
 {% block content %}
 <h1>Notifications</h1>
 <p>Decisions on documents you submitted. Unread ones are highlighted.</p>
-<button onclick="loadNotifications()">Refresh</button>
+<button type="button" id="refreshNotificationsButton">Refresh</button>
 <div id="notifications"></div>
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 async function loadNotifications() {
   const res = await fetch('/notifications/list', { headers: authHeaders() });
   const el = document.getElementById('notifications');
@@ -57,6 +57,7 @@ async function markRead(id) {
   loadNotifications();
 }
 
+document.getElementById('refreshNotificationsButton')?.addEventListener('click', loadNotifications);
 loadNotifications();
 </script>
 {% endblock %}

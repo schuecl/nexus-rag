@@ -49,6 +49,10 @@ def _request(path: str = "/") -> Request:
             "headers": [],
             # base.html's `url_for('static', ...)` needs a real app in scope.
             "app": main.app,
+            # #443: normally set by app.csp.ContentSecurityPolicyMiddleware,
+            # which this suite bypasses along with the rest of main.py's
+            # middleware stack.
+            "state": {"csp_nonce": "test-nonce"},
         }
     )
 

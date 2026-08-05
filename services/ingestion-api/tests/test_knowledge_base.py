@@ -45,6 +45,10 @@ def _request(path: str = "/kb") -> Request:
             "query_string": b"",
             "headers": [],
             "app": main.app,
+            # #443: normally set by app.csp.ContentSecurityPolicyMiddleware,
+            # which this suite bypasses along with the rest of main.py's
+            # middleware stack.
+            "state": {"csp_nonce": "test-nonce"},
         }
     )
 
