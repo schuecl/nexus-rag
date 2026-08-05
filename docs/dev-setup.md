@@ -1112,7 +1112,11 @@ the docs, not a silent "it works" — flag it if you find one.
   the access filter applied to *both* legs so neither can be used to bypass FR-26. The
   fused candidates are then reranked by `reranker-service` (`app/reranking.py`), with a
   graceful fallback to the fused order (noted in the response, not hidden) if that
-  service is unreachable.
+  service is unreachable. After ranking (either path), same-document chunks whose
+  indices are adjacent are collapsed to the better-ranked one and the freed slot is
+  backfilled from the rest of the candidate pool, since FR-4's chunk overlap means
+  neighbouring chunks share text by construction (#395); the response note reports
+  how many were collapsed.
 - **Re-ingestion/versioning (FR-7)** — an uploader can mark a submission as superseding
   an existing approved document (`supersedes_document_id`, validated server-side against
   the submitter's org/clearance/releasability, not just that the target exists —
