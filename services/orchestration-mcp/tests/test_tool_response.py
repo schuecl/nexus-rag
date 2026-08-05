@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.rag_search import format_rag_search_for_model
+from app.rag_search import SECURITY_NOTICE, format_rag_search_for_model
 
 
 def _result() -> dict:
@@ -78,3 +78,17 @@ def test_error_is_plain_text():
         format_rag_search_for_model({"error": "missing rag-query role"})
         == "Retrieval failed: missing rag-query role"
     )
+
+
+def test_response_carries_the_full_security_notice():
+    # Issue #427: format_rag_search_for_model is what the real `rag_search`
+    # MCP tool returns to a calling model -- unlike the /debug/rag_search
+    # route, which returns the diagnostic `result` dict (and its
+    # `security_notice` field) as-is. Before this fix, this function never
+    # included SECURITY_NOTICE at all, so its persona/roleplay-reframing
+    # guidance never reached the model that matters.
+    response = format_rag_search_for_model(_result())
+
+    assert SECURITY_NOTICE in response
+    assert "persona" in response
+    assert "roleplay" in response

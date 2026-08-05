@@ -81,8 +81,37 @@ changed in the running system, with the issue/PR reference for the trail.
   endpoint literals and credential path are addressed; the section enumerates
   exactly what those are.
 
+### Security
+
+- Strengthened `orchestration-mcp`'s retrieved-content `SECURITY_NOTICE` to
+  name persona/roleplay/compliance-marker reframing explicitly, targeting
+  the residual gap issue #97's live evaluation found (a DAN-style injection
+  got a partial compliance out of both dev-default generation models even
+  though the notice was in place). More significant: found and fixed that
+  `format_rag_search_for_model` — the function that builds the text the
+  real `rag_search` MCP tool actually returns to a calling model — had
+  never included `SECURITY_NOTICE` at all; only a short, independently
+  worded line ever reached LibreChat's agent, so #97's finding was measured
+  against a materially weaker notice than the `/debug/rag_search` JSON
+  response carries. Both surfaces now carry identical wording (#427).
+  Also: `common/content_advisory.py`'s curator-facing advisory scan
+  (issue #284) gained DAN/roleplay-marker phrases, giving a curator
+  visibility into this injection style at approval time. Implemented and
+  the tool-call wiring fix was directly exercised against a running
+  `orchestration-mcp`; a live re-run of `scripts/adversarial_injection_probe.py`
+  confirming the strengthened wording changes real generation-model
+  behavior was attempted but not completed cleanly this session (unrelated
+  dev-environment issues — see REQUIREMENTS.md Section 11) and is still
+  needed.
+
 ### Fixed
 
+- `scripts/adversarial_injection_probe.py`'s `_force_clear_mcp_tokens`
+  matched stored MCP OAuth token identifiers against `^mcp:{server}:` (a
+  trailing colon), but LibreChat actually stores the bare `mcp:{server}`
+  with no trailing colon or suffix — so a stale token was never actually
+  cleared before a reconnect attempt, silently defeating the "force clear"
+  the function exists to do (#427, found live while re-running the probe).
 - `scripts/seed_sample_data.py` is now idempotent: a re-run resumes or skips
   each of its 7 sample documents based on prior-run state (`/documents/mine`)
   instead of unconditionally resubmitting them (#411, #413). Previously every
