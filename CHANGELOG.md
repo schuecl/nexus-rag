@@ -52,6 +52,17 @@ changed in the running system, with the issue/PR reference for the trail.
   score the ranking actually sorted on, so it composes with `#419`'s external
   reranker modes — re-tune it against whatever model that endpoint serves.
 
+- `docs/observability.md` now documents how to run the Q→C→A evaluation on a
+  schedule instead of by hand (#388): the CronJob shape that publishes to the
+  in-cluster Pushgateway with no `kubectl port-forward`, the credentials such a
+  run needs, and the two settings that quietly defeat it (a fail-closed
+  evaluator skipping its own publish step on the regression run that matters
+  most, and a non-persistent history directory leaving every run baseline-less).
+  Documentation only — the chart deliberately ships no such template yet,
+  because `evaluate_rag_quality.py` cannot run unattended until its `localhost`
+  endpoint literals and credential path are addressed; the section enumerates
+  exactly what those are.
+
 ### Fixed
 
 - `scripts/seed_sample_data.py` is now idempotent: a re-run resumes or skips
