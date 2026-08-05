@@ -135,6 +135,11 @@ When NetworkPolicy is enabled, in-cluster writers must be in
 `networkPolicy.allowedNamespaces`. Do not change the Service to LoadBalancer
 without adding the environment's approved authentication and network controls.
 
+For running this on a schedule instead of by hand — the CronJob shape, the
+credentials the evaluator would need, and why the chart does not ship that
+template yet — see "Running it unattended" in
+[`docs/observability.md`](../../docs/observability.md) (#388).
+
 ### Three dashboards need pre-staged plugins
 
 `nexus-rag-system-flow.json` requires `andrewbmchugh-flow-panel`,

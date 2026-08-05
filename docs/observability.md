@@ -223,6 +223,154 @@ The aggregate gauges are intentionally neutral blue. Judge scores are relative,
 so only the publisher's same-configuration baseline decision is rendered as a
 red/green regression state.
 
+### Running it unattended (#388)
+
+Everything above is a manual two-step: an admin runs `evaluate_rag_quality.py`,
+then `publish_rag_quality_metrics.py`, usually through a `kubectl port-forward`.
+That is the right shape for validation and the wrong one for a steady state —
+the trend, baseline-delta, and regression panels only advance when someone
+remembers to run both scripts.
+
+**Scheduling the publisher alone would not fix that.** Pushgateway holds what it
+is given until something overwrites it, and Prometheus scrapes it on the normal
+interval, so a single push already yields a continuous series. Re-pushing an
+unchanged report on a timer produces a newer push timestamp over the same
+measurement, not a new measurement. The step worth scheduling is the *evaluator*;
+publishing is its last line.
+
+#### Why the evaluator is not schedulable as it stands
+
+`evaluate_rag_quality.py` is host-side by construction, not by oversight. It
+imports its login and generation path from
+[`adversarial_injection_probe.py`](../scripts/adversarial_injection_probe.py),
+whose docstring already explains why *that* script cannot run as a container on
+the Compose network. The same facts block an in-cluster CronJob:
+
+| What | Where | Why it blocks an unattended run |
+|---|---|---|
+| Endpoints are literals, not configuration | `adversarial_injection_probe.py`'s `KEYCLOAK_URL`, `KEYCLOAK_HTTPS_URL`, `LIBRECHAT_URL`, `INGESTION_API_URL` | Module constants pointing at `localhost` and the `keycloak` `/etc/hosts` alias, with no environment override. `evaluate_rag_quality.py` makes only `ORCHESTRATION_MCP_URL`/`OLLAMA_URL` overridable — contrast `evaluate_retrieval.py`, which reads every endpoint from the environment and is exactly why *it* runs as a one-shot container. |
+| Both redirect URIs are `https://localhost:3080` | `infra/librechat/librechat.yaml`'s `DOMAIN_SERVER` | LibreChat's OIDC redirect and the `rag` MCP server's OAuth redirect resolve only from the host running the stack, and the scripted login follows that exact chain. A real deployment's LibreChat has its own URI, which nothing here reads. |
+| Login is a Keycloak password grant as a seeded user | `scripts/_keycloak.py`'s `SEED_PASSWORD` | A dev constant, and a human password grant is the wrong credential to put on a timer (below). |
+| The LibreChat session JWT is minted directly | same technique as `create_librechat_agent.sh` | Needs LibreChat's JWT signing secret at run time. |
+| `--agent-id` refers to a manually created agent | `scripts/create_librechat_agent.sh` | Nothing creates or discovers it automatically. This is the same prerequisite that keeps #383's harness out of CI. |
+| No published image carries these scripts | `scripts/Dockerfile`, built from context by Compose | The chart publishes four images and this is not one of them, so the job's image must be built, pushed to the environment's registry, and pinned (NFR-16) first. |
+
+Making those endpoints configurable is the smallest real unblocking step, and it
+is deliberately **not** done here — it changes a security-probe script that
+cannot be re-validated against a live LibreChat from this repo, and it would
+still leave the credential questions below open.
+
+#### Credentials and tokens an unattended run would need
+
+The issue asks what provisioning is required. Concretely:
+
+- **A non-interactive identity.** The evaluator authenticates as `EVAL_PERSONA`
+  (default `dave-admin`) — an admin persona chosen so access filtering does not
+  truncate golden-set coverage. That is defensible for an operator-run
+  measurement and a broad standing credential to hand a timer: it can read every
+  classification in the corpus. A scheduled run should use a dedicated
+  evaluation account carrying exactly the clearance and releasability the golden
+  set needs, provisioned as the environment's approved non-interactive
+  credential — not a password grant against a person's account.
+- **LibreChat's JWT signing secret**, mounted as a Secret, for the session JWT.
+- **The per-user MCP OAuth consent.** The probe automates the browser "Connect"
+  step by reusing the Keycloak SSO cookie from its own login; the scheduled
+  identity still needs that consent to exist, or to be re-established each run,
+  before `rag_search` is callable at all.
+- **Token lifetime shorter than the run.** `accessTokenLifespan` is 900 s in
+  dev and a CPU-bound judge run outlives it, which is why the evaluator
+  re-mints before every case. Any scheduled wrapper must keep that behavior
+  rather than authenticating once up front.
+- **For the publish step only:** `--bearer-token-file` and `--ca-file` where the
+  gateway sits behind an authenticating proxy. Credentials are never accepted in
+  the URL.
+
+#### The CronJob shape, once those are met
+
+Publishing goes straight to the ClusterIP Service — no port-forward. The job's
+namespace must appear in the observability release's
+`networkPolicy.allowedNamespaces`, which is what its Pushgateway policy admits.
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rag-quality-evaluation
+  namespace: nexus-rag          # must be in networkPolicy.allowedNamespaces
+spec:
+  schedule: "0 2 * * *"         # the --profile nightly example above
+  concurrencyPolicy: Forbid     # a judge run can outlast its own interval
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0           # a re-run is a new measurement, not a retry
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: evaluate-and-publish
+              image: registry.example/nexus-rag-scripts:<pinned-tag>
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  python3 evaluate_rag_quality.py \
+                    --agent-id "$AGENT_ID" \
+                    --no-fail-on-regression \
+                    --history-dir /var/lib/qca \
+                    --baseline /var/lib/qca/baseline.json \
+                    --output /var/lib/qca/current.json
+                  python3 publish_rag_quality_metrics.py \
+                    --report /var/lib/qca/current.json \
+                    --baseline /var/lib/qca/baseline.json \
+                    --profile nightly \
+                    --pushgateway-url "$RAG_QUALITY_PUSHGATEWAY_URL"
+              env:
+                - name: RAG_QUALITY_PUSHGATEWAY_URL
+                  value: >-
+                    http://nexus-rag-obs-observability-pushgateway.observability.svc.cluster.local:9091
+                - name: AGENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: rag-quality-eval
+                      key: agent-id
+              volumeMounts:
+                - name: history
+                  mountPath: /var/lib/qca
+          volumes:
+            - name: history
+              persistentVolumeClaim:
+                claimName: rag-quality-eval-history
+```
+
+Two things in there are load-bearing and easy to get wrong:
+
+- **`--no-fail-on-regression` is deliberate.** The evaluator is fail-closed by
+  default: a regression against the baseline makes it exit non-zero. Under
+  `set -e` that skips the publish step, so the one run whose numbers most need
+  to reach the dashboard is the one that never publishes them. The publisher
+  computes its own same-configuration regression verdict, and the dashboard
+  renders *that*, so let the evaluation report land and read the verdict there.
+  Keep the fail-closed default for interactive and gating use.
+- **The volume is not optional.** `--history-dir`/`--baseline` have to survive
+  between runs. On an `emptyDir` every run is baseline-less, the delta and
+  regression panels stay empty, and the result is the reported problem with a
+  schedule attached.
+
+#### Status
+
+Documented pattern, not a shipped template. The chart does not include this
+CronJob, on purpose: the evaluator cannot run unattended until at least the
+endpoint-configuration and credential items above are resolved, and a chart
+template that renders cleanly while being unable to work would read as a
+supported feature. That is the same reasoning `docs/governance.md` applies to
+the retention job it also declines to ship. None of the manifest above has been
+run against a cluster — it is the shape the pieces imply, checked against the
+chart's actual Service name, port, and NetworkPolicy, not an executed
+configuration.
+
 ## Alerts
 
 10 rules in three groups, in `infra/observability/prometheus/rules/nexus-rag.yml`

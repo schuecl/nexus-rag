@@ -111,6 +111,13 @@ judge is useful for comparing two
 configurations, not for an absolute quality claim. Baselines are therefore
 rejected when the judge model, judge-prompt version, or golden-set hash differs.
 
+"Manual, host-side" in the table above is a property of the script, not just a
+convention: its login and generation path come from
+`adversarial_injection_probe.py`, whose endpoints and redirect URIs are
+`localhost` literals. `docs/observability.md`'s "Running it unattended" (#388)
+enumerates what would have to change for this to run on a schedule in a cluster,
+and what credentials such a run would need.
+
 **`abstention_accuracy` is diagnostic only — it is not a quality score (#386).**
 Measured on the travel-policy-abstention case with the four approved
 sample-corpus documents as context, 3 runs per cell:
