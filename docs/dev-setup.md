@@ -1998,6 +1998,18 @@ the docs, not a silent "it works" — flag it if you find one.
   OpenAI-API-compliant server (a local vLLM instance, etc.) was reachable in this
   environment to validate the `"openai"` path end-to-end. Treat that path as implemented and
   unit-tested, not yet live-validated, until someone runs it against a real endpoint.
+- **Batched chunk embedding (issue #396)** — `ingestion-worker/app/embedding.py`'s
+  `embed_texts` sends `EMBEDDING_BATCH_SIZE` (default 32) chunks per request through the
+  new `common.embedding_client.request_embeddings` instead of one request per chunk;
+  `orchestration-mcp`'s single-text query embed is unchanged. **Validated against a live
+  environment**: against a real Ollama in the compose stack, a document's chunks came back
+  as distinct vectors across multiple batches in input order, and an over-context chunk
+  raised the worker's permanent-failure path (via `truncate: false`) instead of silently
+  storing a truncated vector. **Tested against mocks only**: the 404-fallback path for an
+  older Ollama predating `/api/embed` (`respx`-mocked, not exercised against a genuinely old
+  pinned image) and the OpenAI-compatible batch path's out-of-order `index` handling. Not
+  measured: throughput against a GPU-backed or remote endpoint, the case the batching
+  argument actually rests on — see PR #410 for the CPU-only numbers showing no change there.
 
 ## Resetting
 

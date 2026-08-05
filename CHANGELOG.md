@@ -39,6 +39,24 @@ changed in the running system, with the issue/PR reference for the trail.
   unparseable value falls back to the 1800s default with a `WARNING` log
   rather than crashing the service at startup, since the parse runs at import
   of `common.db`, which all three services import.
+- `ingestion-worker` now batches chunk embedding requests through Ollama's
+  `/api/embed` (or the OpenAI-compatible endpoint's native array `input`)
+  instead of one `/api/embeddings` request per chunk, bounded by
+  `EMBEDDING_BATCH_SIZE` (`ingestionWorker.embeddingBatchSize` in the chart,
+  default 32) (#396, closes #396). Cuts a 100-chunk document from 100 round
+  trips to 4, which matters most against a remote/GPU-backed endpoint where
+  per-request latency, not model compute, dominates; measured no throughput
+  change on the CPU-only dev stack, where per-chunk compute already
+  dominates. Response vector order is asserted against input order, not
+  assumed, and a count mismatch is a permanent failure rather than a
+  guessed alignment. Sends `truncate: false` so an over-context chunk still
+  errors loudly (matching the legacy endpoint's behavior that
+  `app/chunking.py`'s size bounds were built against) instead of silently
+  storing a tail-truncated vector. An older pinned Ollama without
+  `/api/embed` (404) falls back to the pre-batch per-chunk behavior,
+  logged once per endpoint. An unparseable or `< 1` value falls back to the
+  default 32 with a `WARNING` log, same degrade-loudly discipline as
+  `DB_POOL_RECYCLE_SECONDS` above.
 - Embedding requests can now target an OpenAI-API-compliant hosted model
   (vLLM, TGI, a cloud embedding endpoint), not just an Ollama-compatible one
   (#403, Phase 2 of #401): `ingestion-worker`'s `embed_texts` and
