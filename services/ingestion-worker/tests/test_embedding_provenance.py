@@ -20,6 +20,7 @@ import pytest
 
 from app import processing
 from app.chunking import Chunk
+from common.embedding_prefixes import embedding_identity
 from common.qdrant_store import EMBEDDING_MODEL_KEY
 
 
@@ -119,7 +120,11 @@ class TestChunkProvenance:
 
         assert terminal is True
         assert points, "sanity: a point was upserted"
-        assert points[0].payload[EMBEDDING_MODEL_KEY] == processing.EMBEDDING_MODEL
+        # #392: the stamp is the embedding identity (folds in prefix-scheme
+        # state), not the bare model name -- see test_embedding_prefixes.py.
+        assert points[0].payload[EMBEDDING_MODEL_KEY] == embedding_identity(
+            processing.EMBEDDING_MODEL
+        )
 
     async def test_chunk_records_when_it_was_embedded(self, captured):
         doc, points = captured

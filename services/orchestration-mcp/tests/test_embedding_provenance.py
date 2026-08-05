@@ -18,6 +18,7 @@ import pytest
 
 from app import rag_search
 from common import qdrant_store
+from common.embedding_prefixes import embedding_identity
 
 
 class _Claims:
@@ -171,7 +172,7 @@ def _patch_store_model(monkeypatch, model_fn):
 class TestMismatchDetection:
     def test_matching_model_permits_the_query(self, monkeypatch):
         monkeypatch.setattr(rag_search, "EMBEDDING_MODEL", "nomic-embed-text")
-        _patch_store_model(monkeypatch, lambda: "nomic-embed-text")
+        _patch_store_model(monkeypatch, lambda: embedding_identity("nomic-embed-text"))
 
         assert rag_search._embedding_model_mismatch() is None
 
@@ -183,6 +184,17 @@ class TestMismatchDetection:
 
         assert msg is not None
         assert "nomic-embed-text" in msg and "all-minilm" in msg
+
+    def test_pre_392_unprefixed_corpus_is_reported_as_mismatch(self, monkeypatch):
+        """Issue #392: a corpus embedded before prefixing was added carries
+        the bare model name in its stamp. Same EMBEDDING_MODEL, but the
+        passage vectors were never prefixed, so this must still refuse."""
+        monkeypatch.setattr(rag_search, "EMBEDDING_MODEL", "nomic-embed-text")
+        _patch_store_model(monkeypatch, lambda: "nomic-embed-text")
+
+        msg = rag_search._embedding_model_mismatch()
+
+        assert msg is not None
 
     def test_unknown_provenance_does_not_block(self, monkeypatch):
         """Upgrading a deployment with an existing corpus must not break it."""

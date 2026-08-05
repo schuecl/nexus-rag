@@ -1567,6 +1567,33 @@ the docs, not a silent "it works" — flag it if you find one.
   surfaced separately during this validation (38 undeliverable JetStream messages blocking
   fresh ones) — unrelated to this change, resolved by recreating those volumes, not a bug in
   the re-embedding path itself.
+- **Missing `search_document:`/`search_query:` task prefixes on nomic-embed-text (issue
+  #392)** — both embedding call sites (`ingestion-worker/app/embedding.py`'s `embed_texts`,
+  `orchestration-mcp/app/rag_search.py`'s `_embed_query`) sent raw chunk/query text with no
+  task-instruction prefix, which nomic-embed-text v1/v1.5's asymmetric training requires;
+  nothing errored or looked broken, dense retrieval was just quietly worse than the model
+  can do. Fixed by a shared, model-gated prefix lookup
+  (`common/embedding_prefixes.py` — an unrecognized `EMBEDDING_MODEL` still gets no prefix,
+  same as before this fix) applied at both call sites, and by folding prefix-scheme state
+  into the #122 stamped embedding identity (`embedding_identity()`) so a corpus embedded
+  before this fix is *refused* rather than silently compared against newly-prefixed
+  queries, the same fail-closed behavior a genuine model change already got. **Validated
+  against a live environment** (2026-08-05): confirmed the running dev corpus (stamped
+  `nomic-embed-text`, pre-fix) was refused by `/debug/rag_search` with the #122 mismatch
+  error once the fix was deployed, ran `python -m app.reembed` and confirmed all 31 chunks
+  across all three classifications re-embedded and the same query then succeeded. Also ran
+  `scripts/evaluate_retrieval.py` before (pre-fix code, corpus re-stamped bare
+  `nomic-embed-text` to reproduce the old state) and after (post-fix code, re-embedded),
+  using `--baseline`/`--history-dir`: `mean_recall_at_k` and `mean_precision_at_k` were
+  identical (1.0 / 0.2) both times, with 0 forbidden-document leaks in either run — no FR-26
+  regression, but this repo's 5-query golden set is small and already at ceiling for these
+  personas/queries, and BM25's keyword leg dominates RRF fusion for short factual queries,
+  so this harness could not isolate whatever improvement the dense leg alone gained. The
+  deeper, judge-scored Q-to-C-to-A harness (`scripts/evaluate_rag_quality.py`, #383 —
+  `contextual_relevancy`/`contextual_precision` are order-sensitive and score the dense
+  ranking more directly) is a better instrument for this but needs a manually created
+  LibreChat RAG Assistant (`--agent-id`) first; running it before/after this fix is left as
+  an operator follow-up (issue #397).
 - **NATS JetStream infrastructure and the `ingestion-worker` service (NFR-11)** — a `nats`
   service (`nats:2.14.3-alpine`, `-js` for JetStream, token-authenticated via `--auth`,
   monitoring endpoint on 8222 for the healthcheck, client port on 4222) plus

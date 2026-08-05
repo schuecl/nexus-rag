@@ -55,6 +55,7 @@ from app.chunking import chunk_sections
 from app.embedding import EMBEDDING_MODEL, EmbeddingError, embed_texts
 from app.parsing import OcrStatus, ParsingError, parse_document
 from common.db import get_engine, init_db
+from common.embedding_prefixes import embedding_identity
 from common.log_safety import log_safe
 from common.models import AuditLogEntry, Document
 from common.object_store import get_object_store
@@ -138,7 +139,7 @@ async def _reembed_one_document(document_id: uuid.UUID, classification: str) -> 
                     "heading": chunk.heading,
                     "page_or_slide": chunk.page_or_slide,
                     "content_type": chunk.content_type,
-                    EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
+                    EMBEDDING_MODEL_KEY: embedding_identity(EMBEDDING_MODEL),
                     "embedded_at": datetime.now(UTC).isoformat(),
                     "filename": doc.filename,
                     "doc_type": doc.doc_type,
@@ -184,11 +185,13 @@ def _needs_reembedding(document_id: uuid.UUID, classification: str) -> bool:
     right question for rag_search's gate but the wrong one here -- this needs
     "does *this document's* chunks", so a batch spanning several
     classifications skips exactly the documents that don't need it,
-    regardless of what any other collection looks like."""
+    regardless of what any other collection looks like. Compares against the
+    #392 embedding identity, not the bare model name, so a corpus embedded
+    before #392's prefixing fix is treated as needing re-embedding too."""
     existing = get_store().fetch_document_chunks(str(document_id), classification)
     if not existing:
         return True
-    return existing[0].get(EMBEDDING_MODEL_KEY) != EMBEDDING_MODEL
+    return existing[0].get(EMBEDDING_MODEL_KEY) != embedding_identity(EMBEDDING_MODEL)
 
 
 async def _reembed_classifications_async(

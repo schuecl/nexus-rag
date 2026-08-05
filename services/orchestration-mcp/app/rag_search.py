@@ -48,6 +48,7 @@ from app.reranking import rerank
 from common.claims import UserClaims, parse_claims
 from common.classification import allowed_classifications
 from common.db import get_session
+from common.embedding_prefixes import embedding_identity, query_prefix
 from common.log_safety import log_safe
 from common.models import AuditLogEntry
 from common.sparse_embedding import embed_sparse
@@ -175,6 +176,13 @@ def _embedding_model_mismatch() -> str | None:
     an error, or upgrading would break every deployment with an existing
     corpus. Those cases are logged once instead; the check becomes
     authoritative for a collection after its first stamped ingestion.
+
+    Issue #392: compares against `embedding_identity(EMBEDDING_MODEL)`, not
+    the raw model name, so a corpus embedded before #392 added
+    search_document:/search_query: prefixing also fails closed here -- same
+    EMBEDDING_MODEL name, but its passage vectors are no longer comparable to
+    prefixed query vectors, which is exactly the silent-degradation case
+    this check exists to catch.
     """
     global _embedding_model_checked  # noqa: PLW0603 -- log-once flag, see below
     try:
@@ -194,14 +202,14 @@ def _embedding_model_mismatch() -> str | None:
             )
             _embedding_model_checked = True
         return None
-    if stored != EMBEDDING_MODEL:
+    identity = embedding_identity(EMBEDDING_MODEL)
+    if stored != identity:
         return (
             f"embedding model mismatch: the {backend_name()} collection was built with "
-            f"'{stored}' but this service is configured to query with "
-            f"'{EMBEDDING_MODEL}'. Dense retrieval would compare vectors from different "
-            "embedding spaces and silently return noise, so the query is refused. "
-            "Re-embed the corpus with the configured model, or point EMBEDDING_MODEL "
-            "back at the one that built the collection."
+            f"'{stored}' but this service embeds queries as '{identity}'. Dense retrieval "
+            "would compare vectors from different embedding spaces and silently return "
+            "noise, so the query is refused. Re-embed the corpus (python -m app.reembed), "
+            "or point EMBEDDING_MODEL back at the one that built the collection."
         )
     return None
 
@@ -313,10 +321,14 @@ def format_rag_search_for_model(result: dict) -> str:
 
 
 async def _embed_query(query: str) -> list[float]:
+    # Issue #392: the query-side counterpart to embed_texts' document_prefix
+    # in ingestion-worker -- the two must agree on which model gets which
+    # prefix, hence the shared common.embedding_prefixes lookup.
+    prefix = query_prefix(EMBEDDING_MODEL)
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{OLLAMA_URL}/api/embeddings",
-            json={"model": EMBEDDING_MODEL, "prompt": query},
+            json={"model": EMBEDDING_MODEL, "prompt": prefix + query},
         )
         resp.raise_for_status()
         return resp.json()["embedding"]

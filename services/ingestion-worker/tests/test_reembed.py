@@ -14,6 +14,7 @@ import pytest
 from app import reembed
 from app.chunking import Chunk
 from app.parsing import ParsingError
+from common.embedding_prefixes import embedding_identity
 from common.qdrant_store import EMBEDDING_MODEL_KEY
 
 
@@ -110,9 +111,19 @@ class TestNeedsReembedding:
         assert reembed._needs_reembedding(uuid.uuid4(), "CUI") is True
 
     def test_false_when_stamped_model_already_matches(self, monkeypatch):
-        store = _FakeVectorStore({"d1": [{EMBEDDING_MODEL_KEY: reembed.EMBEDDING_MODEL}]})
+        store = _FakeVectorStore(
+            {"d1": [{EMBEDDING_MODEL_KEY: embedding_identity(reembed.EMBEDDING_MODEL)}]}
+        )
         monkeypatch.setattr(reembed, "get_store", lambda: store)
         assert reembed._needs_reembedding("d1", "CUI") is False
+
+    def test_true_when_stamped_with_bare_model_name_pre_392(self, monkeypatch):
+        """A corpus embedded before #392 added prefixing carries the bare
+        model name, which must now read as stale even though EMBEDDING_MODEL
+        itself hasn't changed -- its passage vectors were never prefixed."""
+        store = _FakeVectorStore({"d1": [{EMBEDDING_MODEL_KEY: reembed.EMBEDDING_MODEL}]})
+        monkeypatch.setattr(reembed, "get_store", lambda: store)
+        assert reembed._needs_reembedding("d1", "CUI") is True
 
     def test_true_when_stamped_model_differs(self, monkeypatch):
         store = _FakeVectorStore({"d1": [{EMBEDDING_MODEL_KEY: "some-old-model"}]})
@@ -147,7 +158,7 @@ class TestReembedClassifications:
         assert point.payload["releasability"] == ["FVEY"]
         assert point.payload["access_scope"] == ["USAREUR-AF"]
         assert point.payload["status"] == "approved"
-        assert point.payload[EMBEDDING_MODEL_KEY] == reembed.EMBEDDING_MODEL
+        assert point.payload[EMBEDDING_MODEL_KEY] == embedding_identity(reembed.EMBEDDING_MODEL)
 
     def test_skips_a_document_already_on_the_current_model(self, monkeypatch):
         doc_id = uuid.uuid4()
@@ -156,7 +167,9 @@ class TestReembedClassifications:
             monkeypatch,
             docs={doc_id: doc},
             rows=[(doc_id, "CUI")],
-            existing_chunks_by_doc={str(doc_id): [{EMBEDDING_MODEL_KEY: reembed.EMBEDDING_MODEL}]},
+            existing_chunks_by_doc={
+                str(doc_id): [{EMBEDDING_MODEL_KEY: embedding_identity(reembed.EMBEDDING_MODEL)}]
+            },
         )
 
         report = reembed.reembed_classifications(["CUI"])
@@ -172,7 +185,9 @@ class TestReembedClassifications:
             monkeypatch,
             docs={doc_id: doc},
             rows=[(doc_id, "CUI")],
-            existing_chunks_by_doc={str(doc_id): [{EMBEDDING_MODEL_KEY: reembed.EMBEDDING_MODEL}]},
+            existing_chunks_by_doc={
+                str(doc_id): [{EMBEDDING_MODEL_KEY: embedding_identity(reembed.EMBEDDING_MODEL)}]
+            },
         )
 
         report = reembed.reembed_classifications(["CUI"], force=True)

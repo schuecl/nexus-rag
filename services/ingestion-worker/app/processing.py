@@ -37,6 +37,7 @@ from app.parsing import OcrStatus, ParsedSection, ParsingError, parse_document
 from app.pii_llm_advisory import pii_llm_enabled, suggest_pii_llm_findings, verify_pii_findings
 from common.content_advisory import detect_content_risks
 from common.db import get_engine
+from common.embedding_prefixes import embedding_identity
 from common.job_queue import INGESTION_SUBJECT, ensure_stream, get_nats_connection
 from common.log_safety import log_safe
 from common.marking_detection import detect_markings, evaluate_markings
@@ -817,8 +818,11 @@ async def _process_document(document_id: uuid.UUID, delivery_attempt: int) -> bo
                         # stored and query vectors in different embedding
                         # spaces with nothing to detect it -- the dense leg
                         # silently returns noise while BM25 and reranking keep
-                        # the results looking plausible.
-                        EMBEDDING_MODEL_KEY: EMBEDDING_MODEL,
+                        # the results looking plausible. #392: the identity
+                        # (not the bare model name) also captures whether
+                        # search_document:/search_query: prefixing is active,
+                        # so a prefix-scheme change is caught the same way.
+                        EMBEDDING_MODEL_KEY: embedding_identity(EMBEDDING_MODEL),
                         "embedded_at": _utcnow().isoformat(),
                         "filename": doc.filename,
                         "doc_type": doc.doc_type,

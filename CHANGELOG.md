@@ -40,6 +40,19 @@ changed in the running system, with the issue/PR reference for the trail.
   undetermined-abstention count travels with the abstention score, so a run
   where the judge declined some verdicts cannot read as full coverage.
 
+### Fixed
+
+- Dense embedding requests now carry nomic-embed-text's required
+  `search_document: `/`search_query: ` task-instruction prefixes (#392):
+  ingestion previously embedded chunks and orchestration-mcp previously
+  embedded queries with neither prefix, which doesn't error but does mean
+  dense retrieval was running the model outside its trained (asymmetric)
+  regime. Prefixes are looked up per-model (`common/embedding_prefixes.py`)
+  so a differently-configured `EMBEDDING_MODEL` isn't guessed at. Folded into
+  the #122 stamped embedding identity, so a corpus embedded before this fix
+  is refused by the mismatch check rather than silently compared against
+  newly-prefixed queries -- re-embed it with `python -m app.reembed`.
+
 ## [0.4.0] - 2026-08-04
 
 ### Changed
