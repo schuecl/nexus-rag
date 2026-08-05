@@ -55,6 +55,16 @@ pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
   "sqlmodel>=0.0.21" "qdrant-client>=1.10" "nats-py>=2.7" "boto3>=1.34"
 
 pytest                                  # the repo-root tree (common + BDD)
+# ^ If anything here behaves strangely, first verify the venv actually won:
+#   `which python pytest pip mypy` must all resolve inside .venv-test. On a
+#   distro whose system Python is older than 3.11 (e.g. RHEL 9's 3.9), a
+#   system or ~/.local tool silently shadowing the venv produces misleading
+#   failures far from the cause: pip "cannot find" pinned versions like
+#   pytest==9.x or pyroscope-io==1.2.1 (their requires-python >= 3.11 hides
+#   them from an old resolver entirely), and an old mypy reports bogus
+#   datetime.UTC / zip(strict=) errors across services/common. The root
+#   conftest.py refuses to collect under < 3.11 for exactly this reason.
+#   Keep the venv's mypy at ci.yml's pinned version (mypy==2.3.0).
 pytest tests/unit/common tests/e2e \
   --cov=common --cov-branch --cov-fail-under=85   # the enforced gate
 
