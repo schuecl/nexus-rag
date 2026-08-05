@@ -40,6 +40,16 @@ changed in the running system, with the issue/PR reference for the trail.
   mode to use against vLLM). Authenticates with a bearer token from
   `rerankerService.external.apiKey` in `"tei"`/`"cohere"` mode.
 
+### Fixed
+
+- `scripts/seed_sample_data.py` is now idempotent: a re-run resumes or skips
+  each of its 7 sample documents based on prior-run state (`/documents/mine`)
+  instead of unconditionally resubmitting them (#411, #413). Previously every
+  `docker compose --profile eval run --rm eval-retrieval` re-triggered seeding
+  via its `depends_on`, silently growing the dev corpus by 7 documents per
+  invocation and drifting local eval metrics with how many times they'd been
+  run; CI was unaffected (fresh volumes every run).
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed

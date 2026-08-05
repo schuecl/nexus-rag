@@ -481,9 +481,9 @@ leak check now asserts each returned chunk's own `status` payload field is
 `"approved"` (the access filter's own invariant, `common/qdrant_filters.py`)
 rather than matching `golden_queries.json`'s `forbid` filenames against
 returned filenames. A duplicate filename across two documents in different
-states — e.g. from re-running the non-idempotent `seed_sample_data.py`
-against an already-seeded stack — can no longer produce a false FR-26 alarm,
-since the check no longer depends on filename identity at all. The `forbid`
+states — filenames are explicitly non-unique in the data model, so two
+independent submissions can collide — can no longer produce a false FR-26
+alarm, since the check no longer depends on filename identity at all. The `forbid`
 list is still checked, but only as an informational `content_overlap` note in
 the report; it is not what fails the build.
 
