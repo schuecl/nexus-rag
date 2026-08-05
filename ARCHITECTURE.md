@@ -532,6 +532,13 @@ the `new` component table (§2) — Postgres, Keycloak, and the object store are
 via `values.yaml` (`externalPostgres.existingSecret`, `externalKeycloak.issuerUrl`,
 `externalObjectStore.endpoint`/`.bucket`), not deployed by the chart.
 
+The `qdrant`/`milvus (StatefulSet)`, `nats (StatefulSet)`, and `embedding-service` boxes
+in the prod subgraph above are each the *default* posture, not the only one (issue #401):
+`qdrant.enabled`/`milvus.enabled`/`nats.enabled`/`embeddingService.enabled` set to `false`
+turns each into an `external.host`-referenced box instead, the same relationship Postgres/
+Keycloak/the object store already have to the chart — see `helm/nexus-rag/README.md`'s
+"External backing services" section.
+
 ## 7. Known gaps
 
 ### Observability (issue #72)

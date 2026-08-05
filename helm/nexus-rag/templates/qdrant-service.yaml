@@ -1,4 +1,4 @@
-{{- if .Values.qdrant.enabled }}
+{{- if and (eq .Values.vectorBackend "qdrant") .Values.qdrant.enabled }}
 apiVersion: v1
 kind: Service
 metadata:

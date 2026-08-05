@@ -1,8 +1,10 @@
-{{- if eq .Values.vectorBackend "milvus" }}
+{{- if and (eq .Values.vectorBackend "milvus") .Values.milvus.enabled }}
 # #160: rendered only when vectorBackend is "milvus" -- the either/or
 # alternative to the Qdrant StatefulSet, never deployed alongside it as the
 # active backend. Standalone mode with embedded etcd and local storage: the
 # single-node evaluation posture, matching the chart's single-node Qdrant.
+# Issue #401: also skipped when milvus.enabled is false -- that means an
+# external Milvus cluster instead (milvus.external.*).
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -43,7 +45,7 @@ spec:
               value: "true"
           ports:
             - name: grpc
-              containerPort: 19530
+              containerPort: {{ .Values.milvus.service.port }}
             - name: metrics
               containerPort: 9091
           readinessProbe:
@@ -89,6 +91,6 @@ spec:
     {{- include "nexus-rag.componentSelectorLabels" (dict "root" . "component" "milvus") | nindent 4 }}
   ports:
     - name: grpc
-      port: 19530
+      port: {{ .Values.milvus.service.port }}
       targetPort: grpc
 {{- end }}

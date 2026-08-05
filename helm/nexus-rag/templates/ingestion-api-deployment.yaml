@@ -56,13 +56,13 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
-            # #160: either/or vector backend; qdrant is the default and the
-            # MILVUS_* env only renders when the deployment opts in.
+            # #160/#401: either/or vector backend -- exactly one of the
+            # QDRANT_*/MILVUS_* blocks below renders, matching vectorBackend.
             - name: VECTOR_BACKEND
               value: {{ .Values.vectorBackend | quote }}
             {{- if eq .Values.vectorBackend "milvus" }}
             - name: MILVUS_URL
-              value: http://{{ include "nexus-rag.fullname" . }}-milvus:19530
+              value: {{ include "nexus-rag.milvusUrl" . | quote }}
             {{- if .Values.milvus.auth.existingSecret }}
             - name: MILVUS_TOKEN
               valueFrom:
@@ -141,8 +141,9 @@ spec:
                   name: {{ .Values.ingestionApi.sessionTokenEncryption.previousExistingSecret }}
                   key: {{ .Values.ingestionApi.sessionTokenEncryption.previousSecretKey }}
             {{- end }}
+            {{- if eq .Values.vectorBackend "qdrant" }}
             - name: QDRANT_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+              value: {{ include "nexus-rag.qdrantUrl" . | quote }}
             # NFR-15: full read/write key -- this service creates the
             # collection and writes/deletes points (common/qdrant_store.py).
             - name: QDRANT_API_KEY
@@ -150,6 +151,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.qdrant.apiKey.existingSecret }}
                   key: {{ .Values.qdrant.apiKey.secretKey }}
+            {{- end }}
             - name: MAX_UPLOAD_BYTES
               value: {{ .Values.ingestionApi.maxUploadBytes | int64 | quote }}
             # Issue #356: batch-submission file-count cap (POST /documents/batch).
@@ -189,7 +191,7 @@ spec:
             # Issue #212: publish-only credential -- nats-configmap.yaml's
             # permissions deny this user any subscribe/consume permission.
             - name: NATS_URL
-              value: "nats://{{ include "nexus-rag.fullname" . }}-nats:{{ .Values.nats.service.clientPort }}"
+              value: {{ include "nexus-rag.natsUrl" . | quote }}
             - name: NATS_USER
               value: "ingestion_api"
             - name: NATS_PASSWORD

@@ -39,9 +39,33 @@ changed in the running system, with the issue/PR reference for the trail.
   query, answer, context, source, user, model, or error text (#384). The
   undetermined-abstention count travels with the abstention score, so a run
   where the judge declined some verdicts cannot read as full coverage.
+- `helm/nexus-rag` can now connect to an already-running Qdrant, Milvus,
+  NATS, or Ollama-compatible embedding instance instead of deploying its
+  own, for each independently (#401): set `<component>.enabled: false` and
+  populate the new `<component>.external.host`/`.port`/`.tls` values --
+  `qdrant.apiKey`, `milvus.auth`, and `nats.credentials` still point at a
+  pre-created Secret either way, same as before. The chart fails the render
+  with a clear message if `enabled: false` is set without an `external.host`
+  (`_helpers.tpl`'s new `nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/
+  `embeddingUrl`), rather than silently emitting a broken URL.
+- Milvus (the either/or alternative vector backend, #160) now gets the same
+  default-deny ingress `NetworkPolicy` Qdrant already had, restricted to
+  `ingestion-worker`/`ingestion-api`/`orchestration-mcp` plus the new
+  `networkPolicy.extraMilvusClients` — previously missing entirely, despite
+  holding the same cleartext chunk payload the Qdrant policy exists to
+  protect (#402).
 
 ### Fixed
 
+- `vectorBackend: milvus` no longer also deploys a Qdrant `StatefulSet`/
+  `Service` and requires `qdrant.apiKey.existingSecret` to exist regardless
+  (#401): `QDRANT_URL`/`QDRANT_API_KEY` and the Qdrant chart resources now
+  render only when `vectorBackend` is actually `"qdrant"`, matching
+  `MILVUS_URL`'s existing either/or behavior. Previously any deployment that
+  set `vectorBackend: milvus` without also manually setting
+  `qdrant.enabled: false` got both backends provisioned at once, and one
+  that did set it false failed to start on a missing Qdrant secret it never
+  needed.
 - Dense embedding requests now carry nomic-embed-text's required
   `search_document: `/`search_query: ` task-instruction prefixes (#392):
   ingestion previously embedded chunks and orchestration-mcp previously

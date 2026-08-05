@@ -58,13 +58,13 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
-            # #160: either/or vector backend; qdrant is the default and the
-            # MILVUS_* env only renders when the deployment opts in.
+            # #160/#401: either/or vector backend -- exactly one of the
+            # QDRANT_*/MILVUS_* blocks below renders, matching vectorBackend.
             - name: VECTOR_BACKEND
               value: {{ .Values.vectorBackend | quote }}
             {{- if eq .Values.vectorBackend "milvus" }}
             - name: MILVUS_URL
-              value: http://{{ include "nexus-rag.fullname" . }}-milvus:19530
+              value: {{ include "nexus-rag.milvusUrl" . | quote }}
             {{- if .Values.milvus.auth.existingSecret }}
             - name: MILVUS_TOKEN
               valueFrom:
@@ -111,8 +111,9 @@ spec:
                   # #278: this service's own role, falling back to the
                   # shared pre-#278 credential when unset.
                   key: {{ .Values.externalPostgres.perServiceKeys.ingestionWorker | default .Values.externalPostgres.secretKey }}
+            {{- if eq .Values.vectorBackend "qdrant" }}
             - name: QDRANT_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+              value: {{ include "nexus-rag.qdrantUrl" . | quote }}
             # NFR-15: full read/write key -- this is the service that now
             # creates the collection and writes new points (moved out of
             # ingestion-api).
@@ -121,8 +122,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.qdrant.apiKey.existingSecret }}
                   key: {{ .Values.qdrant.apiKey.secretKey }}
+            {{- end }}
             - name: OLLAMA_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
+              value: {{ include "nexus-rag.embeddingUrl" . | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
             {{- if .Values.ingestionWorker.visionModel }}
@@ -179,7 +181,7 @@ spec:
             # JetStream consumer/ack API subjects it needs to pull and
             # acknowledge jobs.
             - name: NATS_URL
-              value: "nats://{{ include "nexus-rag.fullname" . }}-nats:{{ .Values.nats.service.clientPort }}"
+              value: {{ include "nexus-rag.natsUrl" . | quote }}
             - name: NATS_USER
               value: "ingestion_worker"
             - name: NATS_PASSWORD

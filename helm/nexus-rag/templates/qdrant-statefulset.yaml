@@ -1,4 +1,4 @@
-{{- if .Values.qdrant.enabled }}
+{{- if and (eq .Values.vectorBackend "qdrant") .Values.qdrant.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

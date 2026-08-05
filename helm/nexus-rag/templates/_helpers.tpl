@@ -94,6 +94,66 @@ capabilities:
 {{- end -}}
 
 {{/*
+Issue #401: Qdrant endpoint URL. qdrant.enabled (self-deploy) wins if true;
+otherwise qdrant.external.host must be set -- fails the render rather than
+silently emitting a broken URL, same reasoning as oidcRedirectUri below.
+Only meaningful when vectorBackend is "qdrant"; callers must gate on that
+themselves (this helper doesn't know the caller's context).
+*/}}
+{{- define "nexus-rag.qdrantUrl" -}}
+{{- if .Values.qdrant.enabled -}}
+{{- printf "http://%s-qdrant:%v" (include "nexus-rag.fullname" .) .Values.qdrant.service.httpPort -}}
+{{- else if .Values.qdrant.external.host -}}
+{{- printf "%s://%s:%v" (ternary "https" "http" .Values.qdrant.external.tls) .Values.qdrant.external.host .Values.qdrant.external.httpPort -}}
+{{- else -}}
+{{- fail "Set qdrant.external.host when qdrant.enabled is false (external Qdrant mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Issue #401: Milvus endpoint URL, same enabled/external pattern as Qdrant
+above. Only meaningful when vectorBackend is "milvus".
+*/}}
+{{- define "nexus-rag.milvusUrl" -}}
+{{- if .Values.milvus.enabled -}}
+{{- printf "http://%s-milvus:%v" (include "nexus-rag.fullname" .) .Values.milvus.service.port -}}
+{{- else if .Values.milvus.external.host -}}
+{{- printf "%s://%s:%v" (ternary "https" "http" .Values.milvus.external.tls) .Values.milvus.external.host .Values.milvus.external.port -}}
+{{- else -}}
+{{- fail "Set milvus.external.host when milvus.enabled is false (external Milvus mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Issue #401: NATS client URL, same enabled/external pattern as Qdrant above.
+*/}}
+{{- define "nexus-rag.natsUrl" -}}
+{{- if .Values.nats.enabled -}}
+{{- printf "nats://%s-nats:%v" (include "nexus-rag.fullname" .) .Values.nats.service.clientPort -}}
+{{- else if .Values.nats.external.host -}}
+{{- printf "%s://%s:%v" (ternary "tls" "nats" .Values.nats.external.tls) .Values.nats.external.host .Values.nats.external.port -}}
+{{- else -}}
+{{- fail "Set nats.external.host when nats.enabled is false (external NATS mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Issue #401: embedding-service endpoint URL, same enabled/external pattern as
+Qdrant above. Speaks Ollama's native API either way (self-deployed or an
+external Ollama-compatible instance) -- an OpenAI-API-compliant hosted model
+is a separate, not-yet-implemented client mode (see issue #401's Phase 2).
+*/}}
+{{- define "nexus-rag.embeddingUrl" -}}
+{{- if .Values.embeddingService.enabled -}}
+{{- printf "http://%s-embedding-service:%v" (include "nexus-rag.fullname" .) .Values.embeddingService.service.port -}}
+{{- else if .Values.embeddingService.external.host -}}
+{{- printf "%s://%s:%v" (ternary "https" "http" .Values.embeddingService.external.tls) .Values.embeddingService.external.host .Values.embeddingService.external.port -}}
+{{- else -}}
+{{- fail "Set embeddingService.external.host when embeddingService.enabled is false (external embedding mode)." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 OIDC browser-login callback URL for ingestion-api (ARCHITECTURE.md Section
 4.4), passed through as OIDC_REDIRECT_URI. ingestionApi.oidcRedirectUri wins
 if set explicitly; otherwise derived from ingestionApi.ingress.host, using

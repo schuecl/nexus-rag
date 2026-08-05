@@ -18,15 +18,13 @@ infrastructure too, connected to via a pre-created Secret rather than
 deployed by the chart. If that's wrong for your environment, `values.yaml`'s
 `externalPostgres` section is the place to revisit.
 
-**Not verified against a running cluster or `helm lint`/`helm template`** —
-this environment had no network access to install the `helm` CLI itself
-(the install script's upstream, `get.helm.sh`, and GitHub release downloads
-were both unreachable from this sandbox). Templates were written by hand
-against well-established, conservative Helm conventions and each `values.yaml`
-file was validated as syntactically valid YAML, but the actual Go-template
-rendering has not been exercised. Run `helm lint` and `helm template
---debug` against this chart before a real install, and treat anything that
-doesn't render cleanly as a bug to fix, not a surprise.
+`helm lint helm/nexus-rag` and `helm template helm/nexus-rag --debug` run in
+CI on every PR (`.github/workflows/security.yml`'s `helm` job), against the
+default values plus the one override (`ingestionApi.oidcRedirectUri`) the
+chart fails closed on without an ingress host configured. That job does not
+exercise every value combination this chart supports (e.g. `vectorBackend:
+milvus`, or any of the `external` blocks below) — render locally with the
+combination you're about to deploy before trusting it.
 
 ## Prerequisites
 
@@ -34,8 +32,10 @@ doesn't render cleanly as a bug to fix, not a surprise.
   `*.persistence.storageClassName` explicitly for each component)
 - The air-gapped registry (`global.imageRegistry`) already has this
   project's four custom images (`ingestion-api`, `ingestion-worker`,
-  `orchestration-mcp`, `reranker-service`), plus `qdrant/qdrant`,
-  `ollama/ollama`, and `nats`, mirrored into it (NFR-1)
+  `orchestration-mcp`, `reranker-service`) mirrored into it (NFR-1), plus
+  `qdrant/qdrant`, `milvus`, `ollama/ollama`, and/or `nats` for whichever of
+  those this chart is self-deploying — skip mirroring the ones you've
+  pointed at an `external.host` instead (issue #401)
 - A pre-created Secret matching `externalPostgres.existingSecret` /
   `externalPostgres.secretKey`, containing a full SQLAlchemy
   `DATABASE_URL` (`postgresql+psycopg://user:pass@host:5432/dbname`)
@@ -84,6 +84,52 @@ doesn't render cleanly as a bug to fix, not a surprise.
   below. Left empty by default, so the chart renders and runs without it,
   same as before that issue.
 
+## External backing services (issue #401)
+
+Every non-custom backing service this chart touches now supports the same
+choice: deploy it (default) or connect to one that already exists.
+`externalPostgres`, `externalKeycloak`, and `externalObjectStore` have always
+been connect-only (REQUIREMENTS.md's NFR-10 doesn't scope Postgres/Keycloak/
+object-store deployment into this chart at all — see the assumption called
+out above). `qdrant`, `milvus`, `nats`, and `embeddingService` now support
+both:
+
+| Component | Self-deploy (default) | Connect to existing |
+|---|---|---|
+| Qdrant | `qdrant.enabled: true` | `qdrant.enabled: false` + `qdrant.external.host` |
+| Milvus | `milvus.enabled: true` | `milvus.enabled: false` + `milvus.external.host` |
+| NATS | `nats.enabled: true` | `nats.enabled: false` + `nats.external.host` |
+| Embedding | `embeddingService.enabled: true` | `embeddingService.enabled: false` + `embeddingService.external.host` |
+
+Each `external` block also takes `.port` (defaults match the self-deployed
+Service port) and `.tls` (`false` by default; `true` selects `https://` for
+Qdrant/Milvus/the embedding service, `tls://` for NATS). The existing
+credential values still apply in external mode exactly as in self-deploy
+mode — `qdrant.apiKey`, `milvus.auth`, and `nats.credentials` all just point
+at a pre-created Secret, and nothing about that changes when the endpoint
+behind it is someone else's cluster instead of this chart's own
+StatefulSet. Setting `enabled: false` without the matching `external.host`
+fails the render with a specific message (`_helpers.tpl`'s
+`nexus-rag.qdrantUrl`/`milvusUrl`/`natsUrl`/`embeddingUrl`) rather than
+silently deploying a broken URL, same pattern as `oidcRedirectUri` below.
+
+Two things `external` mode does **not** change:
+
+- `networkPolicy`'s ingress rules for that component stop rendering
+  entirely — they select this chart's own pod, which no longer exists.
+  Protecting an external instance's ingress is that cluster's own concern.
+- `embeddingService.external` speaks Ollama's native API, same as the
+  self-deployed default (`ollama/ollama`) — any Ollama-compatible endpoint
+  works. It does **not** yet support an OpenAI-API-compliant hosted model
+  (vLLM, TGI, a cloud embedding endpoint): `services/ingestion-worker/app/
+  embedding.py` and `services/orchestration-mcp/app/rag_search.py` both call
+  Ollama's `/api/embeddings`, not OpenAI's `/v1/embeddings`, so that's a
+  separate client-abstraction change, not just a values.yaml toggle (issue
+  #401's Phase 2, not yet implemented). Also note this same instance serves
+  `ingestionWorker.visionModel`/`classificationModel`/`piiLlmModel` when
+  those are set — an external endpoint needs every model this deployment
+  actually uses provisioned on it, not just `embeddingService.model`.
+
 ## Network policy (issue #110)
 
 `networkPolicy.enabled` defaults to **true**. Qdrant, NATS, the embedding
@@ -114,9 +160,11 @@ grant access to the wrong namespace while appearing configured, which is worse
 than an obvious outage. `helm install` prints both warnings.
 
 `networkPolicy.denyEgressByDefault` is **off** by default: every custom service
-needs the external Postgres and Keycloak, and two also need the external object
-store, none of whose addresses this chart knows. Turning it on without
-populating `networkPolicy.egressAllow` will break the deployment.
+needs the external Postgres and Keycloak, two also need the external object
+store, and (issue #401) any of Qdrant/Milvus/NATS/the embedding service running
+in `external` mode adds another address this chart doesn't know either.
+Turning it on without populating `networkPolicy.egressAllow` will break the
+deployment.
 
 ## reranker-service shared secret (issue #216)
 
@@ -175,9 +223,9 @@ Or supply a `values-production.yaml` override file with all of the above
 - Grant Keycloak's fine-grained token-exchange admin permission needed for
   the OBO flow (Section 7.7/6.1) — a manual admin-console step against
   Keycloak, not something Helm or the application can do for you.
-- Set up NetworkPolicies, PodDisruptionBudgets, or HorizontalPodAutoscalers
-  — not included in this pass; add them if your cluster's baseline requires
-  them.
+- Set up PodDisruptionBudgets or HorizontalPodAutoscalers — not included in
+  this pass; add them if your cluster's baseline requires them. (NetworkPolicies
+  *are* included — see [Network policy](#network-policy-issue-110) above.)
 - Harden `qdrant`'s or `embeddingService`'s `securityContext` — both run
   upstream images (`qdrant/qdrant`, `ollama/ollama`) whose own user/filesystem
   conventions this chart doesn't override. `ingestion-api`, `ingestion-worker`,

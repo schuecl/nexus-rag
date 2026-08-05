@@ -189,7 +189,20 @@ externalObjectStore:
 vectorBackend: qdrant
 
 qdrant:
+  # Issue #401: either this chart deploys Qdrant (enabled: true, default) or
+  # it connects to an already-running Qdrant cluster (enabled: false +
+  # external.host below) -- never both, mirroring the either/or relationship
+  # between qdrant and milvus above at the vectorBackend level. Ignored
+  # entirely when vectorBackend is "milvus".
   enabled: true
+  # Only read when enabled is false. qdrant.apiKey below still applies in
+  # external mode -- point it at a Secret holding the *existing* cluster's
+  # API keys rather than one this chart generates credentials for.
+  external:
+    host: ""
+    httpPort: 6333
+    # true selects https:// for the URL built from host/httpPort above.
+    tls: false
   image:
     repository: qdrant/qdrant
     # NFR-16: pinned to a specific, recent release -- never :latest.
@@ -238,15 +251,27 @@ qdrant:
 # embedded etcd and local storage -- the single-node evaluation deployment,
 # matching the chart's single-node Qdrant posture.
 milvus:
+  # Issue #401: same either/or self-deploy-vs-external pattern as
+  # qdrant.enabled above. Ignored entirely when vectorBackend is "qdrant".
+  enabled: true
+  # Only read when enabled is false.
+  external:
+    host: ""
+    port: 19530
+    # true selects https:// for the URL built from host/port above.
+    tls: false
   image:
     repository: milvusdb/milvus
     # NFR-16: pinned to a specific, recent release -- never :latest.
     tag: "v2.4.17"
   replicas: 1
+  service:
+    port: 19530
   # NFR-15: authenticated access required. Pre-created Secret carrying one
   # key whose value is the "user:password" token the services present
   # (Milvus bootstrap credentials are root:Milvus; change them and this
-  # Secret together).
+  # Secret together). Still applies in external mode -- point it at a Secret
+  # holding the existing cluster's token.
   auth:
     existingSecret: ""
     secretKey: token
@@ -256,7 +281,19 @@ milvus:
   resources: {}
 
 nats:
+  # Issue #401: either this chart deploys NATS (enabled: true, default) or it
+  # connects to an already-running JetStream cluster (enabled: false +
+  # external.host below).
   enabled: true
+  # Only read when enabled is false. nats.credentials below still applies in
+  # external mode -- ingestion-api/ingestion-worker still authenticate as
+  # their own restricted user, provisioned out-of-band on the existing
+  # cluster the same way nats-configmap.yaml provisions it here.
+  external:
+    host: ""
+    port: 4222
+    # true selects tls:// for the URL built from host/port above.
+    tls: false
   image:
     repository: nats
     tag: "2.14.3-alpine"
@@ -296,7 +333,22 @@ nats:
 # ---------------------------------------------------------------------------
 
 embeddingService:
+  # Issue #401: either this chart deploys a dedicated embedding-serving
+  # Ollama instance (enabled: true, default) or it connects to an
+  # already-running Ollama-compatible instance elsewhere (enabled: false +
+  # external.host below). Note this instance also serves
+  # ingestionWorker.visionModel/classificationModel/piiLlmModel when those
+  # are set -- an external endpoint must have every model this deployment
+  # uses provisioned on it, not just embeddingService.model. An
+  # OpenAI-API-compliant hosted model (as opposed to an Ollama-compatible
+  # one) is not yet supported -- see issue #401's Phase 2.
   enabled: true
+  # Only read when enabled is false.
+  external:
+    host: ""
+    port: 11434
+    # true selects https:// for the URL built from host/port above.
+    tls: false
   image:
     repository: ollama/ollama
     # NFR-16: pinned, never :latest.
@@ -580,6 +632,9 @@ networkPolicy:
   # Additional NetworkPolicyPeer entries for the backing stores, for callers
   # this chart does not deploy (a migration job, a debug pod, an operator).
   extraQdrantClients: []
+  # Issue #402: same idea, for the Milvus NetworkPolicy (only rendered when
+  # vectorBackend is "milvus").
+  extraMilvusClients: []
   extraEmbeddingClients: []
 
   # Opt-in default-deny egress from the four custom services. Off by default

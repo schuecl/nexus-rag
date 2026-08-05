@@ -58,13 +58,13 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: LOG_FORMAT
               value: {{ .Values.observability.logFormat | quote }}
-            # #160: either/or vector backend; qdrant is the default and the
-            # MILVUS_* env only renders when the deployment opts in.
+            # #160/#401: either/or vector backend -- exactly one of the
+            # QDRANT_*/MILVUS_* blocks below renders, matching vectorBackend.
             - name: VECTOR_BACKEND
               value: {{ .Values.vectorBackend | quote }}
             {{- if eq .Values.vectorBackend "milvus" }}
             - name: MILVUS_URL
-              value: http://{{ include "nexus-rag.fullname" . }}-milvus:19530
+              value: {{ include "nexus-rag.milvusUrl" . | quote }}
             {{- if .Values.milvus.auth.existingSecret }}
             - name: MILVUS_TOKEN
               valueFrom:
@@ -114,8 +114,9 @@ spec:
               value: {{ .Values.externalKeycloak.issuerUrl | quote }}
             - name: OIDC_AUDIENCE
               value: {{ .Values.externalKeycloak.audience | quote }}
+            {{- if eq .Values.vectorBackend "qdrant" }}
             - name: QDRANT_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-qdrant:{{ .Values.qdrant.service.httpPort }}"
+              value: {{ include "nexus-rag.qdrantUrl" . | quote }}
             # NFR-15: read-only key -- this service only ever calls
             # query_points (app/rag_search.py), never writes to Qdrant.
             - name: QDRANT_API_KEY
@@ -123,8 +124,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.qdrant.apiKey.existingSecret }}
                   key: {{ .Values.qdrant.apiKey.readOnlySecretKey }}
+            {{- end }}
             - name: OLLAMA_URL
-              value: "http://{{ include "nexus-rag.fullname" . }}-embedding-service:{{ .Values.embeddingService.service.port }}"
+              value: {{ include "nexus-rag.embeddingUrl" . | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.embeddingService.model | quote }}
             - name: RERANKER_URL
