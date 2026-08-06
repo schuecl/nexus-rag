@@ -1,11 +1,18 @@
 version: 2
 
 # Shared notes:
-# - pytest is held on the 8.x line: pytest 9 drops fixture-registration APIs
-#   that pytest-bdd 8.1 still uses, which breaks the BDD suite (verified: 10
-#   failures in tests/e2e). Every pip ecosystem below ignores pytest majors so
-#   that bump stops being re-proposed until pytest-bdd is compatible; see the
-#   NOTE in requirements-test.txt.
+# - pytest is held below 9.1 (pinned at 9.0.3 in requirements-test.txt), NOT on
+#   the 8.x line -- that older description was left behind by the 8.x -> 9.0
+#   bump. pytest-bdd 8.1.0 registers fixtures by nodeid, which pytest 9.1 turns
+#   into PytestRemovedIn10Warning, and pytest.ini's `filterwarnings = error`
+#   makes that fatal: every BDD scenario in tests/e2e fails (verified on PR
+#   #481 -- 12 failures on both 3.11 and 3.12). pytest-bdd's newest release is
+#   still 8.1.0, so there is nothing to upgrade to yet.
+#   Every pip ecosystem below therefore ignores pytest MINOR bumps as well as
+#   majors. Ignoring majors alone was not enough -- 9.0.3 -> 9.1.1 is a minor,
+#   so it sailed past the filter and became PR #481. Drop the minor entry (and
+#   raise the pin in requirements-test.txt) once pytest-bdd ships a
+#   9.1-compatible release; see the NOTE in requirements-test.txt.
 # - Each ecosystem groups its minor+patch updates into a single PR to cut the
 #   weekly volume. Major bumps are deliberately left ungrouped so each lands as
 #   its own PR and gets reviewed on its own.
@@ -38,7 +45,8 @@ updates:
     # requirements-test.txt at the repo root
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-test-deps:
         patterns: ["*"]
@@ -50,7 +58,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-common:
         patterns: ["*"]
@@ -62,7 +71,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-ingestion-api:
         patterns: ["*"]
@@ -74,7 +84,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-ingestion-worker:
         patterns: ["*"]
@@ -86,7 +97,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-orchestration-mcp:
         patterns: ["*"]
@@ -98,7 +110,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: pytest
-        update-types: ["version-update:semver-major"]
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       pip-reranker-service:
         patterns: ["*"]

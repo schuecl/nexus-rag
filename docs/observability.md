@@ -387,7 +387,10 @@ configuration.
   `NexusRagQueryAnomalyDetectionStale` (issue #426: fed by
   `scripts/detect_query_anomalies.py` via Pushgateway, not scraped from a
   service -- see `docs/testing.md`'s "Reconnaissance-shaped query detection"
-  section)
+  section). To run the equivalent detection inside the deployment's own SIEM
+  instead of, or alongside, that batch job, see
+  [docs/siem-detection-runbook.md](siem-detection-runbook.md) (issue #436) --
+  the same four signals expressed against the RFC 5424 audit export (#73).
 
 `NexusRagHighQueryLatency`'s 5 s p95 threshold is a **provisional** number:
 NFR-4's latency budget is still an open question in REQUIREMENTS.md, so this is
