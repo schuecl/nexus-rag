@@ -17,6 +17,25 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- `infra/nginx/librechat-tls.conf` (the dev TLS-terminating proxy in front of
+  LibreChat, issue #75) hardened against three semgrep findings from scan
+  `static-20260805T210006Z`: the plain-HTTP-to-HTTPS redirect and the
+  forwarded `Host` header now use nginx's own `$server_name` instead of the
+  attacker-controlled `$host`/`Upgrade`/`$http_host` (#472); the
+  `Upgrade`/`Connection` headers are now whitelisted to a literal
+  `"websocket"` value via two `map` blocks, so a non-websocket `Upgrade`
+  value (e.g. `h2c`) gets `Connection: close` and an empty `Upgrade` instead
+  of being forwarded verbatim, closing off H2C smuggling through this proxy
+  (#471). `missing-internal` (#470) was triaged as a false positive and
+  suppressed with a `nosemgrep` + rationale comment: that rule is for
+  locations only reachable via an internal redirect, but `location /` here
+  is this proxy's sole public entrypoint — adding `internal;` would 404
+  every real client request. Verified live: `nginx -t` passes, a full
+  `docker compose up` of `librechat-proxy` + its dependencies serves
+  `/login` correctly (200), a plain-HTTP request still 301-redirects to
+  `https://localhost:3080` even with a spoofed `Host: evil.example.com`
+  header, and a rescan of the file with the specific semgrep rules shows
+  zero findings.
 - All five service/one-shot images (`ingestion-api`, `ingestion-worker`,
   `orchestration-mcp`, `reranker-service`, `scripts/Dockerfile`) now build
   `FROM python:3.13-slim` instead of `python:3.11-slim` (#455, grype
