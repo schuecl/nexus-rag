@@ -301,6 +301,16 @@ scheduling of the batch job itself (it shares this gap with
 `calibrate_tagging_advisory.py` — both are "run manually or on a schedule"
 with nothing in this repo that schedules them).
 
+[#436](https://github.com/schuecl/nexus-rag/issues/436) closes the first of
+those two as far as it can be closed here — as *documentation*, not code:
+[docs/siem-detection-runbook.md](siem-detection-runbook.md) gives the four
+signal definitions, the RFC 5424 message shape a rule has to parse, and
+adaptable Splunk SPL / Elastic ES|QL and EQL sketches, so an operator building
+detection in their own SIEM works from a runbook instead of reverse-engineering
+`detect_query_anomalies.py`. The rules themselves remain untested by this
+repo's CI for the reason above, which is exactly why they ship as sketches to
+adapt rather than as artifacts to copy.
+
 ## OWASP RAG Security Cheat Sheet — control-by-control
 
 Recorded because the controls that are already right are the expensive ones,

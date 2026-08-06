@@ -15,6 +15,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Security
+
+- All 4 service Dockerfiles now run `apt-get upgrade` and `pip install
+  --upgrade pip setuptools wheel` immediately after `FROM`, before any
+  application dependency is installed (#450, #451). Fixes CVE-2026-23949 and
+  CVE-2026-24049 (HIGH) — `jaraco.context`/`wheel` copies vendored inside an
+  outdated `setuptools`, sitting underneath the hash-pinned application
+  lockfile and unreachable through it. `apt-get upgrade` is defense-in-depth
+  against OS package drift between the base image's own rebuilds; a live
+  rescan found the current `python:3.11-slim` (debian trixie) layer already
+  clean of fixable HIGH/CRITICAL OS CVEs. See #491 for a follow-up: `pip`
+  itself vendors an older `setuptools`/`msgpack` for its own internal use,
+  which a rescan after this fix still flags — narrower risk (pip's CLI is
+  never invoked at runtime in these images) but not yet resolved.
+
 ### Added
 
 - Content-Security-Policy on the document portal (#443, found by the same
@@ -126,6 +141,24 @@ changed in the running system, with the issue/PR reference for the trail.
   exactly what those are.
 
 ### Security
+
+- New operator runbook, `docs/siem-detection-runbook.md` (#436), for building
+  the four reconnaissance-shaped query detections (#426) inside the
+  deployment's own SIEM rather than only via periodic
+  `scripts/detect_query_anomalies.py` runs. Documents the RFC 5424 message
+  shape a rule has to parse (#73's export: JSON in the syslog MSG field,
+  action as MSGID, WARNING severity for `*.denied`), each signal's threshold
+  and gating minimum, and adaptable Splunk SPL / Elastic ES|QL and EQL
+  sketches. Documentation only — no code changed, and the queries ship as
+  sketches to adapt rather than tested artifacts, because SIEM query
+  languages stay outside this repo's testable surface (the reason
+  `docs/threat-model.md` section 4 recorded this as a residual in the first
+  place). Two corrections a reader needs are called out explicitly: there is
+  no query text to correlate on (#125 never stored it, which is why
+  `narrow_probe_shaped` keys on `result_count`), and `boundary_mapping`
+  does not detect access-filter-edge probing despite its name — it detects a
+  `rag-query` grant changing state mid-window, since an out-of-scope query
+  returns a successful empty result rather than a denial.
 
 - Strengthened `orchestration-mcp`'s retrieved-content `SECURITY_NOTICE` to
   name persona/roleplay/compliance-marker reframing explicitly, targeting
