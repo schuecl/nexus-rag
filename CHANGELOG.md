@@ -17,6 +17,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- Added a single-curator `suspend` transition
+  (`POST /curate/{id}/suspend`, `services/ingestion-api/app/routes/curate.py`)
+  for an already-`approved` document (#478, found by manual review).
+  Previously the only way to stop serving a wrongly-classified or
+  wrongly-releasable approved document was `reject()` (409s once a document
+  has left `pending_review`) or the two-person purge flow (#279 gap G3) —
+  the right gate for *destruction*, but a strange prerequisite for simply
+  taking something out of circulation while its tags get sorted out.
+  `suspend` demotes the document back to `pending_review` — the same
+  reversible target `edit_metadata`'s #268 authority-mismatch demotion
+  already uses, and already excluded by the FR-26 retrieval filter — so
+  nothing is destroyed and the document lands back in the ordinary
+  curation queue for re-approval, correction, or rejection. Available to
+  any curator with existing authority over the document (no new role); the
+  curation "List" dashboard gained a matching "Suspend" button.
 - `scripts/Dockerfile` — the image every one-shot Compose container shares
   (`seed-sample-data`, `eval-retrieval`, `calibrate-tagging-advisory`,
   `detect-query-anomalies`, `ingest-classification-corpus`,

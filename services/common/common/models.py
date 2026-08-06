@@ -305,7 +305,7 @@ class Notification(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     recipient_sub: str
     document_id: uuid.UUID = Field(foreign_key="documents.id")
-    decision: str  # approved | rejected
+    decision: str  # approved | rejected | suspended
     message: str
     read: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_utcnow)

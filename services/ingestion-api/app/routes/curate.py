@@ -822,3 +822,97 @@ def reject(
         raise
     session.refresh(doc)
     return doc
+
+
+def _load_approved(
+    session: Session, doc_id: uuid.UUID, user: UserClaims, *, lock: bool = False
+) -> Document:
+    """Same existence-then-authority-then-status ordering as `_load_pending`
+    (issues #215/#322) -- used by suspend() below, the only other curator
+    action that starts from a status other than `pending_review`."""
+    doc = session.get(Document, doc_id, with_for_update=lock)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    _check_curator_authority(user, doc, session)
+    if doc.status != "approved":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"document is already {doc.status}")
+    return doc
+
+
+class Suspension(BaseModel):
+    reason: str
+
+
+@router.post("/{doc_id}/suspend")
+def suspend(
+    doc_id: uuid.UUID,
+    body: Suspension,
+    user: UserClaims = Depends(require_curator),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> Document:
+    """Issue #478: a single curator's reversible circuit breaker for a
+    document that's already `approved`. `reject()` above 409s once a
+    document has left `pending_review`, and the two-person purge flow
+    (#279 gap G3) is the right gate for *destruction* but a strange
+    prerequisite for merely taking something out of circulation while its
+    tags get sorted out -- that gap forced a real spillage-adjacent case
+    into superseding with a placeholder, which then itself became a
+    permanent approved document in the corpus (see the issue).
+
+    Demotes back to `pending_review` -- the same reversible target
+    edit_metadata's #268 authority-mismatch demotion already uses, and
+    already excluded by the FR-26 retrieval filter -- rather than a new
+    status value. The document lands back in the ordinary curation queue
+    for this curator or another to re-approve, correct, or reject; nothing
+    about it is destroyed.
+    """
+    doc = _load_approved(session, doc_id, user, lock=True)
+
+    doc.status = "pending_review"
+    doc.reviewed_by_sub = None
+    doc.reviewed_at = None
+    # Deliberately NOT clearing first_approved_at: same reasoning as
+    # edit_metadata's #268 demotion -- the document *was* retrievable until
+    # this call, and that fact is what #286's chat-plane purge signal needs
+    # to survive it.
+    store = get_store()
+    store.update_document_payload(str(doc.id), doc.classification, {"status": doc.status})
+    # NFR-13: same reasoning as approve()/reject() above -- revert the Qdrant
+    # write if the Postgres commit doesn't durably land, so the two stores
+    # don't end up disagreeing about whether this document is still approved.
+    try:
+        session.add(doc)
+        session.add(
+            AuditLogEntry(
+                actor_sub=user.sub,
+                actor_username=user.preferred_username,
+                action="document.suspend",
+                target_id=str(doc.id),
+                detail={"reason": body.reason, "content_sha256": doc.content_sha256},
+            )
+        )
+        # FR-15: notify the uploader -- suspension makes their document
+        # non-retrievable again, same as a reject would.
+        session.add(
+            Notification(
+                recipient_sub=doc.uploader_sub,
+                document_id=doc.id,
+                decision="suspended",
+                message=f"Your document '{doc.filename}' was suspended: {body.reason}",
+            )
+        )
+        session.commit()
+    except Exception:
+        try:
+            store.update_document_payload(str(doc.id), doc.classification, {"status": "approved"})
+        except Exception:
+            logger.exception(
+                "suspension of document %s failed and the Qdrant status revert also "
+                "failed -- its chunks may still show status=pending_review despite "
+                "Postgres still saying approved; needs manual reconciliation",
+                doc.id,
+            )
+        raise
+    session.refresh(doc)
+    return doc

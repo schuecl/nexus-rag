@@ -257,6 +257,20 @@ they wrap the sequence in a `try`/`except` that best-effort reverts the Qdrant w
 `pending_review` on any failure before re-raising, so the two stores can't end up
 disagreeing about a document's status.
 
+**Suspend (#478):** `reject()` above only accepts a document still `pending_review` —
+once approved, the only other ways to stop serving it were the two-person purge flow
+(`docs/roles-and-permissions.md` §7 gap G3, the right gate for *destruction*) or
+superseding it with a placeholder that then itself became a permanent approved document.
+`POST /curate/{id}/suspend` closes that gap: a single curator with existing authority over
+the document demotes it straight back to `pending_review` (`doc.status`,
+`reviewed_by_sub`/`reviewed_at` cleared, Qdrant payload updated the same way approve/reject
+already do, same NFR-13 best-effort revert on a partial failure) — no new status value,
+since `pending_review` is already excluded by the FR-26 filter and already the reversible
+target `edit_metadata`'s #268 authority-mismatch demotion uses. The document lands back in
+the ordinary curation queue for re-approval, correction, or rejection; `first_approved_at`
+is deliberately left untouched, same reasoning as the #268 demotion (the #286 chat-plane
+purge signal, `docs/chat-plane-purge.md`, needs it to survive).
+
 ### 4.3 Query / retrieval (FR-24..FR-29)
 
 ```mermaid
