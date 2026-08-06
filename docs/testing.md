@@ -689,3 +689,10 @@ baseline capture, not a regression fix.
   catch a regression/CVE early, which a hash-pinned lockfile would work
   against), but worth knowing the lockfiles aren't a single source of
   truth for every dependency install path in this repo.
+- `ci.yml`'s `types` job installs a lightweight substitute dependency set per
+  service rather than each service's real `requirements.txt` — for
+  `reranker-service` this means `sentence-transformers` is never actually
+  installed, so its `CrossEncoder` call site in `app/main.py` is never
+  type-checked against the real API. Installing the real dependency surfaces
+  a live `mypy` finding there (issue #499, found while investigating
+  #460/#461) that the CI job currently can't see.

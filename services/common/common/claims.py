@@ -176,6 +176,13 @@ def decode_verified_token(bearer_token: str) -> dict[str, Any]:
     token = bearer_token.removeprefix("Bearer ").strip()
 
     if OIDC_SKIP_VERIFY:
+        # Issue #460: semgrep flags verify=False on pattern alone, with no
+        # visibility into the guard above. This branch only runs when an
+        # operator has explicitly set the dev-only OIDC_SKIP_VERIFY escape
+        # hatch (default false, CRITICAL-logged at import per #215, documented
+        # in docs/dev-setup.md as never-set-in-prod) -- the normal path below
+        # always performs full signature/audience/issuer verification.
+        # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
         return jwt.decode(token, options={"verify_signature": False})
 
     signing_key = _jwk_client().get_signing_key_from_jwt(token)

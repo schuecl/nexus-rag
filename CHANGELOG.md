@@ -55,6 +55,20 @@ changed in the running system, with the issue/PR reference for the trail.
   behind every `/search` page query, so it hit that exposure on every real
   query, not just the deprecated `?query=` fallback. Now sends `json=`
   instead of `params=`; the caller's bearer token forwarding is unchanged.
+- Triaged two HIGH semgrep findings from local scan `static-20260805T210006Z`
+  as false positives, with documented `nosemgrep` suppressions rather than
+  code changes (#460, #461). `claims.py:179`'s `jwt.decode(verify_signature=
+  False)` only runs inside the `OIDC_SKIP_VERIFY` dev-only escape hatch
+  (default off, CRITICAL-logged at import per #215, documented as
+  never-set-in-prod) — the real verification path a few lines below always
+  checks signature/audience/issuer. `db.py`'s `text(f"ALTER TABLE ...")` in
+  `_ensure_columns` (now split out to `_add_column`) only ever interpolates
+  table/column names from the hardcoded `_ADDITIVE_COLUMNS` dict, never user
+  input — and the suggested `or_()`/`and_()` remediation doesn't apply
+  regardless, since this is DDL, not a query, and SQL identifiers can't be
+  bind-parameterized the way values can. Verified live against a real
+  `semgrep scan --config p/security-audit --config p/python` run before and
+  after.
 
 ### Added
 

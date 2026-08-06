@@ -139,6 +139,17 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+def _add_column(engine, table: str, name: str, sql_type: str) -> None:
+    # Issue #461: table/name/sql_type are never user input -- they only ever
+    # come from iterating the hardcoded _ADDITIVE_COLUMNS dict, so there's no
+    # injection surface to parameterize. The suggested or_()/and_() remediation
+    # doesn't apply either: this is DDL (ALTER TABLE ADD COLUMN), and SQL
+    # identifiers can't be bind-parameterized the way values can regardless.
+    with engine.begin() as conn:
+        # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+
+
 def _ensure_columns(engine) -> None:
     inspector = inspect(engine)
     for table, columns in _ADDITIVE_COLUMNS.items():
@@ -148,8 +159,7 @@ def _ensure_columns(engine) -> None:
         for name, sql_type in columns.items():
             if name in existing:
                 continue
-            with engine.begin() as conn:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+            _add_column(engine, table, name, sql_type)
 
 
 def init_db() -> None:
