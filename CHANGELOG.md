@@ -127,6 +127,24 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- New operator runbook, `docs/siem-detection-runbook.md` (#436), for building
+  the four reconnaissance-shaped query detections (#426) inside the
+  deployment's own SIEM rather than only via periodic
+  `scripts/detect_query_anomalies.py` runs. Documents the RFC 5424 message
+  shape a rule has to parse (#73's export: JSON in the syslog MSG field,
+  action as MSGID, WARNING severity for `*.denied`), each signal's threshold
+  and gating minimum, and adaptable Splunk SPL / Elastic ES|QL and EQL
+  sketches. Documentation only — no code changed, and the queries ship as
+  sketches to adapt rather than tested artifacts, because SIEM query
+  languages stay outside this repo's testable surface (the reason
+  `docs/threat-model.md` section 4 recorded this as a residual in the first
+  place). Two corrections a reader needs are called out explicitly: there is
+  no query text to correlate on (#125 never stored it, which is why
+  `narrow_probe_shaped` keys on `result_count`), and `boundary_mapping`
+  does not detect access-filter-edge probing despite its name — it detects a
+  `rag-query` grant changing state mid-window, since an out-of-scope query
+  returns a successful empty result rather than a denial.
+
 - Strengthened `orchestration-mcp`'s retrieved-content `SECURITY_NOTICE` to
   name persona/roleplay/compliance-marker reframing explicitly, targeting
   the residual gap issue #97's live evaluation found (a DAN-style injection
