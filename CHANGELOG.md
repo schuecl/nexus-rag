@@ -43,6 +43,11 @@ changed in the running system, with the issue/PR reference for the trail.
   itself vendors an older `setuptools`/`msgpack` for its own internal use,
   which a rescan after this fix still flags — narrower risk (pip's CLI is
   never invoked at runtime in these images) but not yet resolved.
+  #454, #456, #462, #463 are the same two CVEs re-filed per-tool
+  (trivy/grype) from the same scan run that produced #450/#451 — already
+  fixed by this same change, confirmed by re-checking installed versions
+  inside the built images (`wheel` 0.47.0, vendored `jaraco_context`
+  6.1.0-dist-info), closed as duplicates rather than tracked separately.
 - `orchestration-mcp`'s `/debug/rag_search` REST route now defaults to
   **disabled** (#476), matching #214's originally stated intent -- the code
   had shipped defaulting to enabled ever since, and the Helm chart never set
