@@ -346,7 +346,10 @@ def rerank(body: RerankRequest) -> list[RerankedChunk]:
     with tracer.start_as_current_span("model.predict", attributes={"rerank.pairs": len(pairs)}):
         try:
             with metrics.model_predict_seconds.time():
-                scores = _model.predict(pairs)
+                # sentence-transformers' predict() stub widened to a multimodal
+                # union in 5.x; list[tuple[str, str]] is a valid runtime input
+                # but mypy's invariant-list check rejects it against the union.
+                scores = _model.predict(pairs)  # type: ignore[arg-type]
         except Exception:
             metrics.requests_total.labels(outcome="error").inc()
             raise

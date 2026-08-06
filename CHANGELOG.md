@@ -17,6 +17,31 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- All five service/one-shot images (`ingestion-api`, `ingestion-worker`,
+  `orchestration-mcp`, `reranker-service`, `scripts/Dockerfile`) now build
+  `FROM python:3.13-slim` instead of `python:3.11-slim` (#455, grype
+  CVE-2026-7210 + 111 related CVEs — insufficient Expat hash-flooding
+  entropy). Verified live: `python:3.11-slim` and `python:3.12-slim` both
+  still ship `expat_2.7.4` (vulnerable) as of 2026-08-06; only
+  `python:3.13-slim` (3.13.14) ships the fixed `expat_2.8.1` — CPython
+  hasn't backported the Expat fix to the 3.11/3.12 branches, so a patch-level
+  rebuild alone doesn't fix this. All five hash-pinned `requirements.txt`
+  lockfiles were regenerated under Python 3.13 (`pip-compile
+  --generate-hashes`, `--allow-unsafe` for reranker-service as before); every
+  resolved package version is unchanged from the 3.11 lockfiles except
+  conditional-dependency comment noise (Python-version-gated deps like
+  `anyio`/`starlette`/`psycopg` no longer pull in `typing-extensions` under
+  3.13). Verified live end-to-end: all four service images build clean, all
+  gated per-service pytest suites plus the repo-root `tests/unit`/`tests/e2e`
+  suite pass unchanged, `ruff`/mypy/NFR-16 pin-check all pass, and a full
+  `docker compose up` + golden-query eval (`--profile eval run
+  eval-retrieval`) against the rebuilt stack shows recall@K 1.0, zero
+  forbidden-document leaks. Also fixed an unrelated, pre-existing mypy break
+  in `reranker-service/app/main.py` (`CrossEncoder.predict()`'s stub
+  widened to a multimodal union in sentence-transformers 5.6.1, reproduced
+  identically under real Python 3.11 too, so unrelated to this bump) with a
+  scoped `# type: ignore[arg-type]` — otherwise it silently blocked the
+  `types` CI job regardless of this change; tracked structurally in #517.
 - `services/common/common/qdrant_store.py`'s classification-migration
   failure log now escapes `document_id`/`new_name`/`current_collection`
   through `log_safety.log_safe` before interpolation (#465, CodeQL

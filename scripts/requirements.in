@@ -7,6 +7,6 @@ httpx>=0.28.1
 # docstring for why it doesn't go through any service's HTTP API instead).
 # psycopg3, same driver family as `postgresql+psycopg://` elsewhere in this
 # repo (services/common/common/db.py); [binary] avoids needing libpq-dev in
-# the scripts image (scripts/Dockerfile is python:3.11-slim, not one of the
+# the scripts image (scripts/Dockerfile is python:3.13-slim, not one of the
 # service images that already have build tooling).
 psycopg[binary]>=3.1

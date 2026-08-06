@@ -207,7 +207,7 @@ handled at the corpus's classification.
   `pip-compile` run. Every other lockfile regenerates after a
   `pyproject.toml` floor edit with
   `pip-compile --generate-hashes --output-file=requirements.txt requirements.in`
-  run inside a `python:3.11-slim` container (matching the Dockerfile's base
+  run inside a `python:3.13-slim` container (matching the Dockerfile's base
   image) from that service's directory.
 
 ## Branch protection (merge gates)

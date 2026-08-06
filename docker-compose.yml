@@ -1113,7 +1113,7 @@ services:
     # been generated (generate-dev-certs.sh -- same certs Keycloak uses).
     security_opt: ["no-new-privileges:true"]
     profiles: ["siem-debug"]
-    image: python:3.11-slim
+    image: python:3.13-slim
     command: ["python3", "/collector.py"]
     environment:
       # All-interfaces by default, scoped to this container's own network

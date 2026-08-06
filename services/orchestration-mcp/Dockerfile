@@ -1,8 +1,8 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Issue #450/#451: OS packages patched at build time rather than trusting the
 # base image's own rebuild cadence -- Debian's security archive updates
-# continuously, the upstream python:3.11-slim image does not. pip/setuptools/
+# continuously, the upstream python:3.13-slim image does not. pip/setuptools/
 # wheel are upgraded too: setuptools vendors its own copies of jaraco.context
 # and wheel (CVE-2026-23949, CVE-2026-24049), which sit underneath the
 # hash-pinned application lockfile below and can't be patched through it.
