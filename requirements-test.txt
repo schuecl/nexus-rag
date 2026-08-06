@@ -40,3 +40,9 @@ pymilvus==3.0.1
 # but importing the module -- which every test collection does transitively --
 # still needs the package installed)
 pyroscope-io==1.2.1
+# #444/#445: common/security_headers.py's ASGI middleware is built on
+# starlette's ASGI type aliases; tests/unit/common/test_security_headers.py
+# drives it through a real Starlette app + TestClient. Pinned to the same
+# version every service's own lockfile resolves transitively (via FastAPI or
+# MCPServer's Starlette app), so this test env matches the real one.
+starlette==1.3.1

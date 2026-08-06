@@ -24,6 +24,7 @@ from common.logging_setup import setup_logging
 from common.metadata import NO_RELEASABILITY_RESTRICTION
 from common.models import ClassificationLevel, PortalSettings, ReleasabilityValue
 from common.profiling import setup_profiling
+from common.security_headers import SecurityHeadersMiddleware
 from common.siem import enable_siem_export
 from common.tracing import setup_tracing
 
@@ -93,6 +94,16 @@ APP_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="nexus-rag ingestion-api", lifespan=lifespan)
 # #443: per-response nonce + Content-Security-Policy header on every response.
 app.add_middleware(ContentSecurityPolicyMiddleware)
+# #444: X-Frame-Options is this app's own -- the curation UI's approve/
+# reject/correct controls are the single-click, high-consequence actions a
+# framing attack targets, and NFR-14's CSRF cookie doesn't see that attack
+# (a framed page is same-origin, so the cookie/header echo still matches).
+# Nothing in this repo frames the portal today, so DENY over SAMEORIGIN;
+# revisit if MPNexus ever needs to embed it.
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    extra_headers=((b"x-frame-options", b"DENY"),),
+)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.middleware("http")(metrics.http_metrics_middleware)
 # #134: one request span per route, with incoming traceparent honored; the
