@@ -521,6 +521,75 @@ baseline, on any of:
   `orchestration-mcp` fusion/rerank).
 - **The nightly `e2e.yml` schedule**, which covers the "periodic" cadence.
 
+## RERANK_SCORE_FLOOR calibration (issue #431, #394 follow-up)
+
+#394 added `RERANK_SCORE_FLOOR` (`services/orchestration-mcp/app/reranking.py`)
+off by default, with a starting-point value picked from an ad hoc measurement
+the CHANGELOG flagged as needing a real calibration pass before anyone turns
+it on. `scripts/calibrate_rerank_floor.py` is that pass, made reproducible.
+
+**Method.** For each `golden_queries.json` case it fetches the full hybrid
+candidate pool via `/debug/rag_search` (same `hybrid_limit = max(top_k * 4,
+20)` sizing `rag_search.py` itself uses, so the pool matches production) and
+re-scores every candidate directly against reranker-service, bypassing
+whatever floor the stack currently has configured so nothing is hidden. A
+valid floor `F` needs, simultaneously:
+
+- **every answerable query's expected document scores `>= F`** — otherwise
+  the floor starts eating real answers, which the fixed golden-query harness
+  in `evaluate_retrieval.py` already gates on via `--fail-on-miss`.
+- **every `expected_abstention: true` query's best (wrong) candidate scores
+  `< F`** — otherwise the floor never fires for the case it exists to catch.
+
+That gives an interval `(best abstention wrong-candidate score, worst
+required-answerable score]`; any `F` inside it satisfies both constraints.
+The script prints both boundaries and the resulting interval rather than
+picking a value — turning that interval into a shipped default is a judgment
+call (documented below), not something to automate.
+
+**Corpus hygiene matters.** A long-running dev stack accumulates documents
+from other scripts (`scripts/adversarial_injection_probe.py`, ad hoc manual
+uploads) beyond the clean 7-document seed set `golden_queries.json` was
+written against, and this measurably moved the numbers in a first pass on
+this repo's own dev stack — an unrelated leftover document topically close to
+the `vpn-guide-abstention` query's wrong-answer territory shrank the valid
+interval to nothing. `docker compose down -v && docker compose up --build`
+(re-seeds via `seed-sample-data`) before running the calibration.
+
+**Result on the clean 7-doc corpus** (`docker compose up --build` from a
+fresh volume set, dave-admin persona — only the 4 approved documents are
+ever candidates):
+
+```
+worst (still-required) answerable target score: -4.257  (credential-change-paraphrase's
+                                                           password-policy.md target --
+                                                           the #397 dense-leg-only probe,
+                                                           already the hardest case in the set)
+best abstention wrong-candidate score:           -6.141  (vpn-guide-abstention's best
+                                                           wrong candidate)
+valid floor interval: (-6.141, -4.257]
+```
+
+`-5.0` — #394's original starting-point value — sits inside that interval.
+Live-verified end to end with `RERANK_SCORE_FLOOR=-5.0` set on a real
+`orchestration-mcp` container: `evaluate_retrieval.py` reports mean
+recall@K = 1.0, mean precision@K = 1.0, 0 forbidden leaks (all 6 answerable
+queries, including both #397 paraphrase probes, still resolve correctly),
+and both `expected_abstention` queries now return an explicit "no
+sufficiently relevant approved passage was found" instead of the fused
+stage's confidently-presented, entirely irrelevant top-`k` they returned
+with the floor off — the exact failure mode #394 exists to close. This is
+what justifies flipping the shipped default from unset to `-5.0` (`.env.example`,
+`helm/nexus-rag/values.yaml`).
+
+**Re-run whenever the reranker model or its cross-encoder pin changes**
+(`RERANKER_MODEL`/NFR-16) — the interval is anchored to that model's own
+score distribution and does not transfer across a swap. A `#419` external
+endpoint (`RERANKER_API_COMPATIBILITY=tei`/`cohere`) typically returns a
+normalized `0..1` relevance score instead of raw cross-encoder logits, where
+`-5.0` is a silent no-op — recalibrate against whatever `RERANKER_URL`
+actually serves before enabling the floor there.
+
 ## Tagging-advisory calibration (FR-13/FR-16/FR-30/FR-32, issue #309)
 
 Phase 1-3 of #138 (`marking_detection.py`, `find_similar_approved` precedent

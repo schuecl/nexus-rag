@@ -689,9 +689,9 @@ services:
       # cross-encoder scores during reranking, e.g. '{"table": 1.15}' --
       # unset (the default) means no boost, every content type weighted 1.0.
       CONTENT_TYPE_BOOSTS: ${CONTENT_TYPE_BOOSTS:-}
-      # #394: minimum cross-encoder score a candidate needs to be returned;
-      # unset (the default) disables the floor. See .env.example for the
-      # measured starting point.
+      # #394/#431: minimum cross-encoder score a candidate needs to be
+      # returned; unset disables the floor. See .env.example for the
+      # calibrated default this compose file inherits via that var.
       RERANK_SCORE_FLOOR: ${RERANK_SCORE_FLOOR:-}
       # #214/#476: server.py's own default is now off (closed), but this
       # route also backs ingestion-api's /search page (app/routes/search.py),

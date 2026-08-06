@@ -672,13 +672,21 @@ orchestrationMcp:
   # be returned at all; a query where every candidate falls below it
   # returns the explicit no-match message instead of its least-bad top_k.
   # Empty (the default) disables the floor -- turning it on is a
-  # deployment decision. Measured starting point on the dev corpus: -5.0
-  # (answerable best-chunks scored -2.5..+8.9, unanswerable -11.3..-2.8).
-  # Those are raw cross-encoder logits from this chart's own
-  # reranker-service; an external reranker (rerankerService.external, #419)
-  # in "tei"/"cohere" mode usually returns a normalized 0..1 score, where
-  # -5.0 would never fire -- re-tune against whatever model it serves.
-  # An unparseable value logs a warning and leaves the floor off.
+  # deployment decision this chart deliberately does not make silently on
+  # upgrade, since it depends on this deployment's own corpus and reranker
+  # model, not just this chart's version.
+  # Issue #431 calibrated -5.0 against the dev stack's own 7-document seed
+  # corpus and scripts/golden_queries.json (see docs/testing.md's
+  # "RERANK_SCORE_FLOOR calibration" section and
+  # scripts/calibrate_rerank_floor.py) -- that's what dev/.env.example now
+  # ships, and it's a reasonable production starting point for this chart's
+  # own reranker-service on a similarly-scaled corpus, but re-run the
+  # calibration against this deployment's real corpus before setting this
+  # value here. An external reranker (rerankerService.external, #419) in
+  # "tei"/"cohere" mode usually returns a normalized 0..1 score instead of
+  # raw cross-encoder logits, where -5.0 would never fire -- recalibrate
+  # against whatever model it actually serves. An unparseable value logs a
+  # warning and leaves the floor off.
   rerankScoreFloor: ""
   # Issue #476: this service's own code defaults DEBUG_RAG_SEARCH_ENABLED to
   # off (closed by default, matching #214's original stated intent -- an

@@ -164,13 +164,21 @@ def _load_score_floor() -> float | None:
 # downstream. The floor applies to the cross-encoder's (boosted) score, not
 # the fused RRF score: RRF emits rank-based values that aren't comparable
 # across queries, while the cross-encoder's roughly are (the issue's own
-# reasoning). Measured on this stack's dev corpus to pick a starting point:
-# answerable queries' best chunks scored -2.5 .. +8.9, unanswerable ones
-# -11.3 .. -2.8, with gross off-topic queries all below -6 -- so -5.0 is a
-# permissive floor that drops clearly-unrelated content while keeping a
-# 2.5-point margin to the hardest real query measured. Default off: turning
-# it on is a deployment decision, not something an upgrade should do silently
-# (a floor can hide results a deployment currently relies on).
+# reasoning). Issue #431 replaced the original ad hoc starting-point
+# measurement with a reproducible calibration
+# (scripts/calibrate_rerank_floor.py) against scripts/golden_queries.json on
+# the clean 7-document dev corpus: the valid-floor interval measured was
+# (-6.141, -4.257], and -5.0 -- the original starting point -- sits inside
+# it, live-verified to preserve full recall/precision on every answerable
+# golden query while correctly triggering abstention on both
+# expected_abstention cases (docs/testing.md's "RERANK_SCORE_FLOOR
+# calibration" section). This code's own default stays unset/off (parsed
+# per-process from the environment below): turning the floor on is a
+# deployment decision, not something an upgrade should do silently (a floor
+# can hide results a deployment currently relies on) -- dev/.env.example now
+# ships -5.0 as its own opt-in default, but the chart's production default
+# is left to the operator (see helm/nexus-rag/values.yaml's
+# rerankScoreFloor).
 #
 # The scale is the serving model's, not this code's: those numbers are raw
 # cross-encoder logits from the internal reranker-service. A #419 external

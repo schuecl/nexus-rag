@@ -463,6 +463,25 @@ changed in the running system, with the issue/PR reference for the trail.
   helper also drives #122's embedding-model provenance check, which must
   not sample stale pre-migration data.
 
+### Changed
+
+- `RERANK_SCORE_FLOOR` (#394) now has a validated calibration behind its
+  default instead of an unvalidated starting-point guess (#431).
+  `scripts/calibrate_rerank_floor.py` reproducibly measures, against
+  `scripts/golden_queries.json` on a freshly seeded dev corpus, the interval
+  any floor value must sit inside to preserve full recall on answerable
+  queries while triggering abstention on both `expected_abstention` cases —
+  measured as `(-6.141, -4.257]`. `-5.0` sits inside it and is
+  live-verified end to end (`evaluate_retrieval.py`: recall@K = 1.0,
+  precision@K = 1.0, 0 forbidden leaks, both abstention cases correctly
+  suppressed). `.env.example` now ships `RERANK_SCORE_FLOOR=-5.0` as its
+  default (previously unset); the Helm chart's `orchestrationMcp.rerankScoreFloor`
+  is deliberately left unset — production corpora and reranker models differ
+  from the dev corpus this was calibrated against, so turning the floor on
+  in a real deployment stays an explicit operator decision, not something
+  this chart flips silently on upgrade. See `docs/testing.md`'s
+  "RERANK_SCORE_FLOOR calibration" section for the full methodology.
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed

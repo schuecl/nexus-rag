@@ -1186,20 +1186,24 @@ the docs, not a silent "it works" — flag it if you find one.
   indices are adjacent are collapsed to the better-ranked one and the freed slot is
   backfilled from the rest of the candidate pool, since FR-4's chunk overlap means
   neighbouring chunks share text by construction (#395); the response note reports
-  how many were collapsed. An optional relevance floor (`RERANK_SCORE_FLOOR`, issue
-  #394, unset/off by default) then drops any candidate whose post-boost cross-encoder
-  score falls short; a query where every candidate drops returns `[]` with an explicit
-  note instead of its least-bad `top_k`, routed as `queries_total{outcome="empty"}`
-  with the reason in the FR-31 audit row, not folded into an ordinary success. **Validated
-  against a live environment** (2026-08-05): on the 4-document dev corpus with the
-  windowed reranker, answerable queries' best chunks scored -2.5..+8.9 and unanswerable
-  ones -11.3..-2.8, so -5.0 is documented (`.env.example`, `values.yaml`) as a measured,
-  permissive starting point rather than the shipped default. Those numbers are raw
-  cross-encoder logits from this chart's own `reranker-service`; a #419 external
-  `"tei"`/`"cohere"` endpoint typically returns a normalized 0..1 score instead, so the
-  floor needs re-tuning per serving model. Not validated: `abstention_accuracy` moving
-  for this reason through the full LibreChat generation path (#383's harness needs the
-  manually created agent).
+  how many were collapsed. A relevance floor (`RERANK_SCORE_FLOOR`, issue #394) then
+  drops any candidate whose post-boost cross-encoder score falls short; a query where
+  every candidate drops returns `[]` with an explicit note instead of its least-bad
+  `top_k`, routed as `queries_total{outcome="empty"}` with the reason in the FR-31
+  audit row, not folded into an ordinary success. **Validated against a live
+  environment** (2026-08-06, issue #431): `scripts/calibrate_rerank_floor.py` measured
+  a valid-floor interval of `(-6.141, -4.257]` against `scripts/golden_queries.json` on
+  a freshly seeded 4-document (of 7 total) dev corpus, and `-5.0` sits inside it --
+  `evaluate_retrieval.py` confirms recall@K = 1.0, precision@K = 1.0, and both
+  `expected_abstention` cases correctly suppressed with the floor set. `.env.example`
+  now ships `RERANK_SCORE_FLOOR=-5.0` as its default (previously unset); the Helm
+  chart's `rerankScoreFloor` stays unset since it depends on each deployment's own
+  corpus and reranker model (see `docs/testing.md`'s "RERANK_SCORE_FLOOR calibration"
+  section). Those numbers are raw cross-encoder logits from this chart's own
+  `reranker-service`; a #419 external `"tei"`/`"cohere"` endpoint typically returns a
+  normalized 0..1 score instead, so the floor needs re-tuning per serving model. Not
+  validated: `abstention_accuracy` moving for this reason through the full LibreChat
+  generation path (#383's harness needs the manually created agent).
 - **Re-ingestion/versioning (FR-7)** — an uploader can mark a submission as superseding
   an existing approved document (`supersedes_document_id`, validated server-side against
   the submitter's org/clearance/releasability, not just that the target exists —
