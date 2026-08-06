@@ -27,9 +27,13 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "templates"
 # `onclick="..."` in prose -- e.g. curate.html's note on why a listener is
 # used instead -- isn't mistaken for the attribute itself. HTML comments
 # (`<!--`) and script bodies never match `<letter...` at their start.
-_TAG = re.compile(r"<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>")
-_ON_ATTR = re.compile(r'\son[a-z]+="')
-_INLINE_SCRIPT_TAG = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>")
+# CodeQL (py/bad-tag-filter) flags a tag-matching regex that isn't
+# case-insensitive, since HTML tag/attribute names are -- `<SCRIPT>` and
+# `ONCLICK="..."` are as real as their lowercase forms, even though nothing
+# in this codebase writes markup that way today.
+_TAG = re.compile(r"<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>", re.IGNORECASE)
+_ON_ATTR = re.compile(r'\son[a-z]+="', re.IGNORECASE)
+_INLINE_SCRIPT_TAG = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>", re.IGNORECASE)
 
 
 def test_no_template_uses_an_inline_event_handler_attribute():
