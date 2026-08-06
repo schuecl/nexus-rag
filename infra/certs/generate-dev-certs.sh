@@ -25,8 +25,15 @@ if [[ -f "$CA_CRT" && -f "$LEAF_CRT" ]]; then
 fi
 
 openssl genrsa -out "$CA_KEY" 4096
+# keyUsage is required, not cosmetic: Python's ssl module (used by scripts/
+# adversarial_injection_probe.py's verify=<ca bundle>, issue #453) rejects a
+# CA cert lacking it even though `openssl verify` is more lenient and
+# accepts basicConstraints=CA:TRUE alone.
 openssl req -x509 -new -nodes -key "$CA_KEY" -sha256 -days "$DAYS" \
-  -subj "/CN=nexus-rag dev CA" -out "$CA_CRT"
+  -subj "/CN=nexus-rag dev CA" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -out "$CA_CRT"
 
 openssl genrsa -out "$LEAF_KEY" 2048
 openssl req -new -key "$LEAF_KEY" -subj "/CN=localhost" -out dev.csr \

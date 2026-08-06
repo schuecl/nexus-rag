@@ -17,6 +17,31 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- `services/common/common/qdrant_store.py`'s classification-migration
+  failure log now escapes `document_id`/`new_name`/`current_collection`
+  through `log_safety.log_safe` before interpolation (#465, CodeQL
+  `py/log-injection`), matching the pattern `purge.py`'s equivalent log
+  line already used. `purge.py`'s three flagged lines were already fixed
+  (predates this scan) — only this one call site needed the change.
+- `scripts/adversarial_injection_probe.py`'s four LibreChat HTTP calls now
+  verify TLS against the project's own dev CA (`infra/certs/ca.crt`)
+  instead of disabling verification outright (#453, CodeQL
+  `py/request-without-cert-validation`). `infra/certs/generate-dev-certs.sh`
+  now stamps the CA cert with a `keyUsage` extension — required for
+  Python's `ssl` module to accept it as a verification root at all, even
+  though `openssl verify` accepted the old cert without it. Verified live:
+  regenerated dev certs locally, confirmed `openssl verify` chain-validates
+  and an `httpx` client with `verify=infra/certs/ca.crt` successfully
+  trusts a server presenting the regenerated `dev.crt`/`dev.key` (via
+  `openssl s_server`) — the full script itself needs a live LibreChat run
+  to exercise end-to-end, which this did not do (not a CI gate, per its
+  own module docstring). `infra/certs/*` is gitignored and regenerated
+  per-machine, so existing local certs need `rm infra/certs/{ca,dev}.*`
+  + a re-run of the generate script to pick this up.
+- `security/triage.py:874`'s reported `chmod` world-readable finding
+  (#452) does not correspond to any file in this repo, in the working
+  tree or anywhere in git history — closed as a stale/non-reproducing
+  scan artifact rather than fixed, same class as #454/#456/#462/#463.
 - All 4 service Dockerfiles now uninstall `pip`, `setuptools`, and `wheel`
   as a final root-level step, after all application dependencies are
   installed (#491). Fixes CVE-2025-47273 (setuptools) and

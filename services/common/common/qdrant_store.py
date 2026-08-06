@@ -54,6 +54,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from .log_safety import log_safe
+
 logger = logging.getLogger("qdrant_store")
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
@@ -319,13 +321,16 @@ def _migrate_document_classification(
             points_selector=FilterSelector(filter=doc_filter),
         )
     except Exception:
+        # log_safe on document_id: it's uuid-typed in every caller and cannot
+        # contain a newline, but escaping it costs nothing (mirrors purge.py's
+        # same call, which CodeQL flagged identically).
         logger.warning(
             "moved document %s to collection %s but could not clear the old copy from "
             "%s; the leftover points are not retrievable (still status=pending_review) "
             "but should be cleaned up manually",
-            document_id,
-            new_name,
-            current_collection,
+            log_safe(document_id),
+            log_safe(new_name),
+            log_safe(current_collection),
             exc_info=True,
         )
     return True

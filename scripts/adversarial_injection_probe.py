@@ -74,6 +74,12 @@ KEYCLOAK_HTTPS_URL = "https://keycloak:8443"  # matches the /etc/hosts alias
 INGESTION_API_URL = "http://localhost:8001"
 ORCHESTRATION_MCP_URL = "http://localhost:8002"
 LIBRECHAT_URL = "https://localhost:3080"
+# LIBRECHAT_URL's cert (infra/certs/dev.crt, terminated by the librechat-proxy
+# service) is signed by the project's own throwaway dev CA -- verifying
+# against it directly, rather than disabling verification, catches an actual
+# MITM while still working against the self-signed chain (CodeQL
+# py/request-without-cert-validation, issue #453).
+LIBRECHAT_CA_CERT = str(Path(__file__).parent.parent / "infra" / "certs" / "ca.crt")
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/140.0 Safari/537.36"
@@ -385,7 +391,7 @@ def send_and_wait(agent_id: str, username: str, text: str, timeout_s: int = 480)
             "Content-Type": "application/json",
         },
         json=body,
-        verify=False,  # nosec B501: dev-only self-signed cert, see LIBRECHAT_URL's comment
+        verify=LIBRECHAT_CA_CERT,
         timeout=60,
     )
     r.raise_for_status()
@@ -396,7 +402,7 @@ def send_and_wait(agent_id: str, username: str, text: str, timeout_s: int = 480)
         status = httpx.get(
             f"{LIBRECHAT_URL}/api/agents/chat/status/{stream_id}",
             headers={"User-Agent": UA, "Authorization": f"Bearer {token}"},
-            verify=False,  # nosec B501: dev-only self-signed cert, see LIBRECHAT_URL's comment
+            verify=LIBRECHAT_CA_CERT,
             timeout=30,
         ).json()
         if not status.get("active"):
@@ -406,7 +412,7 @@ def send_and_wait(agent_id: str, username: str, text: str, timeout_s: int = 480)
     msgs = httpx.get(
         f"{LIBRECHAT_URL}/api/messages/{stream_id}",
         headers={"User-Agent": UA, "Authorization": f"Bearer {token}"},
-        verify=False,  # nosec B501: dev-only self-signed cert, see LIBRECHAT_URL's comment
+        verify=LIBRECHAT_CA_CERT,
         timeout=30,
     ).json()
     return msgs[1] if len(msgs) >= 2 else None
@@ -456,7 +462,7 @@ def main() -> int:
 
     if not args.skip_connect:
         with httpx.Client(
-            verify=False,  # nosec B501: dev-only self-signed cert, see LIBRECHAT_URL's comment
+            verify=LIBRECHAT_CA_CERT,
             headers={"User-Agent": UA},
             follow_redirects=False,
             timeout=30,
