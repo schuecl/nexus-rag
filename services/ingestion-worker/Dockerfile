@@ -3,9 +3,19 @@ FROM python:3.11-slim
 # Issue #241: OCR for scanned PDFs and image uploads (app/ocr.py). Baked into
 # the image -- never downloaded at runtime (NFR-1 air-gap). eng traineddata
 # only; other languages (OCR_LANG) need their package added here.
+#
+# Issue #450/#451: `apt-get upgrade` patches OS packages at build time rather
+# than trusting the base image's own rebuild cadence -- Debian's security
+# archive updates continuously, the upstream python:3.11-slim image does not.
+# pip/setuptools/wheel are upgraded too: setuptools vendors its own copies of
+# jaraco.context and wheel (CVE-2026-23949, CVE-2026-24049), which sit
+# underneath the hash-pinned application lockfile below and can't be patched
+# through it.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /srv
 

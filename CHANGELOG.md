@@ -15,6 +15,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Security
+
+- All 4 service Dockerfiles now run `apt-get upgrade` and `pip install
+  --upgrade pip setuptools wheel` immediately after `FROM`, before any
+  application dependency is installed (#450, #451). Fixes CVE-2026-23949 and
+  CVE-2026-24049 (HIGH) — `jaraco.context`/`wheel` copies vendored inside an
+  outdated `setuptools`, sitting underneath the hash-pinned application
+  lockfile and unreachable through it. `apt-get upgrade` is defense-in-depth
+  against OS package drift between the base image's own rebuilds; a live
+  rescan found the current `python:3.11-slim` (debian trixie) layer already
+  clean of fixable HIGH/CRITICAL OS CVEs. See #491 for a follow-up: `pip`
+  itself vendors an older `setuptools`/`msgpack` for its own internal use,
+  which a rescan after this fix still flags — narrower risk (pip's CLI is
+  never invoked at runtime in these images) but not yet resolved.
+
 ### Added
 
 - Content-Security-Policy on the document portal (#443, found by the same
