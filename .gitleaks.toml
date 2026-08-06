@@ -18,15 +18,28 @@
 # history and the original literal-fixture commit is still in it. Never a
 # real credential -- allowlisted by exact literal value, same posture as the
 # entry above.
+#
+# Issue #509: the LIBRECHAT_JWT_SECRET/LIBRECHAT_JWT_REFRESH_SECRET/
+# LIBRECHAT_CREDS_KEY/LIBRECHAT_CREDS_IV placeholders named in the header
+# comment above were never actually allowlisted -- their hex entropy stayed
+# under generic-api-key's threshold only under gitleaks-action v2.3.9. #177
+# bumped that action to v3.0.0 (newer gitleaks binary, stricter default
+# ruleset), which now flags all four. Same posture as the entries above:
+# documented dev-only defaults, never used in production, allowlisted by
+# exact literal value.
 title = "nexus-rag gitleaks config"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Documented dev-only default for SESSION_TOKEN_ENCRYPTION_KEY (issue #213, see .env.example's header and common/token_crypto.py's comment) and issue #342's fake AWS-access-key-shaped test fixture (tests/unit/common/test_pii_scan.py, never a real credential)"
+description = "Documented dev-only default for SESSION_TOKEN_ENCRYPTION_KEY (issue #213, see .env.example's header and common/token_crypto.py's comment), issue #342's fake AWS-access-key-shaped test fixture (tests/unit/common/test_pii_scan.py, never a real credential), and issue #509's .env.example LIBRECHAT_* dev placeholders"
 regexes = [
   '''VDwCC09I-Kf3YNJMRhkUN1bkC0bCXc9cxh7agmNqsIM=''',
   '''AKIAABCDEFGHIJKLMNOP''',
   '''AKIAAAAAAAAAAAAAAAAA''',
+  '''6d5695c76c088051803a2711a694dc2a8c3e184b97ca2696639b663e289cb6bd''',
+  '''e6ee049ff1278d2d966accf4a498589cfa8f2e90a239a36195ecea193606444c''',
+  '''b981603e3853e792749bd57a37263dcac98f05e9bcc3221b28ea9ce1d31407f6''',
+  '''59ac382baf239caa9f8bb22863d45e41''',
 ]
