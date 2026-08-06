@@ -46,6 +46,15 @@ changed in the running system, with the issue/PR reference for the trail.
   #476: the `/search` proxy itself always sends the query via URL params
   rather than a JSON body, independently reintroducing the same log exposure
   on every real query -- filed separately as #496, not fixed here.
+- `ingestion-api`'s `/search` page (`app/routes/search.py`, proxies to
+  `orchestration-mcp`'s `/debug/rag_search`) sent the query as a URL query
+  parameter on every call instead of a JSON body (#496, found while
+  investigating #476). `/debug/rag_search` supports the JSON-body form
+  specifically so a question asked of a classified corpus doesn't end up in
+  proxy/ingress access logs (#125/#214) — this route is the production path
+  behind every `/search` page query, so it hit that exposure on every real
+  query, not just the deprecated `?query=` fallback. Now sends `json=`
+  instead of `params=`; the caller's bearer token forwarding is unchanged.
 
 ### Added
 

@@ -34,9 +34,14 @@ def search_query(
     top_k: int = Query(5, ge=1, le=20),
     token: str = Depends(get_current_access_token),
 ) -> dict:
+    # Issue #496: the JSON-body form, not params= -- a question asked of a
+    # classified corpus is itself sensitive (#125/#214), and params= put it
+    # in the URL, landing it in every proxy/ingress log between this service
+    # and orchestration-mcp on every single call through this page, not just
+    # as the deprecated ?query= fallback debug_rag_search itself warns about.
     resp = httpx.post(
         f"{ORCHESTRATION_MCP_URL}/debug/rag_search",
-        params={"query": query, "top_k": top_k},
+        json={"query": query, "top_k": top_k},
         headers={"Authorization": f"Bearer {token}"},
         timeout=30,
     )
