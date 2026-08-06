@@ -696,3 +696,16 @@ baseline capture, not a regression fix.
   type-checked against the real API. Installing the real dependency surfaces
   a live `mypy` finding there (issue #499, found while investigating
   #460/#461) that the CI job currently can't see.
+- semgrep's `generic.html-templates.security.var-in-href`/`var-in-script-tag`
+  rules pattern-match on any `{{ }}` inside an `href` or `<script>` block,
+  with no visibility into whether the interpolated value is actually
+  variable or attacker-reachable (issues #468, #469 — both hardcoded
+  server-side constants, triaged as false positives). A `nosemgrep` comment
+  suppressing these rules only takes effect on the exact finding line or a
+  trailing comment on that same physical line — a comment on the line
+  *before* the flagged tag (the pattern that works for Python `# nosemgrep`)
+  is silently ignored here. For a multi-line HTML tag, the fix is
+  restructuring so the closing `>` and the suppression comment land on the
+  same line as the flagged attribute, which is also the only placement
+  that stays valid HTML (a raw `<!-- -->` comment can't legally sit between
+  attributes inside an open tag).

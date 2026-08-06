@@ -31,6 +31,20 @@ changed in the running system, with the issue/PR reference for the trail.
   `scripts/Dockerfile`-built services are intentionally outside
   `check_compose_hardening.py`'s `CUSTOM_SERVICES` set) — see #502 for a
   follow-up on the `ONE_SHOT` `no-new-privileges` exemption instead.
+- Triaged two MEDIUM semgrep findings from local scan `static-20260805T210006Z`
+  as false positives, with documented `nosemgrep` suppressions rather than
+  code changes (#468, #469). `base.html:129`'s anchor `href` only ever
+  renders one of two hardcoded literal strings (`/curate` or `/curate/list`),
+  chosen by a server-derived boolean from verified OIDC claims — there's no
+  variable content and no path to the flagged `javascript:` URI injection.
+  `upload.html:360`/`362`'s inline `<script>` values (`no_releasability_
+  restriction`, a fixed sentinel from `common/metadata.py`; `max_batch_files`,
+  an admin-set env var) are never user input, and both pass through Jinja2's
+  `| tojson` filter — the JS-context-safe encoder the rule's own remediation
+  asks for. Verified live against a real `semgrep scan --config
+  p/security-audit --config p/python` run before and after, plus the full
+  `services/ingestion-api` test suite (including `test_csp_templates.py` and
+  `test_template_xss.py`).
 - All 4 service Dockerfiles now run `apt-get upgrade` and `pip install
   --upgrade pip setuptools wheel` immediately after `FROM`, before any
   application dependency is installed (#450, #451). Fixes CVE-2026-23949 and

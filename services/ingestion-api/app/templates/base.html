@@ -118,10 +118,14 @@
            require_curator only) and List is the one thing they need
            (require_curator_or_purge, app/routes/curate.py:list_documents). #}
         {% if current_user and (current_user.curatable_orgs or current_user.can_purge) %}
+        {# Issue #468: semgrep flags any {{ }} in an href on pattern alone. This one only
+           ever renders one of two hardcoded literal strings ('/curate' or '/curate/list'),
+           chosen by a server-derived boolean (current_user.curatable_orgs, from verified
+           OIDC claims) -- there's no variable content and no way to reach the flagged
+           javascript: URI injection. #}
         <a
           class="{% if request.url.path.startswith('/curate') %}active{% endif %}"
-          href="{{ '/curate' if current_user.curatable_orgs else '/curate/list' }}"
-        >
+          href="{{ '/curate' if current_user.curatable_orgs else '/curate/list' }}"><!-- nosemgrep: generic.html-templates.security.var-in-href.var-in-href -->
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"></path>
           </svg>

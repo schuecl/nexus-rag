@@ -350,11 +350,16 @@
 {% endblock %}
 
 {% block scripts %}
+{# Issue #469: semgrep flags any {{ }} inside a script tag on pattern alone. Both
+   values here are server-side config, never user input (no_releasability_restriction
+   is a fixed sentinel from common/metadata.py, max_batch_files an admin-set env var,
+   see app/main.py), and | tojson is Jinja2/MarkupSafe's JS-context-safe encoder --
+   exactly the "JavaScript-specific encoder" this rule's own remediation asks for. #}
 <script nonce="{{ csp_nonce }}">
   window.portalUploadConfig = {
-    noReleasabilityRestriction: {{ no_releasability_restriction | tojson }},
+    noReleasabilityRestriction: {{ no_releasability_restriction | tojson }}, // nosemgrep: generic.html-templates.security.var-in-script-tag.var-in-script-tag
     maxUploadBytes: 52428800,
-    maxBatchFiles: {{ max_batch_files | tojson }}
+    maxBatchFiles: {{ max_batch_files | tojson }} // nosemgrep: generic.html-templates.security.var-in-script-tag.var-in-script-tag
   };
 </script>
 <script src="{{ url_for('static', path='/upload.js') }}" defer></script>
