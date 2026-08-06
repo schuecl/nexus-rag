@@ -28,6 +28,16 @@ COPY services/orchestration-mcp/pyproject.toml /srv/pyproject.toml
 COPY services/orchestration-mcp/app /srv/app
 RUN pip install --no-cache-dir --no-deps /srv/common-pkg .
 
+# Issue #491: pip vendors frozen copies of its own build deps
+# (pip/_vendor/msgpack, pip/_vendor/setuptools SBOM entry) separate from the
+# app-facing setuptools upgraded above -- CVE-2025-47273 (setuptools) and
+# GHSA-6v7p-g79w-8964 (msgpack) live only there. Nothing in this service
+# invokes pip at runtime, so pip/setuptools/wheel (and everything vendored
+# inside them) are removed outright rather than chasing individual vendored
+# CVEs. Interim fix -- issue #491 tracks a multi-stage rebuild as the real
+# fix for this whole class of finding.
+RUN pip uninstall -y pip setuptools wheel
+
 # Caches the BM25 sparse model (common.sparse_embedding); mount a volume here
 # (see docker-compose.yml) so it isn't re-downloaded on every restart.
 ENV HF_HOME=/srv/.cache/huggingface

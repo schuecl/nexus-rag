@@ -31,7 +31,16 @@ COPY services/reranker-service/requirements.txt /srv/requirements.txt
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir torch --index-url "${TORCH_INDEX_URL}" \
     && pip install --no-cache-dir --require-hashes -r /srv/requirements.txt \
-    && pip install --no-cache-dir --no-deps .
+    && pip install --no-cache-dir --no-deps . \
+    # Issue #491: pip vendors frozen copies of its own build deps
+    # (pip/_vendor/msgpack, pip/_vendor/setuptools SBOM entry) separate from
+    # the app-facing setuptools upgraded above -- CVE-2025-47273 (setuptools)
+    # and GHSA-6v7p-g79w-8964 (msgpack) live only there. Nothing in this
+    # service invokes pip at runtime, so pip/setuptools/wheel (and
+    # everything vendored inside them) are removed outright rather than
+    # chasing individual vendored CVEs. Interim fix -- issue #491 tracks a
+    # multi-stage rebuild as the real fix for this whole class of finding.
+    && pip uninstall -y pip setuptools wheel
 
 # First run downloads the model from Hugging Face into HF_HOME; mount a
 # volume there (see docker-compose.yml) so it persists across restarts and

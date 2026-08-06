@@ -15,6 +15,27 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Security
+
+- All 4 service Dockerfiles now uninstall `pip`, `setuptools`, and `wheel`
+  as a final root-level step, after all application dependencies are
+  installed (#491). Fixes CVE-2025-47273 (setuptools) and
+  GHSA-6v7p-g79w-8964 (msgpack) — both live only in `pip`'s own
+  internally-vendored copies (`pip/_vendor/`), separate from the
+  app-facing `setuptools` upgraded by #450/#451's fix, and unreachable
+  through the hash-pinned application lockfiles. None of the 4 services
+  invoke `pip` at runtime, so removing it (and everything vendored
+  inside it) outright closes this class of finding rather than chasing
+  individual vendored CVEs release over release. Verified live: before/
+  after trivy rescans of all 4 rebuilt images (HIGH/CRITICAL clean after),
+  plus a full `docker compose up` + `--profile eval run eval-retrieval`
+  smoke test (all services healthy, golden-query recall 1.0, zero
+  forbidden-document leaks). This is an interim fix — #511 tracks
+  splitting each Dockerfile into a multi-stage build so `pip`/
+  `setuptools`/`wheel` never enter the runtime image's layers at all,
+  which structurally prevents future CVEs in whatever `pip` vendors next
+  from resurfacing this same finding.
+
 ### Fixed
 
 - Seeded dev realm's `eve-purge` login failing with `invalid_grant` was a

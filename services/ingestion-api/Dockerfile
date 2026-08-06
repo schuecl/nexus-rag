@@ -28,6 +28,16 @@ COPY services/ingestion-api/pyproject.toml /srv/pyproject.toml
 COPY services/ingestion-api/app /srv/app
 RUN pip install --no-cache-dir --no-deps /srv/common-pkg .
 
+# Issue #491: pip vendors frozen copies of its own build deps
+# (pip/_vendor/msgpack, pip/_vendor/setuptools SBOM entry) separate from the
+# app-facing setuptools upgraded above -- CVE-2025-47273 (setuptools) and
+# GHSA-6v7p-g79w-8964 (msgpack) live only there. Nothing in this service
+# invokes pip at runtime, so pip/setuptools/wheel (and everything vendored
+# inside them) are removed outright rather than chasing individual vendored
+# CVEs. Interim fix -- issue #491 tracks a multi-stage rebuild as the real
+# fix for this whole class of finding.
+RUN pip uninstall -y pip setuptools wheel
+
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Fixed non-root UID/GID (matches helm/nexus-rag's securityContext.runAsUser)
