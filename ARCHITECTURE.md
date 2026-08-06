@@ -314,7 +314,16 @@ with an explicit `<untrusted_document_content>` marker (applied *after* rerankin
 field to the response instructing the calling model to treat delimited content as reference
 material to cite, not instructions to follow — the same marker-plus-notice pattern also
 carried in the tool's own MCP docstring, so it doesn't depend on one particular client
-surfacing docstrings to its model. This is a mitigation, not a guarantee (§7).
+surfacing docstrings to its model. This is a mitigation, not a guarantee (§7). Issues
+#457/#458 (2026-08-06): a local prompt-injection scan found a document containing a literal
+occurrence of the marker tags could forge a fake close/reopen pair, making injected content
+read as sitting outside the untrusted region — `_delimit_untrusted_text` now neutralizes any
+literal marker occurrence in the source text first, so at most one real open/close pair
+exists per delimited passage (#458). A separate class, a passage worded as a complete,
+ready-to-copy answer that the model echoed verbatim including a foreign token riding along
+(#457), has no equivalent structural fix — `SECURITY_NOTICE` gained an explicit
+verbatim-copy warning, same mitigation-not-guarantee posture as the persona/roleplay wording
+#427 added.
 
 **Reconnaissance-shaped query detection (issue #426):** the `audit_log insert` step above is
 also §4.6's `nexus_rag_audit_reporting` role's second consumer. `scripts/detect_query_anomalies.py`
