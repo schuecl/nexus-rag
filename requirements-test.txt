@@ -7,7 +7,7 @@
 # closes that alert rather than accepting it. Re-check the upper bound when
 # pytest-bdd ships a 9.1-compatible release (still 8.1.0 as of 2026-07-30;
 # dependabot's 9.1.1 bump failed all 10 BDD scenarios on exactly this).
-pytest==9.0.3
+pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-bdd==8.1.0
