@@ -1,8 +1,12 @@
 """Issue #443: Content-Security-Policy on the document portal.
 
-Behavioral coverage of ContentSecurityPolicyMiddleware itself is exercised
-against a minimal Starlette app rather than the real app.main -- no lifespan
-to avoid (same reasoning as test_security_headers.py). Wiring and the
+Behavioral coverage of ContentSecurityPolicyMiddleware itself is driven
+directly at the ASGI level (scope/receive/send) rather than through
+starlette.testclient.TestClient: TestClient pulls in starlette's own HTTP
+client shim (httpx2, as of the version this repo pins), which isn't a real
+dependency of anything this test needs to prove and isn't installed
+everywhere this suite runs (see tests/unit/common/test_security_headers.py's
+docstring for the same reasoning, applied there first). Wiring and the
 template-side nonce contract are covered separately below.
 """
 
@@ -12,11 +16,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
-from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route
-from starlette.testclient import TestClient
 
 from app import main
 from app.csp import ContentSecurityPolicyMiddleware
@@ -31,39 +31,63 @@ def db() -> Iterator[Session]:
     engine.dispose()  # #188: undisposed sqlite3 connections fail an unrelated test at GC time
 
 
-def _app() -> Starlette:
-    async def _ok(_request):  # type: ignore[no-untyped-def]
-        return PlainTextResponse("ok")
+async def _ok_app(scope, receive, send):  # type: ignore[no-untyped-def]
+    if scope["type"] != "http":
+        return
+    await send({"type": "http.response.start", "status": 200, "headers": []})
+    await send({"type": "http.response.body", "body": b"ok"})
 
-    app = Starlette(routes=[Route("/health", _ok)])
-    app.add_middleware(ContentSecurityPolicyMiddleware)
-    return app
+
+async def _receive():  # type: ignore[no-untyped-def]
+    return {"type": "http.request"}
+
+
+async def _call(middleware: ContentSecurityPolicyMiddleware, scope: dict) -> list[dict]:
+    sent: list[dict] = []
+
+    async def _send(message):  # type: ignore[no-untyped-def]
+        sent.append(message)
+
+    await middleware(scope, _receive, _send)
+    return sent
+
+
+def _policy(sent: list[dict]) -> bytes:
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    return next(v for k, v in start["headers"] if k == b"content-security-policy")
 
 
 class TestPolicyHeader:
-    def test_sends_a_csp_header(self):
-        client = TestClient(_app())
+    async def test_sends_a_csp_header(self):
+        middleware = ContentSecurityPolicyMiddleware(_ok_app)
 
-        response = client.get("/health")
+        sent = await _call(middleware, {"type": "http", "method": "GET", "path": "/health"})
 
-        assert "content-security-policy" in response.headers
+        start = next(m for m in sent if m["type"] == "http.response.start")
+        assert any(k == b"content-security-policy" for k, _ in start["headers"])
 
-    def test_policy_carries_the_required_directives(self):
-        client = TestClient(_app())
+    async def test_policy_carries_the_required_directives(self):
+        middleware = ContentSecurityPolicyMiddleware(_ok_app)
 
-        policy = client.get("/health").headers["content-security-policy"]
+        policy = _policy(
+            await _call(middleware, {"type": "http", "method": "GET", "path": "/health"})
+        )
 
-        assert "default-src 'self'" in policy
-        assert "object-src 'none'" in policy
-        assert "base-uri 'self'" in policy
-        assert "frame-ancestors 'none'" in policy
-        assert "script-src 'self' 'nonce-" in policy
+        assert b"default-src 'self'" in policy
+        assert b"object-src 'none'" in policy
+        assert b"base-uri 'self'" in policy
+        assert b"frame-ancestors 'none'" in policy
+        assert b"script-src 'self' 'nonce-" in policy
 
-    def test_nonce_changes_between_requests(self):
-        client = TestClient(_app())
+    async def test_nonce_changes_between_requests(self):
+        middleware = ContentSecurityPolicyMiddleware(_ok_app)
 
-        first = client.get("/health").headers["content-security-policy"]
-        second = client.get("/health").headers["content-security-policy"]
+        first = _policy(
+            await _call(middleware, {"type": "http", "method": "GET", "path": "/health"})
+        )
+        second = _policy(
+            await _call(middleware, {"type": "http", "method": "GET", "path": "/health"})
+        )
 
         assert first != second
 
