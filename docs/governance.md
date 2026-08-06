@@ -534,7 +534,7 @@ are the only destruction that happens.
 | Data class | Retention (proposed) | Destruction mechanism | Status |
 |---|---|---|---|
 | Original files (object store) | Life of the document; destroyed on purge. Rejected documents: eligible for purge review after **90 days**; superseded originals: retained **1 year** after supersession, then eligible | `purge_document()` — deletes the original via `ObjectStore.delete()` | Purge **Implemented**; the 90-day/1-year eligibility sweep **Proposed** |
-| Chunks (vector store, either backend) | Lifecycle-bound to the document; never outlive it | Deleted on supersede (FR-7) and on purge; backend-agnostic via the #160 seam | **Implemented** |
+| Chunks (vector store, either backend) | Lifecycle-bound to the document; never outlive it | Deleted on supersede (FR-7) and on purge; backend-agnostic via the #160 seam. On Qdrant specifically, the pre-#229 bare `nexus_rag_chunks` collection (never queried after that split, and — until #477 — never swept by purge either) is now included in destruction alongside every per-classification collection | **Implemented** |
 | `documents` rows | Active rows: life of the document. Purged rows become **tombstones, kept indefinitely** — the tombstone *is* the destruction evidence (id, timestamps, `purged` status; every content field scrubbed to `[purged]`) | Tombstoning on purge; no hard delete of tombstones | **Implemented** |
 | Notifications | **90 days** after creation, read or not | A reaper on the #108 pattern (scheduled sweep in-app; the app role may DELETE its own notifications) | **Proposed** |
 | `oauth_states` / `user_sessions` | Bounded lifetimes, reaped continuously | #108 (merged) | **Implemented** |
