@@ -50,6 +50,7 @@ Capability roles, deliberately small and non-overlapping:
 | See the curation List, any status (`GET /curate/documents`) | ✖ | ✖ | ✖ | ✔ same scoping as the Queue row above | ✖ | ✔ **unscoped** — every document regardless of org/clearance/releasability, matching `rag-purge`'s own unscoped destruction authority (#279, gap G3; `require_curator_or_purge`); a caller holding both roles gets the curator-scoped view, not the wider one |
 | Read a pending document's content (`GET /curate/{id}/content`) | ✖ | own only | ✖ | ✔ parsed chunk text, read back from the vector store (`get_store().fetch_document_chunks`) — same authority order as approve/reject: org (404) then clearance/releasability/`access_scope` (403, `_check_curator_authority`); 409 if the document has already left `pending_review` (issue #284) | ✖ | ✖ |
 | Approve / reject / correct tags (`POST /curate/{id}/approve\|reject`) | ✖ | ✖ | ✖ | ✔ org (else **404**, not 403 — existence-oracle fix #215) + clearance ceiling (403) + releasability held (403, FR-14.1); re-checked against the *old* doc on supersession (FR-7, `_validate_supersede`) | ✖ | ✖ |
+| Suspend an approved document (`POST /curate/{id}/suspend`) | ✖ | ✖ | ✖ | ✔ same authority check as approve/reject; demotes to `pending_review` (409 if not currently `approved`) — single-curator, reversible; distinct from destruction, which stays gated by `rag-purge` below (#478) | ✖ | ✖ |
 | Query the corpus (`orchestration-mcp` `rag_search` / `/debug/rag_search`) | ✖ | ✖ | ✔ under the mandatory FR-26 filter (§4) | ✖ | ✖ | ✖ |
 | Edit classification/releasability vocabulary (`ingestion-api` admin routes) | ✖ | ✖ | ✖ | ✖ | ✔ (`deps.require_admin`) | ✖ |
 | Purge a document everywhere (`DELETE /documents/{id}`) | ✖ | ✖ | ✖ | ✖ | ✖ 403 | ✔ audited, reason required (#123) -- **only** when `PURGE_TWO_PERSON_REQUIRED` is unset (dev default); returns 409 otherwise (#279, gap G3) |
@@ -291,6 +292,16 @@ Postgres volume (added later than the other four seeded users, #298/#480)
 never picks it up, so the two-person path above has no second identity to
 confirm with until a `docker compose down -v` + re-`up`; see
 `docs/dev-setup.md`'s seeded-users section.
+
+**Related, not the same gap (#478):** the two-person requirement above is
+correctly strict for *destruction*, but before #478 it was also, by
+omission, the only way to stop *serving* an already-approved document at
+all — `reject()` refuses anything not still `pending_review`. `POST
+/curate/{id}/suspend` (§2's Suspend row) now gives a single curator with
+ordinary authority over the document a reversible way to pull it from
+retrieval (demote to `pending_review`) without touching `rag-purge` or this
+two-person flow — destruction keeps the higher bar; taking something out of
+circulation doesn't need it.
 
 **G4 — Conflicting `rag-clearance:*` roles — resolved (#280).** A token
 carrying two or more distinct `rag-clearance:<value>` roles is now rejected

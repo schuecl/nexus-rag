@@ -259,6 +259,30 @@ class TestDeleteDocumentChunks:
 
         assert "p2" in client.collections[classification_collection_name("SECRET")]
 
+    def test_sweeps_the_legacy_pre_partition_collection_too(self):
+        """Issue #477: a Qdrant volume that predates the #229 per-classification
+        split can still hold chunks in the bare `nexus_rag_chunks` collection.
+        It never matches the `<name>__` prefix `existing_classification_collections`
+        filters on, so purge must name it explicitly or that copy survives."""
+        client = FakeQdrantClient()
+        upsert_chunks(client, [_point("p1", "doc-1", "CUI")])
+        client.collections[qdrant_store.QDRANT_COLLECTION] = {
+            "legacy": _FakePoint("legacy", None, {"document_id": "doc-1", "classification": "CUI"})
+        }
+
+        delete_document_chunks(client, "doc-1", "CUI")
+
+        assert client.collections[classification_collection_name("CUI")] == {}
+        assert client.collections[qdrant_store.QDRANT_COLLECTION] == {}
+
+    def test_no_legacy_collection_is_still_a_no_op(self):
+        client = FakeQdrantClient()
+        upsert_chunks(client, [_point("p1", "doc-1", "CUI")])
+
+        delete_document_chunks(client, "doc-1", "CUI")  # must not raise
+
+        assert client.collections[classification_collection_name("CUI")] == {}
+
 
 class TestUpdateDocumentPayloadWithoutClassificationChange:
     def test_status_only_correction_writes_in_place(self):

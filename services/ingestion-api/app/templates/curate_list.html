@@ -199,6 +199,14 @@ async function loadDocuments() {
       editBtn.addEventListener('click', () => toggleEdit(doc.id, document.getElementById(`edit-form-${doc.id}`).hidden));
       actions.append(editBtn);
     }
+    if (CAN_EDIT_METADATA && doc.status === 'approved') {
+      // Issue #478: a single curator's reversible way to stop serving a
+      // document without the two-person rag-purge gate reject() and delete
+      // require once something has left pending_review -- see suspendDoc().
+      const suspendBtn = el('button', { className: 'text-button', text: 'Suspend' });
+      suspendBtn.addEventListener('click', () => suspendDoc(doc.id, doc.filename));
+      actions.append(suspendBtn);
+    }
     if (CAN_PURGE && doc.status !== 'purged' && doc.status !== 'purging') {
       const deleteBtn = el('button', { className: 'text-button danger-button', text: 'Delete' });
       deleteBtn.addEventListener('click', () => deleteDoc(doc.id, doc.filename));
@@ -277,6 +285,18 @@ async function saveEdit(id) {
       ? `Saved changes to “${doc.filename}” — sent back to Pending Review for re-approval.`
       : `Saved changes to “${doc.filename}”.`
   );
+  loadDocuments();
+}
+
+async function suspendDoc(id, filename) {
+  const reason = prompt(`Suspend “${filename}” -- sends it back to Pending Review and stops serving it immediately.\nReason (required):`);
+  if (!reason) return;
+  const res = await fetch(`/curate/${id}/suspend`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  await reportResult(document.getElementById('result'), res, () => `Suspended “${filename}”.`);
   loadDocuments();
 }
 

@@ -32,7 +32,8 @@ async function loadNotifications() {
     // text nodes now -- the message is prose to read, never markup to parse.
     const body = document.createElement('div');
     const heading = document.createElement('strong');
-    heading.textContent = n.decision === 'approved' ? '✅ Approved' : '❌ Rejected';
+    heading.textContent = n.decision === 'approved' ? '✅ Approved'
+      : n.decision === 'suspended' ? '⏸️ Suspended' : '❌ Rejected';
     const stamp = document.createElement('span');
     stamp.className = 'hint';
     stamp.textContent = new Date(n.created_at).toLocaleString();

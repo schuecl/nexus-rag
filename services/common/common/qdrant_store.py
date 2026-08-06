@@ -488,10 +488,26 @@ def delete_document_chunks(client: QdrantClient, document_id: str, classificatio
     leftover duplicate is exactly the store-level-reader exposure #229
     exists to bound. A document that never finished embedding has no
     collection at all yet, which is a no-op, not an error, same as before.
+
+    Issue #477: the bare `QDRANT_COLLECTION` name itself (pre-#229, no
+    classification suffix) is swept too, if it still exists. It never
+    matches `existing_classification_collections`'s `<name>__` prefix
+    filter, so on a Qdrant volume that predates the per-classification
+    split it is invisible to retrieval (correct) but was also invisible to
+    purge (not correct) -- a purge could report success while that
+    collection's copy of the chunk text survived indefinitely. Not a
+    classification collection, so not folded into
+    `existing_classification_collections` itself (that helper also drives
+    #122's embedding-model provenance check, which must not sample stale
+    pre-migration data) -- listed here explicitly instead, alongside it,
+    for the same "destruction must reach every store-level copy" reason.
     """
     del classification
     doc_filter = _document_filter(document_id)
-    for name in existing_classification_collections(client):
+    names = existing_classification_collections(client)
+    if client.collection_exists(QDRANT_COLLECTION):
+        names = [*names, QDRANT_COLLECTION]
+    for name in names:
         client.delete(collection_name=name, points_selector=FilterSelector(filter=doc_filter))
 
 

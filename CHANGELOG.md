@@ -31,6 +31,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- Added a single-curator `suspend` transition
+  (`POST /curate/{id}/suspend`, `services/ingestion-api/app/routes/curate.py`)
+  for an already-`approved` document (#478, found by manual review).
+  Previously the only way to stop serving a wrongly-classified or
+  wrongly-releasable approved document was `reject()` (409s once a document
+  has left `pending_review`) or the two-person purge flow (#279 gap G3) —
+  the right gate for *destruction*, but a strange prerequisite for simply
+  taking something out of circulation while its tags get sorted out.
+  `suspend` demotes the document back to `pending_review` — the same
+  reversible target `edit_metadata`'s #268 authority-mismatch demotion
+  already uses, and already excluded by the FR-26 retrieval filter — so
+  nothing is destroyed and the document lands back in the ordinary
+  curation queue for re-approval, correction, or rejection. Available to
+  any curator with existing authority over the document (no new role); the
+  curation "List" dashboard gained a matching "Suspend" button.
 - `scripts/Dockerfile` — the image every one-shot Compose container shares
   (`seed-sample-data`, `eval-retrieval`, `calibrate-tagging-advisory`,
   `detect-query-anomalies`, `ingest-classification-corpus`,
@@ -304,6 +319,23 @@ changed in the running system, with the issue/PR reference for the trail.
   via its `depends_on`, silently growing the dev corpus by 7 documents per
   invocation and drifting local eval metrics with how many times they'd been
   run; CI was unaffected (fresh volumes every run).
+
+### Security
+
+- A Qdrant volume that predates the #229 per-classification collection split
+  can still hold chunk text in the bare `nexus_rag_chunks` collection (#477,
+  found by manual review). Nothing ever queried it after #229 (correct —
+  `existing_classification_collections` only matches the `<name>__` prefix)
+  but nothing ever purged it either, so `purge_document()` could report
+  success while that collection's copy of a "destroyed" document's chunk
+  text survived indefinitely — a retention/lineage gap, not a retrieval
+  bug. `delete_document_chunks` (`services/common/common/qdrant_store.py`,
+  called by both purge and supersession) now sweeps the bare
+  `QDRANT_COLLECTION` name too, alongside every classification collection,
+  if it still exists — narrowly scoped to the destruction path rather than
+  folded into `existing_classification_collections` itself, since that
+  helper also drives #122's embedding-model provenance check, which must
+  not sample stale pre-migration data.
 
 ## [0.5.0] - 2026-08-05
 
