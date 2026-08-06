@@ -1,5 +1,12 @@
 # nexus-rag
 
+[![CI](https://github.com/schuecl/nexus-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/schuecl/nexus-rag/actions/workflows/ci.yml)
+[![E2E](https://github.com/schuecl/nexus-rag/actions/workflows/e2e.yml/badge.svg)](https://github.com/schuecl/nexus-rag/actions/workflows/e2e.yml)
+[![CodeQL](https://github.com/schuecl/nexus-rag/actions/workflows/codeql.yml/badge.svg)](https://github.com/schuecl/nexus-rag/actions/workflows/codeql.yml)
+[![Security](https://github.com/schuecl/nexus-rag/actions/workflows/security.yml/badge.svg)](https://github.com/schuecl/nexus-rag/actions/workflows/security.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](CLAUDE.md)
+
 Air-gapped Retrieval-Augmented Generation (RAG) pipeline for **MPNexus** — a DoD
 Kubernetes environment already running LibreChat, LiteLLM, Keycloak, and vLLM/Ollama.
 nexus-rag adds document ingestion, mandatory classification/releasability tagging, curator
