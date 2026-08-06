@@ -88,6 +88,17 @@ _INJECTION_PHRASES: tuple[str, ...] = (
     "disregard this notice",
     "forget you are a",
     "roleplay mode",
+    # Issue #458: a literal occurrence of orchestration-mcp's
+    # <untrusted_document_content> delimiter marker (app/rag_search.py)
+    # inside a document's own text is how a delimiter-forgery attempt closes
+    # the real boundary early and reopens a forged trusted-looking block.
+    # Legitimate documents essentially never contain this exact string, so
+    # it is a strong, low-false-positive signal even under this module's
+    # conservative-substring posture -- and gives a curator visibility into
+    # the attempt at approval time, independent of the runtime
+    # neutralization _delimit_untrusted_text now also applies.
+    "<untrusted_document_content>",
+    "</untrusted_document_content>",
 )
 
 # How many findings of each kind to keep -- an adversarial document could

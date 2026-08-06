@@ -223,7 +223,20 @@ looks complete until you check what it actually observes.
   generation model, but a sufficiently adversarial document could still try
   to break out of the delimiter. This surface is about *human* review
   actually seeing content; it doesn't claim the generation model is immune
-  to what it reads once reviewed.
+  to what it reads once reviewed. **Issues #457/#458 (2026-08-06):** a local
+  scan demonstrated the "break out of the delimiter" case predicted above —
+  a document containing a literal `</untrusted_document_content>` closed the
+  real boundary early and a forged reopening made injected content read as
+  trusted framing (delimiter forgery, #458), and separately a passage worded
+  as a complete answer got echoed verbatim by the model, canary token
+  included (citation hijack, #457). The delimiter-forgery case is now closed
+  server-side — `_delimit_untrusted_text` neutralizes a literal marker
+  occurrence in the source text before wrapping it — so at most one real
+  open/close pair exists per delimited passage regardless of document
+  content. Citation hijack has no equivalent structural fix (the model
+  chooses to copy text verbatim); `SECURITY_NOTICE` gained an explicit
+  warning against it, same notice-only posture as everything else in this
+  bullet.
 
 ### 4. Reconnaissance-shaped query patterns (detection, not prevention)
 

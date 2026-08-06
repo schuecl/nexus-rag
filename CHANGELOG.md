@@ -147,6 +147,27 @@ changed in the running system, with the issue/PR reference for the trail.
   behavior was attempted but not completed cleanly this session (unrelated
   dev-environment issues — see REQUIREMENTS.md Section 11) and is still
   needed.
+- Closed a delimiter-forgery gap in `orchestration-mcp`'s retrieved-content
+  wrapping (#458, found by a local rag-poisoning scan, regression/residual
+  of #427): a document's own text containing a literal
+  `</untrusted_document_content>` closed the real untrusted-content boundary
+  early, and a forged reopening right after it made injected content read,
+  to the model, as sitting outside the untrusted region — indistinguishable
+  from this module's own trusted framing. `_delimit_untrusted_text` now
+  neutralizes any literal marker occurrence in the source chunk text before
+  wrapping it, so at most one real open/close pair can exist per delimited
+  passage regardless of document content. `common/content_advisory.py`'s
+  curator-facing advisory scan also gained the literal marker strings as
+  injection-marker phrases. Separately (#457, same scan): `SECURITY_NOTICE`
+  gained an explicit warning against copying a passage's wording verbatim
+  as if it were the model's own answer — a poisoned document worded as a
+  complete, ready-to-copy answer (with a foreign token riding along) had
+  been echoed back verbatim by the model. The delimiter-forgery fix is
+  deterministic and fully covered by unit tests
+  (`services/orchestration-mcp/tests/test_tool_response.py`,
+  `tests/unit/common/test_content_advisory.py`); like #427's wording change,
+  the citation-hijack wording has not yet been validated against real
+  generation models — tracked in #494.
 
 ### Fixed
 
