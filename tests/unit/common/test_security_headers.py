@@ -1,95 +1,107 @@
 """Issues #444/#445: the static response headers OWASP ZAP flagged as absent
 across ingestion-api, orchestration-mcp and reranker-service.
 
-Exercised against a minimal Starlette app rather than any real service's
-app -- this module has no lifespan (no NATS, no live model load), so
-TestClient carries none of the cost the services' own test suites avoid it
-for (see e.g. services/ingestion-api/tests/test_login_gate.py).
+Driven directly at the ASGI level (scope/receive/send), not through
+starlette.testclient.TestClient -- every other service's own middleware/
+security test in this repo avoids TestClient already (see e.g.
+services/reranker-service/tests/test_main.py's docstring), and this module
+has no service directory of its own to inherit that convention's rationale
+from a comment, so it's worth restating here: TestClient pulls in
+starlette's own HTTP client shim (httpx or, as of the version this repo
+pins, httpx2, which isn't installed everywhere this module's tests run),
+which is one more moving part a shared-library unit test has no reason to
+depend on when driving the ASGI callable directly is just as direct and has
+no transitive-dependency surface at all.
 """
 
 from __future__ import annotations
 
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse, PlainTextResponse
-from starlette.routing import Route
-from starlette.testclient import TestClient
+import asyncio
 
 from common.security_headers import SecurityHeadersMiddleware
 
 
-def _app(extra_headers: tuple[tuple[bytes, bytes], ...] = ()) -> Starlette:
-    async def _ok(_request):  # type: ignore[no-untyped-def]
-        return PlainTextResponse("ok")
+async def _ok_app(scope, receive, send):  # type: ignore[no-untyped-def]
+    if scope["type"] != "http":
+        return
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": b"ok"})
 
-    async def _json(_request):  # type: ignore[no-untyped-def]
-        return JSONResponse({"status": "ok"})
 
-    app = Starlette(routes=[Route("/health", _ok), Route("/data", _json)])
-    app.add_middleware(SecurityHeadersMiddleware, extra_headers=extra_headers)
-    return app
+async def _receive():  # type: ignore[no-untyped-def]
+    return {"type": "http.request"}
+
+
+def _call(middleware: SecurityHeadersMiddleware, scope: dict) -> list[dict]:
+    sent: list[dict] = []
+
+    async def _send(message):  # type: ignore[no-untyped-def]
+        sent.append(message)
+
+    asyncio.run(middleware(scope, _receive, _send))
+    return sent
+
+
+def _headers(sent: list[dict]) -> dict[bytes, bytes]:
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    return dict(start["headers"])
 
 
 class TestBaseHeaders:
     def test_nosniff_and_referrer_policy_present(self):
-        client = TestClient(_app())
+        middleware = SecurityHeadersMiddleware(_ok_app)
 
-        response = client.get("/health")
+        headers = _headers(_call(middleware, {"type": "http", "method": "GET", "path": "/health"}))
 
-        assert response.headers["x-content-type-options"] == "nosniff"
-        assert response.headers["referrer-policy"] == "no-referrer"
-
-    def test_applies_to_every_route_not_just_one(self):
-        client = TestClient(_app())
-
-        for path in ("/health", "/data"):
-            response = client.get(path)
-            assert response.headers["x-content-type-options"] == "nosniff"
+        assert headers[b"x-content-type-options"] == b"nosniff"
+        assert headers[b"referrer-policy"] == b"no-referrer"
 
     def test_does_not_clobber_the_route_s_own_headers(self):
-        client = TestClient(_app())
+        middleware = SecurityHeadersMiddleware(_ok_app)
 
-        response = client.get("/data")
+        headers = _headers(_call(middleware, {"type": "http", "method": "GET", "path": "/data"}))
 
-        assert response.headers["content-type"].startswith("application/json")
-        assert response.json() == {"status": "ok"}
+        assert headers[b"content-type"] == b"application/json"
 
     def test_no_extra_headers_means_no_x_frame_options(self):
         """orchestration-mcp/reranker-service opt into the base set only --
         #444's X-Frame-Options is ingestion-api's own addition, not a
         default every caller of this middleware inherits."""
-        client = TestClient(_app())
+        middleware = SecurityHeadersMiddleware(_ok_app)
 
-        response = client.get("/health")
+        headers = _headers(_call(middleware, {"type": "http", "method": "GET", "path": "/health"}))
 
-        assert "x-frame-options" not in response.headers
+        assert b"x-frame-options" not in headers
 
 
 class TestExtraHeaders:
     def test_extra_header_is_added_alongside_the_base_set(self):
-        client = TestClient(_app(extra_headers=((b"x-frame-options", b"DENY"),)))
+        middleware = SecurityHeadersMiddleware(
+            _ok_app, extra_headers=((b"x-frame-options", b"DENY"),)
+        )
 
-        response = client.get("/health")
+        headers = _headers(_call(middleware, {"type": "http", "method": "GET", "path": "/health"}))
 
-        assert response.headers["x-frame-options"] == "DENY"
-        assert response.headers["x-content-type-options"] == "nosniff"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert headers[b"x-frame-options"] == b"DENY"
+        assert headers[b"x-content-type-options"] == b"nosniff"
+        assert headers[b"referrer-policy"] == b"no-referrer"
 
 
 class TestNonHttpScopePassthrough:
-    async def test_lifespan_scope_is_not_touched(self):
-        calls = []
+    def test_lifespan_scope_is_not_touched(self):
+        calls: list[str] = []
 
         async def _inner_app(scope, receive, send):  # type: ignore[no-untyped-def]
             calls.append(scope["type"])
 
         middleware = SecurityHeadersMiddleware(_inner_app)
 
-        async def _receive():  # type: ignore[no-untyped-def]
-            return {"type": "lifespan.startup"}
-
-        async def _send(_message):  # type: ignore[no-untyped-def]
-            pass
-
-        await middleware({"type": "lifespan"}, _receive, _send)
+        _call(middleware, {"type": "lifespan"})
 
         assert calls == ["lifespan"]
