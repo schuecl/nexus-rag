@@ -17,6 +17,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- `scripts/Dockerfile` — the image every one-shot Compose container shares
+  (`seed-sample-data`, `eval-retrieval`, `calibrate-tagging-advisory`,
+  `detect-query-anomalies`, `ingest-classification-corpus`,
+  `verify-corpus-access`) — now runs as a fixed non-root UID/GID (10001),
+  matching the convention the four service Dockerfiles already use (#459,
+  #464). It had no `USER` at all, so every one of those containers ran as
+  root. Verified live: rebuilt the image and ran all six one-shots against a
+  real `docker compose up` stack with no permission errors — none of them
+  write anywhere but `/srv`'s own bytecode cache at runtime. This is a
+  narrower fix than the four services' full hardening treatment (no
+  `read_only`/`cap_drop`/Compose-level `user:` override, since
+  `scripts/Dockerfile`-built services are intentionally outside
+  `check_compose_hardening.py`'s `CUSTOM_SERVICES` set) — see #502 for a
+  follow-up on the `ONE_SHOT` `no-new-privileges` exemption instead.
 - All 4 service Dockerfiles now run `apt-get upgrade` and `pip install
   --upgrade pip setuptools wheel` immediately after `FROM`, before any
   application dependency is installed (#450, #451). Fixes CVE-2026-23949 and

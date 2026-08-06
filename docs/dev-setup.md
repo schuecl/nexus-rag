@@ -293,6 +293,17 @@ unauthenticated endpoints. Containers reach each other by service name on
 `nexus-rag-net` regardless, so nothing in the documented flow changes — the
 `http://localhost:PORT` URLs below all still work.
 
+**`scripts/Dockerfile` (the image every one-shot Compose container shares —
+`seed-sample-data`, `eval-retrieval`, `calibrate-tagging-advisory`,
+`detect-query-anomalies`, `ingest-classification-corpus`,
+`verify-corpus-access`) also runs as fixed non-root UID/GID 10001 (#459,
+#464)**, the same convention as the four service Dockerfiles above — but it
+is deliberately *not* in `check_compose_hardening.py`'s `CUSTOM_SERVICES` set,
+so it doesn't get the rest of that treatment (`read_only`, `cap_drop: [ALL]`,
+a Compose-level `user:` override). `seed-sample-data` and `eval-retrieval`
+also stay in the `ONE_SHOT` exemption from rule 3 (`no-new-privileges`) even
+though neither appears to need it — see #502.
+
 ## Observability stack (optional, #133)
 
 Off by default. Bring it up alongside the app stack:
