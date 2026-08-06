@@ -475,6 +475,40 @@ same way a forbidden leak already does. The pure history/baseline logic is unit
 tested in `tests/unit/test_evaluate_retrieval.py`; the scoring itself is covered
 by the golden-query e2e job.
 
+**How this runs unattended in CI (#429).** `e2e.yml`'s `golden-query` job now
+carries the trend store across runs: it restores the most recent successful
+non-PR run's `retrieval-eval-history` artifact, passes `--history-dir` so the
+harness auto-baselines against it, and republishes the store. Three decisions
+that change how a result should be read:
+
+- **Every nightly becomes the next baseline.** The comparison is always against
+  the immediately preceding run, not a pinned release baseline. That catches a
+  step change (a chunking, embedding-model or reranker change that drops recall
+  overnight) and deliberately does *not* catch slow cumulative drift — a small
+  regression each night stays inside tolerance forever. A committed
+  release-pinned baseline is the follow-on for that, and is not built yet.
+- **PR runs never write to the store.** A `needs-e2e` PR run gets no
+  `--history-dir` at all, so a feature branch's numbers can't become the
+  baseline every later run is judged against. PR behaviour is unchanged:
+  recall misses and forbidden leaks still fail it.
+- **No `--regression-tolerance` is set, i.e. it stays 0.0.** With 8 golden
+  queries, one query flipping moves `mean_recall_at_k` by 0.125, so any
+  tolerance below that is indistinguishable from 0.0 and any tolerance above it
+  would mask a whole query regressing. Tolerance becomes meaningful once the
+  golden set is large enough for partial credit to be a real signal.
+
+The store is republished even when the evaluation fails (`if: always()`), so the
+next run compares against the most recent run rather than the last *green* one —
+otherwise a regression that stays red for a week would keep being measured
+against increasingly stale numbers. Artifact retention is 90 days; a quiet period
+longer than that reseeds the store, which the restore step reports as a notice
+rather than failing.
+
+`abstention_accuracy` does not participate in the verdict, and needs no special
+handling to keep it out: `_COMPARED_METRICS` in `scripts/evaluate_retrieval.py`
+is `("mean_recall_at_k", "mean_precision_at_k")` only. The metric #386 flagged as
+weak lives in the separate Q→C→A evaluator, not this harness.
+
 **Re-evaluation triggers (FR-32).** Re-run the harness, and refresh the
 baseline, on any of:
 
@@ -661,10 +695,13 @@ baseline capture, not a regression fix.
 
 ## Known gaps / follow-ups
 
-- Wiring the trend store into CI so nightly runs retain history *across* runs
-  (download the prior artifact or commit a baseline) and gate on it — the
-  harness supports it (issue #71); the cross-run persistence in `e2e.yml` is the
-  remaining step.
+- A **release-pinned** retrieval baseline. #429 wired cross-run persistence into
+  `e2e.yml` (see "Retrieval-quality tracking" above), so the nightly now compares
+  against the previous nightly and the FR-30/FR-32 gate genuinely runs unattended
+  — but a rolling baseline structurally cannot catch slow cumulative drift, since
+  each night is judged against the night before. Pinning a baseline at release
+  time (per `docs/releasing.md`) and diffing against *that* as well is the
+  remaining half, and needs the update policy decided rather than just wired.
 - Issue #428 added the containerized integration layer itself
   (`tests/integration/`, `e2e.yml`'s `integration` job) and closed its
   NFR-2 append-only-audit-enforcement slice with a live-Postgres regression

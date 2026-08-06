@@ -32,3 +32,7 @@ infra/certs/*.srl
 # into an unrelated commit, which is easy to miss in review and confusing to
 # receive.
 docker-compose.override.yml
+
+# FR-30 retrieval trend store: local runs of scripts/evaluate_retrieval.py
+# --history-dir land here (#429). CI keeps its own copy as a workflow artifact.
+.eval-history/

@@ -333,6 +333,22 @@ changed in the running system, with the issue/PR reference for the trail.
   `rag-query` grant changing state mid-window, since an out-of-scope query
   returns a successful empty result rather than a denial.
 
+- The FR-30/FR-32 retrieval-quality regression gate now actually runs unattended
+  (#429). `e2e.yml`'s `golden-query` job restores the previous nightly's trend
+  store from a workflow artifact, passes `--history-dir` so
+  `scripts/evaluate_retrieval.py` auto-baselines against it, and republishes the
+  store -- the cross-run persistence #71 left open, without which the harness's
+  `--history-dir`/`--baseline` support had no prior report to compare against in
+  CI and only a forbidden-leak (FR-26) failure could ever turn a nightly red.
+  Every nightly becomes the next baseline: that catches a step change (a
+  chunking, embedding-model or reranker change that drops recall overnight) and
+  deliberately does not catch slow cumulative drift, so a release-pinned
+  baseline is the remaining half and is recorded as such in `docs/testing.md`.
+  PR runs never write to the store, so a feature branch's numbers cannot become
+  the baseline; their behaviour is otherwise unchanged. The store is
+  republished even on failure, so the next run compares against the most recent
+  run rather than the last green one.
+
 - Strengthened `orchestration-mcp`'s retrieved-content `SECURITY_NOTICE` to
   name persona/roleplay/compliance-marker reframing explicitly, targeting
   the residual gap issue #97's live evaluation found (a DAN-style injection

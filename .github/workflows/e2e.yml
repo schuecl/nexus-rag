@@ -37,6 +37,17 @@ jobs:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'needs-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # #429 review fix: the trend-store restore step calls `gh run
+    # list`/`gh run download`, which hit the REST Actions API and need
+    # `actions: read` -- the workflow-level `permissions: contents: read`
+    # block forces every unlisted scope to none, so without this the
+    # restore 403s, the 2>/dev/null swallows it, and every run silently
+    # "seeds" a store that never carries forward. A job-level block
+    # replaces the workflow-level one entirely, hence contents: read is
+    # restated. Still read-only everywhere (#112's posture).
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate the dev TLS material Keycloak's HTTPS listener needs
@@ -110,10 +121,70 @@ jobs:
               exit 1
             fi
           done
+      # FR-30/FR-32 trend store (#429). evaluate_retrieval.py has supported
+      # --history-dir since #71, but every CI run was a fresh container with
+      # nothing carrying the previous run's reports forward, so the flag had no
+      # prior report to auto-baseline against and the regression gate never
+      # actually ran unattended. This restores the previous nightly's store,
+      # runs against it, and republishes it.
+      #
+      # Deliberately non-PR only. A PR run must not write into the nightly
+      # lineage: a feature branch's numbers would become the baseline every
+      # subsequent run is judged against. PR runs therefore keep exactly the
+      # behaviour they have today -- recall misses and forbidden leaks still
+      # fail them -- and simply don't participate in the trend.
+      - name: Restore the retrieval trend store from the last nightly
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .eval-history
+          # #429 review fix: the eval container runs as non-root (uid 10001,
+          # scripts/Dockerfile #503), which is neither the owner nor group of
+          # this runner-created dir -- a default-umask 755 gives it r-x only
+          # and persist_report()'s write dies with Permission denied. Both
+          # this step and the run step chmod, since PR runs skip this one.
+          chmod 777 .eval-history
+          # The most recent successful non-PR run of this workflow on main is
+          # the tip of the trend lineage. `gh` is preinstalled on the runner --
+          # preferred over a third-party cross-run download action, which would
+          # be a new supply-chain dependency for one step (NFR-16 posture).
+          # `// empty` on the jq: a select() that matches nothing makes [0]
+          # null, and null.databaseId prints the literal string "null", which
+          # the -z guard below would sail past into a confusing
+          # 'gh run download null' (#429 review).
+          run_id=$(gh run list --workflow e2e.yml --branch main --status success \
+                     --limit 30 --json databaseId,event \
+                     --jq '[.[] | select(.event != "pull_request")][0].databaseId // empty' \
+                   2>/dev/null || true)
+          if [ -z "${run_id:-}" ] || [ "$run_id" = "null" ]; then
+            echo "::notice::No prior successful nightly run found -- this run seeds the trend store."
+          elif gh run download "$run_id" --name retrieval-eval-history --dir .eval-history 2>/dev/null; then
+            echo "Restored trend store from run $run_id:"
+            ls -1 .eval-history
+          else
+            # Expected exactly once: the first run after this change, and again
+            # if the 90-day artifact retention lapses during a quiet period.
+            echo "::notice::Run $run_id has no retrieval-eval-history artifact -- seeding the trend store."
+          fi
       - name: Run the golden-query retrieval evaluation
+        # EVAL_EXTRA_ARGS is intentionally unquoted below: it is either empty or
+        # a flag pair, and word-splitting is what passes it through.
+        env:
+          EVAL_EXTRA_ARGS: >-
+            ${{ github.event_name != 'pull_request' && '--history-dir /srv/.eval-history' || '' }}
         run: |
           set -o pipefail
-          docker compose --profile eval run --rm eval-retrieval | tee retrieval-eval.txt
+          mkdir -p .eval-history
+          # Same reasoning as the restore step's chmod (#429 review): the
+          # non-root eval container must be able to write the new report.
+          # On PR runs this mkdir is the one that creates the dir (the
+          # restore step is skipped), so the chmod must live here too.
+          chmod 777 .eval-history
+          docker compose --profile eval run --rm \
+            -v "$PWD/.eval-history:/srv/.eval-history" \
+            eval-retrieval python3 evaluate_retrieval.py $EVAL_EXTRA_ARGS \
+            | tee retrieval-eval.txt
       - name: Upload evaluation report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -121,6 +192,19 @@ jobs:
           name: retrieval-eval-report
           path: retrieval-eval.txt
           if-no-files-found: ignore
+      # Republish the store even when the evaluation failed: a run that regressed
+      # still produced a report, and dropping it would mean the next nightly
+      # compares against the last *green* run instead of the most recent one,
+      # silently widening the window a slow drift can hide in.
+      - name: Upload the retrieval trend store
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: retrieval-eval-history
+          path: .eval-history/
+          retention-days: 90
+          overwrite: true
+          if-no-files-found: warn
       - name: Dump compose logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=300
