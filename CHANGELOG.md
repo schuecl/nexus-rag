@@ -306,6 +306,23 @@ changed in the running system, with the issue/PR reference for the trail.
   invocation and drifting local eval metrics with how many times they'd been
   run; CI was unaffected (fresh volumes every run).
 
+### Security
+
+- A Qdrant volume that predates the #229 per-classification collection split
+  can still hold chunk text in the bare `nexus_rag_chunks` collection (#477,
+  found by manual review). Nothing ever queried it after #229 (correct —
+  `existing_classification_collections` only matches the `<name>__` prefix)
+  but nothing ever purged it either, so `purge_document()` could report
+  success while that collection's copy of a "destroyed" document's chunk
+  text survived indefinitely — a retention/lineage gap, not a retrieval
+  bug. `delete_document_chunks` (`services/common/common/qdrant_store.py`,
+  called by both purge and supersession) now sweeps the bare
+  `QDRANT_COLLECTION` name too, alongside every classification collection,
+  if it still exists — narrowly scoped to the destruction path rather than
+  folded into `existing_classification_collections` itself, since that
+  helper also drives #122's embedding-model provenance check, which must
+  not sample stale pre-migration data.
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed
