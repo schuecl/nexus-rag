@@ -140,6 +140,7 @@ nexus-rag/
   scripts/                   # sample-data seeding, retrieval and Q→C→A evaluation harnesses
   helm/nexus-rag/            # production Helm chart (NFR-10)
   docs/                      # dev-setup.md, testing.md
+    nist-ai-rmf/              # NIST AI RMF compliance documentation set
 ```
 
 ## Documentation
@@ -150,6 +151,7 @@ nexus-rag/
 - **[docs/dev-setup.md](docs/dev-setup.md)** — local stack, seeded users, full walkthrough, and the honest what's-stubbed-vs-working list
 - **[docs/testing.md](docs/testing.md)** — the test pyramid, coverage/mutation policy, and known gaps
 - **[docs/governance.md](docs/governance.md)** — implemented data controls, the DoD classified-information profile, and explicitly unresolved authorization/marking gaps
+- **[docs/nist-ai-rmf/README.md](docs/nist-ai-rmf/README.md)** — NIST AI RMF compliance documentation set: governance policy, risk register, impact assessment, system inventory, and the audit evidence index
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — workflow, CI gates, and how to run the suites
 

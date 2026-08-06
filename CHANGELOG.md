@@ -15,6 +15,15 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/nist-ai-rmf/` — a NIST AI RMF 1.0 compliance documentation set (governance
+  policy, risk register, impact assessment, system/vendor inventory, RMF outcome
+  mapping, evidence index), deliberately separate from and referencing the
+  engineering docs rather than duplicating them (#530). Several sections are
+  marked `TBD (organizational)` pending owner decisions tracked in issues
+  #519–#524.
+
 ### Security
 
 - `infra/nginx/librechat-tls.conf` (the dev TLS-terminating proxy in front of
