@@ -285,6 +285,13 @@ single-person path, unaffected in dev since that path stays on there). No
 expiry sweep job either; see `PurgeRequest`'s own docstring for why that's
 deliberate rather than deferred.
 
+`eve-purge`'s credentials only import correctly on a **fresh** Keycloak
+Postgres volume (added later than the other four seeded users, #298/#480)
+— a volume created before that user landed silently keeps the old realm and
+never picks it up, so the two-person path above has no second identity to
+confirm with until a `docker compose down -v` + re-`up`; see
+`docs/dev-setup.md`'s seeded-users section.
+
 **G4 — Conflicting `rag-clearance:*` roles — resolved (#280).** A token
 carrying two or more distinct `rag-clearance:<value>` roles is now rejected
 at the verification boundary: `parse_claims` raises

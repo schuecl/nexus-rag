@@ -15,6 +15,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+### Fixed
+
+- Seeded dev realm's `eve-purge` login failing with `invalid_grant` was a
+  stale-volume artifact, not a defect in the realm export (#480, found by
+  manual review): `eve-purge` was added later than the other four seeded
+  users (#298), and Keycloak's `--import-realm` only imports into a fresh
+  `keycloak_db` — a Keycloak Postgres volume created before #298 keeps its
+  existing realm and never picks up the new user. Verified live: a fresh
+  `docker compose down -v` + `up` imports all five seeded users correctly,
+  `eve-purge` included, confirming this was never exercisable on a stale
+  volume rather than broken outright. `docs/dev-setup.md`'s seeded-users
+  section now documents the re-import step, mirroring the existing #229
+  schema note's pattern for the same "fresh volume required" class of gap.
+
 ### Security
 
 - `scripts/Dockerfile` — the image every one-shot Compose container shares

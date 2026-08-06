@@ -504,6 +504,15 @@ identity to confirm with — `PURGE_TWO_PERSON_REQUIRED` is off by default in th
 stack (see `docker-compose.yml`), so exercising the two-person path here means setting it
 to `true` yourself.
 
+Issue #480: `eve-purge` was added to the realm export later than the other four seeded
+users (#298). Same rule as the schema note above — Keycloak's `--import-realm` only
+imports on a fresh `keycloak_db` (`postgres-data` volume); a Keycloak Postgres volume
+created before #298 landed already has a realm and silently keeps it, so `eve-purge`'s
+credentials never make it in and its login 400s with `invalid_grant`. If `eve-purge`
+won't authenticate, `docker compose down -v` (or at least drop the `keycloak` schema) and
+re-`up` — confirmed live: a fresh volume imports all five users correctly, including
+`eve-purge`.
+
 ## Getting a token for API testing (dev-only password grant)
 
 The ingestion UI's browser pages now use a real Keycloak login redirect (land on the login
