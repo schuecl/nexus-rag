@@ -17,6 +17,17 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- `scripts/adversarial_injection_probe.py` gained two fixtures (issue #494) —
+  `travel-reimbursement-policy.md` (delimiter forgery, #458) and
+  `parking-permit-guide.md` (citation hijack, #457) — and live-validated both
+  fixes against real `qwen2.5:3b-instruct` generation through a full
+  `alice-ingest`/`carol-curator` → LibreChat Agent → per-user MCP OAuth →
+  `rag_search` round trip: neither injected canary reached the model's final
+  answer. See `REQUIREMENTS.md` Section 11's #494 entry for the full
+  writeup, including a live-environment tool-calling reliability issue
+  (issue #540) found along the way, and a re-confirmation that the
+  DAN/roleplay-reframing gap tracked by #427 remains open.
+
 - `infra/nginx/librechat-tls.conf` (the dev TLS-terminating proxy in front of
   LibreChat, issue #75) hardened against three semgrep findings from scan
   `static-20260805T210006Z`: the plain-HTTP-to-HTTPS redirect and the
