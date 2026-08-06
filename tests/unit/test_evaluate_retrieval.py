@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -16,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import evaluate_retrieval
 from evaluate_retrieval import (
     compare_to_baseline,
+    config_fingerprint,
     evaluate,
     latest_prior_report,
     persist_report,
+    rank_metrics,
 )
 
 
@@ -176,3 +179,171 @@ class TestRecallMisses:
         report = {"queries": [self._query("abstain", None)]}
 
         assert evaluate_retrieval.recall_misses(report) == []
+
+
+class TestRankMetrics:
+    """Issue #514: recall is blind to ordering; these metrics are not. The
+    load-bearing property is that the same set of returned documents scores
+    differently depending on where the relevant one sits."""
+
+    def test_rank_one_beats_rank_five_on_the_same_returned_set(self):
+        at_1 = rank_metrics(["hit.md", "a.md", "b.md", "c.md", "d.md"], ["hit.md"], top_k=5)
+        at_5 = rank_metrics(["a.md", "b.md", "c.md", "d.md", "hit.md"], ["hit.md"], top_k=5)
+
+        assert at_1["reciprocal_rank"] == 1.0
+        assert at_5["reciprocal_rank"] == pytest.approx(0.2)
+        assert at_1["ndcg_at_k"] == 1.0
+        assert at_5["ndcg_at_k"] < at_1["ndcg_at_k"]
+        assert at_1["precision_at"]["1"] == 1.0
+        assert at_5["precision_at"]["1"] == 0.0
+
+    def test_total_miss_scores_zero_not_none(self):
+        m = rank_metrics(["a.md", "b.md"], ["hit.md"], top_k=5)
+
+        assert m["reciprocal_rank"] == 0.0
+        assert m["ndcg_at_k"] == 0.0
+        assert m["precision_at"] == {"1": 0.0, "3": 0.0, "5": 0.0}
+
+    def test_abstention_scores_none_throughout(self):
+        # Same contract as recall: empty `expect` means the FR-26 leak check
+        # is the assertion, not ranking.
+        m = rank_metrics(["a.md"], [], top_k=5)
+
+        assert m["reciprocal_rank"] is None
+        assert m["ndcg_at_k"] is None
+        assert m["precision_at"] == {}
+
+    def test_precision_cutoffs_beyond_top_k_are_omitted(self):
+        # The paraphrase queries run at top_k=2; precision@3/@5 there would be
+        # arithmetically incapable of reaching 1.0.
+        m = rank_metrics(["hit.md", "a.md"], ["hit.md"], top_k=2)
+
+        assert m["precision_at"] == {"1": 1.0}
+
+    def test_perfect_ordering_of_multiple_expected_docs_is_ndcg_one(self):
+        m = rank_metrics(["x.md", "y.md", "a.md"], ["x.md", "y.md"], top_k=5)
+
+        assert m["ndcg_at_k"] == pytest.approx(1.0)
+
+    def test_duplicate_filename_earns_credit_once(self):
+        # Filenames are not unique (issue #226); a duplicated relevant
+        # filename must not inflate DCG above the ideal.
+        m = rank_metrics(["hit.md", "hit.md", "hit.md"], ["hit.md"], top_k=5)
+
+        assert m["ndcg_at_k"] <= 1.0
+        assert m["precision_at"]["3"] == pytest.approx(1 / 3)
+
+    def test_short_returned_list_penalizes_fixed_cutoffs(self):
+        # An empty tail holds no relevant document: precision@3 divides by 3
+        # even when only one result came back.
+        m = rank_metrics(["hit.md"], ["hit.md"], top_k=5)
+
+        assert m["precision_at"]["1"] == 1.0
+        assert m["precision_at"]["3"] == pytest.approx(1 / 3)
+
+
+class TestConfigFingerprint:
+    """Issue #514: a persisted report must record the configuration its
+    numbers were measured under, so cross-config comparisons are visible."""
+
+    GOLDEN: ClassVar[list[dict]] = [{"query": "q", "expect": ["a.md"], "top_k": 5}]
+
+    def test_same_inputs_same_fingerprint(self, monkeypatch):
+        monkeypatch.setenv("EMBEDDING_MODEL", "nomic-embed-text")
+        a = config_fingerprint(self.GOLDEN, "dave-admin")
+        b = config_fingerprint(self.GOLDEN, "dave-admin")
+
+        assert a["fingerprint"] == b["fingerprint"]
+
+    def test_model_change_changes_fingerprint(self, monkeypatch):
+        monkeypatch.setenv("EMBEDDING_MODEL", "nomic-embed-text")
+        before = config_fingerprint(self.GOLDEN, "dave-admin")
+        monkeypatch.setenv("EMBEDDING_MODEL", "mxbai-embed-large")
+        after = config_fingerprint(self.GOLDEN, "dave-admin")
+
+        assert before["fingerprint"] != after["fingerprint"]
+        assert after["config"]["EMBEDDING_MODEL"] == "mxbai-embed-large"
+
+    def test_golden_set_change_changes_fingerprint(self):
+        before = config_fingerprint(self.GOLDEN, "dave-admin")
+        after = config_fingerprint([*self.GOLDEN, {"query": "new"}], "dave-admin")
+
+        assert before["fingerprint"] != after["fingerprint"]
+
+    def test_unset_and_empty_env_are_recorded_identically(self, monkeypatch):
+        # Compose passes "" for unset optional knobs; both mean "default".
+        monkeypatch.delenv("RERANK_SCORE_FLOOR", raising=False)
+        unset = config_fingerprint(self.GOLDEN, "dave-admin")
+        monkeypatch.setenv("RERANK_SCORE_FLOOR", "")
+        empty = config_fingerprint(self.GOLDEN, "dave-admin")
+
+        assert unset["fingerprint"] == empty["fingerprint"]
+        assert unset["config"]["RERANK_SCORE_FLOOR"] is None
+
+
+class TestAdvisoryMetricsAndConfigMismatch:
+    """Issue #514: rank-aware metrics are reported in comparisons but cannot
+    fail a run until promoted; differing config fingerprints annotate the
+    comparison instead of silently blending a config change into "drift"."""
+
+    @staticmethod
+    def _report(ts: str, mrr: float | None = None, fingerprint: str | None = None) -> dict:
+        report = {
+            "timestamp": ts,
+            "mean_recall_at_k": 0.9,
+            "mean_precision_at_k": 0.8,
+            "mean_reciprocal_rank": mrr,
+            "mean_ndcg_at_k": None,
+        }
+        if fingerprint is not None:
+            report["fingerprint"] = fingerprint
+        return report
+
+    def test_advisory_drop_is_reported_but_never_regresses_the_run(self):
+        cur = self._report("2026-08-06T00:00:00+00:00", mrr=0.5)
+        base = self._report("2026-08-05T00:00:00+00:00", mrr=0.9)
+        result = compare_to_baseline(cur, base)
+
+        assert result["metrics"]["mean_reciprocal_rank"]["regressed"] is True
+        assert result["metrics"]["mean_reciprocal_rank"]["advisory"] is True
+        assert result["regressed"] is False
+
+    def test_baseline_predating_rank_metrics_is_not_comparable_not_fatal(self):
+        cur = self._report("2026-08-06T00:00:00+00:00", mrr=0.9)
+        base = {
+            "timestamp": "2026-08-05T00:00:00+00:00",
+            "mean_recall_at_k": 0.9,
+            "mean_precision_at_k": 0.8,
+        }
+        result = compare_to_baseline(cur, base)
+
+        assert result["metrics"]["mean_reciprocal_rank"]["delta"] is None
+        assert result["regressed"] is False
+
+    def test_differing_fingerprints_flag_config_mismatch(self):
+        cur = self._report("2026-08-06T00:00:00+00:00", fingerprint="aaa")
+        base = self._report("2026-08-05T00:00:00+00:00", fingerprint="bbb")
+
+        assert compare_to_baseline(cur, base)["config_mismatch"] is True
+
+    def test_missing_fingerprint_on_either_side_is_not_a_mismatch(self):
+        cur = self._report("2026-08-06T00:00:00+00:00", fingerprint="aaa")
+        base = self._report("2026-08-05T00:00:00+00:00")
+
+        assert compare_to_baseline(cur, base)["config_mismatch"] is False
+
+    def test_evaluate_report_carries_rank_metrics_and_fingerprint(self, monkeypatch):
+        returned = [
+            {"filename": "a.md", "document_id": "id-a", "status": "approved"},
+            {"filename": "hit.md", "document_id": "id-h", "status": "approved"},
+        ]
+        monkeypatch.setattr(evaluate_retrieval, "run_query", lambda *a, **k: returned)
+        golden_set = [{"query": "q", "expect": ["hit.md"], "top_k": 5}]
+
+        report = evaluate(golden_set, token="t", persona="dave-admin")
+
+        assert report["mean_reciprocal_rank"] == pytest.approx(0.5)
+        assert 0 < report["mean_ndcg_at_k"] < 1
+        assert report["fingerprint"]
+        assert report["config"]["golden_set_sha256"]
+        assert report["queries"][0]["precision_at"]["5"] == pytest.approx(0.2)

@@ -457,6 +457,18 @@ check. On its own that is a point-in-time snapshot; FR-30 wants quality tracked
 *over time* so degradation is visible rather than silent, and FR-32 wants
 re-evaluation tied to the changes that can cause it.
 
+It also reports rank-aware metrics — MRR, nDCG@K, and precision@{1,3,5} (each
+cutoff only where a query's own `top_k` reaches it) — because set-membership
+recall cannot see an *ordering* regression, and ordering is what RRF fusion and
+the reranker exist to improve (issue 514). These are **advisory**: they appear
+in every report and baseline comparison, but a drop in them never fails the
+run. Promotion to gating metrics is deliberate future work once enough
+persisted baselines exist to know their run-to-run noise. Every persisted
+report now also carries a **config fingerprint** (embedding/reranker model,
+rerank floor, content-type boosts, chunking parameters, golden-set hash,
+persona); a baseline comparison across differing fingerprints still runs but
+is loudly annotated, since its deltas measure the config change too.
+
 **Trend store + regression gate.** The harness supports this directly:
 
 ```bash

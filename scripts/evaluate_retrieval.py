@@ -1,7 +1,11 @@
 """FR-30/FR-32: fixed golden-query regression harness for retrieval quality.
 Runs each query in golden_queries.json through the real rag_search pipeline
 (via orchestration-mcp's debug endpoint) and computes recall@K, precision@K,
-and first-relevant-rank against the expected documents -- plus a hard FR-26
+and first-relevant-rank against the expected documents -- plus rank-aware
+MRR/nDCG@K/precision@k (advisory, issue #514: set-membership recall cannot
+see an ordering regression, which is what fusion and the reranker exist to
+prevent), a config fingerprint identifying the model/chunking/golden-set
+configuration each persisted report was measured under, and a hard FR-26
 check that no unapproved (pending/rejected/superseded) chunk is ever returned,
 regardless of the querying persona's clearance. Any query below full recall@K
 fails the run (issue #397, `--fail-on-miss`), as does any FR-26 leak.
@@ -55,7 +59,9 @@ change, NFR-16).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import sys
 from datetime import UTC, datetime
@@ -90,6 +96,85 @@ def run_query(token: str, query: str, top_k: int) -> list[dict]:
     ]
 
 
+# Fixed rank cutoffs for precision@k, evaluated only where a query's own
+# top_k reaches them (the paraphrase queries run at top_k=2, where a
+# precision@5 would be arithmetically guaranteed to look like a miss).
+_PRECISION_CUTOFFS = (1, 3, 5)
+
+# Environment knobs that change what the pipeline retrieves or how it ranks.
+# They live on the *services* (and, for the chunking pair, on what was in
+# effect at ingestion time); the eval container mirrors them via
+# docker-compose.yml so the fingerprint records the configuration a run's
+# numbers belong to. Unset and empty are recorded identically as null --
+# both mean "feature at its default".
+_FINGERPRINT_ENV_VARS = (
+    "EMBEDDING_MODEL",
+    "RERANKER_MODEL",
+    "RERANK_SCORE_FLOOR",
+    "CONTENT_TYPE_BOOSTS",
+    "CHUNK_TARGET_WORDS",
+    "CHUNK_OVERLAP_RATIO",
+)
+
+
+def config_fingerprint(golden_set: list[dict], persona: str) -> dict:
+    """The configuration identity of a run, for baseline comparability.
+
+    Comparing runs across a config change (different embedding model, reranker
+    floor, chunking, golden set, or persona) is the main reason to benchmark --
+    but a silent config difference makes a delta unattributable. The full
+    ``config`` dict is stored in every persisted report; the ``fingerprint``
+    digest is what `compare_to_baseline` checks to annotate (not fail) a
+    cross-config comparison.
+    """
+    config: dict[str, str | None] = {
+        name: (os.environ.get(name) or None) for name in _FINGERPRINT_ENV_VARS
+    }
+    golden_canonical = json.dumps(golden_set, sort_keys=True)
+    config["golden_set_sha256"] = hashlib.sha256(golden_canonical.encode()).hexdigest()
+    config["persona"] = persona
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    return {"config": config, "fingerprint": digest}
+
+
+def rank_metrics(returned: list[str], expect: list[str], top_k: int) -> dict:
+    """Rank-aware scores for one query: reciprocal rank, nDCG@K, precision@k.
+
+    Recall/precision over the whole top-K are blind to ordering -- the target
+    document at rank 1 and rank 5 score identically, yet ordering is exactly
+    what RRF fusion and the reranker exist to improve. These metrics make an
+    ordering regression visible.
+
+    Relevance is binary (returned filename is in `expect`), and each expected
+    filename earns credit once at its first occurrence: filenames are not
+    unique in the corpus (issue #226), so without that cap a duplicate could
+    inflate DCG above the ideal. Abstention queries (empty `expect`) score
+    None throughout -- their contract is the FR-26 leak check.
+    """
+    if not expect:
+        return {"reciprocal_rank": None, "ndcg_at_k": None, "precision_at": {}}
+
+    credited: set[str] = set()
+    gains: list[float] = []
+    for name in returned:
+        hit = name in expect and name not in credited
+        if hit:
+            credited.add(name)
+        gains.append(1.0 if hit else 0.0)
+
+    first_hit = next((i + 1 for i, g in enumerate(gains) if g), None)
+    reciprocal_rank = (1.0 / first_hit) if first_hit else 0.0
+
+    dcg = sum(g / math.log2(i + 2) for i, g in enumerate(gains))
+    ideal_dcg = sum(1.0 / math.log2(i + 2) for i in range(min(len(expect), top_k)))
+    ndcg = dcg / ideal_dcg if ideal_dcg else 0.0
+
+    # Short result lists (relevance floor, small corpus) divide by k, not by
+    # len(returned): an empty tail holds no relevant document by definition.
+    precision_at = {str(k): sum(gains[:k]) / k for k in _PRECISION_CUTOFFS if k <= top_k}
+    return {"reciprocal_rank": reciprocal_rank, "ndcg_at_k": ndcg, "precision_at": precision_at}
+
+
 def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
     per_query = []
     for case in golden_set:
@@ -120,6 +205,7 @@ def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
                 "recall_at_k": recall,
                 "precision_at_k": precision,
                 "first_relevant_rank": rank,
+                **rank_metrics(returned, expect, top_k),
                 "unapproved_leaks": unapproved,
                 "content_overlap": overlap,
                 "note": case.get("note"),
@@ -128,13 +214,18 @@ def evaluate(golden_set: list[dict], token: str, persona: str) -> dict:
 
     recalls = [q["recall_at_k"] for q in per_query if q["recall_at_k"] is not None]
     precisions = [q["precision_at_k"] for q in per_query if q["precision_at_k"] is not None]
+    rrs = [q["reciprocal_rank"] for q in per_query if q["reciprocal_rank"] is not None]
+    ndcgs = [q["ndcg_at_k"] for q in per_query if q["ndcg_at_k"] is not None]
     total_leaks = sum(len(q["unapproved_leaks"]) for q in per_query)
 
     return {
         "timestamp": datetime.now(UTC).isoformat(),
         "persona": persona,
+        **config_fingerprint(golden_set, persona),
         "mean_recall_at_k": (sum(recalls) / len(recalls)) if recalls else None,
         "mean_precision_at_k": (sum(precisions) / len(precisions)) if precisions else None,
+        "mean_reciprocal_rank": (sum(rrs) / len(rrs)) if rrs else None,
+        "mean_ndcg_at_k": (sum(ndcgs) / len(ndcgs)) if ndcgs else None,
         "total_forbidden_leaks": total_leaks,
         "queries": per_query,
     }
@@ -144,6 +235,9 @@ def print_report(report: dict) -> None:
     print(f"Retrieval evaluation @ {report['timestamp']} (persona={report['persona']})")
     print(f"  mean recall@K:    {report['mean_recall_at_k']}")
     print(f"  mean precision@K: {report['mean_precision_at_k']}")
+    print(f"  mean MRR:         {report['mean_reciprocal_rank']}")
+    print(f"  mean nDCG@K:      {report['mean_ndcg_at_k']}")
+    print(f"  config:           {report['fingerprint'][:12]}")
     print(f"  forbidden leaks:  {report['total_forbidden_leaks']}")
     for q in report["queries"]:
         status = "OK"
@@ -216,36 +310,61 @@ def recall_misses(report: dict) -> list[str]:
 # tolerance-gated regression.
 _COMPARED_METRICS = ("mean_recall_at_k", "mean_precision_at_k")
 
+# Rank-aware metrics reported in every comparison but never failing it:
+# advisory until enough persisted baselines exist to know their run-to-run
+# noise, per docs/testing.md's gated-vs-advisory convention. Promotion to
+# _COMPARED_METRICS is the whole change once that trend data is in.
+_ADVISORY_METRICS = ("mean_reciprocal_rank", "mean_ndcg_at_k")
+
 
 def compare_to_baseline(current: dict, baseline: dict, tolerance: float = 0.0) -> dict:
     """Diff `current`'s headline metrics against `baseline` (FR-30/FR-32).
 
     A metric regresses when it drops more than `tolerance` below the baseline.
-    A metric that is None on either side (no scored queries that run) is
-    reported but never counted as a regression. `tolerance` absorbs benign
-    run-to-run noise; set it to 0 to fail on any decrease.
+    A metric that is None on either side (no scored queries that run, or a
+    baseline written before the metric existed) is reported but never counted
+    as a regression. `tolerance` absorbs benign run-to-run noise; set it to 0
+    to fail on any decrease. `_ADVISORY_METRICS` are diffed the same way but
+    can never set `regressed`.
+
+    `config_mismatch` is True when both reports carry a config fingerprint
+    and they differ: the comparison still runs (a cross-config diff is often
+    the point), but the deltas measure the config change too, so a regression
+    verdict against such a baseline needs a human eye rather than silence.
+    A baseline predating fingerprints compares as None -> not a mismatch.
     """
     metrics: dict[str, dict] = {}
     regressed = False
-    for name in _COMPARED_METRICS:
+    for name in _COMPARED_METRICS + _ADVISORY_METRICS:
+        advisory = name in _ADVISORY_METRICS
         cur = current.get(name)
         base = baseline.get(name)
         if cur is None or base is None:
-            metrics[name] = {"current": cur, "baseline": base, "delta": None, "regressed": False}
+            metrics[name] = {
+                "current": cur,
+                "baseline": base,
+                "delta": None,
+                "regressed": False,
+                "advisory": advisory,
+            }
             continue
         delta = cur - base
         is_regression = delta < -tolerance
-        regressed = regressed or is_regression
+        regressed = regressed or (is_regression and not advisory)
         metrics[name] = {
             "current": cur,
             "baseline": base,
             "delta": delta,
             "regressed": is_regression,
+            "advisory": advisory,
         }
+    cur_fp = current.get("fingerprint")
+    base_fp = baseline.get("fingerprint")
     return {
         "regressed": regressed,
         "tolerance": tolerance,
         "baseline_timestamp": baseline.get("timestamp"),
+        "config_mismatch": bool(cur_fp and base_fp and cur_fp != base_fp),
         "metrics": metrics,
     }
 
@@ -255,11 +374,19 @@ def print_comparison(comparison: dict, baseline_path: Path) -> None:
         f"\nBaseline comparison vs {baseline_path} "
         f"(@ {comparison['baseline_timestamp']}, tolerance={comparison['tolerance']}):"
     )
+    if comparison["config_mismatch"]:
+        print(
+            "  WARNING: config fingerprints differ -- these deltas include the "
+            "config change (model/chunking/golden-set/persona), not just drift"
+        )
     for name, m in comparison["metrics"].items():
         if m["delta"] is None:
             print(f"  {name}: {m['current']} (baseline {m['baseline']}) -- not comparable")
             continue
-        verdict = "REGRESSION" if m["regressed"] else "ok"
+        if m["regressed"]:
+            verdict = "advisory regression" if m["advisory"] else "REGRESSION"
+        else:
+            verdict = "ok"
         print(
             f"  {name}: {m['current']:.4f} vs {m['baseline']:.4f} "
             f"(delta {m['delta']:+.4f}) [{verdict}]"

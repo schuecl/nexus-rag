@@ -338,6 +338,14 @@ services:
       # address is set (e.g. the observability profile's pyroscope service).
       PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-}
       PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
+      # #514 review: interpolated (with the app/main.py code default) so an
+      # operator override is one .env line AND lands in eval-retrieval's
+      # config fingerprint below -- an env var the fingerprint tracks but
+      # compose never wires would read as null forever, hiding exactly the
+      # model swap the fingerprint exists to expose. Overriding the model
+      # means overriding RERANKER_MODEL_REVISION alongside it (NFR-16) --
+      # app/main.py's pinned revision is only meaningful for this default.
+      RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
       # Issue #216: /rerank otherwise has no authorization model of its own.
       # Same value as orchestration-mcp's RERANKER_SHARED_SECRET below --
       # dev default matches the QDRANT_API_KEY pattern (a real deployment
@@ -1467,6 +1475,15 @@ services:
       KEYCLOAK_URL: http://keycloak:8080
       ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
       RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+      # Mirrors of the services' retrieval-affecting knobs (same defaults as
+      # the service entries above), so the report's config fingerprint
+      # records the configuration its numbers were measured under.
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
+      CONTENT_TYPE_BOOSTS: ${CONTENT_TYPE_BOOSTS:-}
+      RERANK_SCORE_FLOOR: ${RERANK_SCORE_FLOOR:-}
+      CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
+      CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
     depends_on:
       orchestration-mcp:
         condition: service_healthy

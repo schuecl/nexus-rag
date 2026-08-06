@@ -17,6 +17,16 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- The golden-query harness (`scripts/evaluate_retrieval.py`) reports advisory
+  rank-aware metrics — MRR, nDCG@K, precision@{1,3,5} — alongside the gated
+  recall/precision, and stamps every persisted report with a config fingerprint
+  (embedding/reranker model, rerank floor, content-type boosts, chunking,
+  golden-set hash, persona); baseline comparisons across differing fingerprints
+  are annotated rather than silently blended (#514). `docker-compose.yml` wires
+  `RERANKER_MODEL` through `reranker-service` and mirrors the fingerprint knobs
+  into `eval-retrieval`, so a model swap shows up in the report instead of
+  reading as quality drift.
+
 - `docs/nist-ai-rmf/` — a NIST AI RMF 1.0 compliance documentation set (governance
   policy, risk register, impact assessment, system/vendor inventory, RMF outcome
   mapping, evidence index), deliberately separate from and referencing the
