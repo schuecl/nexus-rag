@@ -189,12 +189,15 @@ async def prometheus_metrics(_request: Request) -> Response:
     return Response(payload, media_type=content_type)
 
 
-# #214: off unless explicitly enabled. This endpoint is a curl-shaped
-# convenience for local work; it was also compiled into every production image
-# with no way to turn it off. Authorization is enforced on it, so leaving it on
-# is not a hole -- but it is surface that nothing in a deployed environment
-# needs, and the least surprising default for a route named /debug is absent.
-DEBUG_ENDPOINT_ENABLED = os.environ.get("DEBUG_RAG_SEARCH_ENABLED", "true").lower() == "true"
+# #214/#476: off unless explicitly enabled. This route is also what
+# ingestion-api's /search page proxies to (app/routes/search.py) -- not just a
+# curl-shaped dev convenience -- so both docker-compose.yml and the Helm chart
+# opt back in explicitly by default; only an unset/blank env var (e.g. running
+# this service directly, or a Helm values override) lands on the closed
+# default below, which matches the least-surprising intent for a route named
+# /debug. Authorization is enforced on it either way, so this is about
+# unnecessary surface, not a hole.
+DEBUG_ENDPOINT_ENABLED = os.environ.get("DEBUG_RAG_SEARCH_ENABLED", "false").lower() == "true"
 
 
 @mcp_server.custom_route("/debug/rag_search", methods=["POST"])

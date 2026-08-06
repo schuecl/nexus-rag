@@ -680,6 +680,16 @@ orchestrationMcp:
   # -5.0 would never fire -- re-tune against whatever model it serves.
   # An unparseable value logs a warning and leaves the floor off.
   rerankScoreFloor: ""
+  # Issue #476: this service's own code defaults DEBUG_RAG_SEARCH_ENABLED to
+  # off (closed by default, matching #214's original stated intent -- an
+  # unset/blank value here would land on that). Defaulting *this chart* to
+  # true, not absent, because /debug/rag_search isn't only a curl-shaped dev
+  # convenience: ingestionApi's /search page (always in nav for any
+  # rag-query-role user) proxies to it unconditionally with no enablement of
+  # its own. Authorization is still enforced on the route either way -- flip
+  # to false only if this deployment doesn't use the /search page and wants
+  # to shrink surface.
+  debugEndpointEnabled: true
 
 # ---------------------------------------------------------------------------
 # ingestion-worker (FR-3..FR-6, NFR-11) -- the durable JetStream consumer

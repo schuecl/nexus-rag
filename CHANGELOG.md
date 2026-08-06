@@ -29,6 +29,23 @@ changed in the running system, with the issue/PR reference for the trail.
   itself vendors an older `setuptools`/`msgpack` for its own internal use,
   which a rescan after this fix still flags — narrower risk (pip's CLI is
   never invoked at runtime in these images) but not yet resolved.
+- `orchestration-mcp`'s `/debug/rag_search` REST route now defaults to
+  **disabled** (#476), matching #214's originally stated intent -- the code
+  had shipped defaulting to enabled ever since, and the Helm chart never set
+  the env var at all, so every Helm-deployed environment served the route
+  regardless. Authorization was (and is) enforced on it either way, so this
+  closes unnecessary surface, not an auth bypass -- notably the URL
+  query-string fallback (`?query=`), which lands the query text in proxy/
+  ingress logs, the exact exposure #125 removed from the audit log for the
+  same reason. This route isn't only a curl-shaped dev convenience, though:
+  `ingestion-api`'s `/search` page (`app/routes/search.py`) proxies to it
+  unconditionally with no enablement of its own, so both `docker-compose.yml`
+  and the Helm chart (`orchestrationMcp.debugEndpointEnabled`, new value,
+  default `true`) now opt back in explicitly by default -- only an
+  unset/blank env var lands on the closed default. Found while investigating
+  #476: the `/search` proxy itself always sends the query via URL params
+  rather than a JSON body, independently reintroducing the same log exposure
+  on every real query -- filed separately as #496, not fixed here.
 
 ### Added
 

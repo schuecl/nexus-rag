@@ -78,6 +78,7 @@ class TestDebugEndpointKeepsQueriesOutOfURLs:
     into every proxy and ingress log in the path."""
 
     async def test_the_query_is_read_from_a_json_body(self, monkeypatch):
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
         captured: dict = {}
 
         async def _run(_auth, query, top_k, **_kw):
@@ -98,6 +99,7 @@ class TestDebugEndpointKeepsQueriesOutOfURLs:
         """Deprecated, not removed -- the docs' curl examples and existing
         scripts use it, and silently breaking them would be worse than the
         logging exposure it warns about."""
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
 
         async def _run(*_a, **_k):
             return {"results": []}
@@ -109,12 +111,16 @@ class TestDebugEndpointKeepsQueriesOutOfURLs:
         assert resp.status_code == 200
         assert any("appear in proxy" in r.getMessage() for r in caplog.records)
 
-    async def test_a_malformed_body_is_a_400_not_a_500(self):
+    async def test_a_malformed_body_is_a_400_not_a_500(self, monkeypatch):
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
+
         resp = await server.debug_rag_search(_request(body=b"{not json"))
 
         assert resp.status_code == 400
 
-    async def test_missing_query_is_rejected(self):
+    async def test_missing_query_is_rejected(self, monkeypatch):
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
+
         resp = await server.debug_rag_search(_request(body=b"{}"))
 
         assert resp.status_code == 400
@@ -131,8 +137,12 @@ class TestDebugEndpointCanBeDisabled:
 
         assert resp.status_code == 404
 
-    def test_it_defaults_to_enabled_so_the_dev_flow_is_unchanged(self):
-        assert server.DEBUG_ENDPOINT_ENABLED is True
+    def test_it_defaults_to_disabled_matching_214s_stated_intent(self):
+        """#476: the code default itself must be closed -- docker-compose.yml
+        and the Helm chart opt back in explicitly (both needed, since
+        ingestion-api's /search page proxies to this route), but an unset env
+        var (e.g. running this service directly) must land on off."""
+        assert server.DEBUG_ENDPOINT_ENABLED is False
 
 
 class TestBackendErrorsStayOutOfTheResponse:

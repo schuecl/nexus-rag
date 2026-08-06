@@ -34,6 +34,10 @@ def _request(query_string: str) -> Request:
 
 
 class TestDebugEndpointBound:
+    @pytest.fixture(autouse=True)
+    def _enabled(self, monkeypatch):
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
+
     async def test_oversized_query_is_a_400(self):
         oversized = "a" * (rag_search.MAX_QUERY_CHARS + 1)
 

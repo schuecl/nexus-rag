@@ -176,6 +176,9 @@ spec:
             # #394 relevance floor: see orchestrationMcp.rerankScoreFloor.
             - name: RERANK_SCORE_FLOOR
               value: {{ .Values.orchestrationMcp.rerankScoreFloor | quote }}
+            # #214/#476: see orchestrationMcp.debugEndpointEnabled.
+            - name: DEBUG_RAG_SEARCH_ENABLED
+              value: {{ .Values.orchestrationMcp.debugEndpointEnabled | quote }}
           livenessProbe:
             httpGet:
               path: /health

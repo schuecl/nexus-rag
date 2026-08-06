@@ -599,9 +599,14 @@ automated or for testing with your own file.
    the path. The query-string form still works so existing scripts don't
    break, but it logs a warning.
 
-   This endpoint is a development convenience. Set
-   `DEBUG_RAG_SEARCH_ENABLED=false` to remove it from a deployed image;
-   authorization is enforced either way, so this is about surface, not a hole.
+   This endpoint isn't only a curl-shaped development convenience -- the
+   `/search` page below is a thin proxy over this exact route, so it's also
+   what makes that page work. The code itself defaults `DEBUG_RAG_SEARCH_ENABLED`
+   to off (#214/#476); this dev stack and the Helm chart both opt back in
+   explicitly by default, since both ship the `/search` page. Set it to
+   `false` in an environment that doesn't use `/search` and wants to shrink
+   surface; authorization is enforced either way, so this is about surface,
+   not a hole.
 
    The UI page is a thin proxy over this same endpoint (`app/routes/search.py`), forwarding
    your logged-in session's own token — same access filter either way.

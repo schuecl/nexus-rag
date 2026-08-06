@@ -44,6 +44,10 @@ class TestDebugEndpointValidation:
     """POST /debug/rag_search parses top_k out of the raw query string, so it
     has to do its own validation -- the MCP tool's schema doesn't cover it."""
 
+    @pytest.fixture(autouse=True)
+    def _enabled(self, monkeypatch):
+        monkeypatch.setattr(server, "DEBUG_ENDPOINT_ENABLED", True)
+
     async def test_non_integer_top_k_is_a_400_not_a_500(self):
         # Previously `int(request.query_params.get("top_k", 5))` raised
         # ValueError straight out of the route.

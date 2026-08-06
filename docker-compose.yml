@@ -693,6 +693,12 @@ services:
       # unset (the default) disables the floor. See .env.example for the
       # measured starting point.
       RERANK_SCORE_FLOOR: ${RERANK_SCORE_FLOOR:-}
+      # #214/#476: server.py's own default is now off (closed), but this
+      # route also backs ingestion-api's /search page (app/routes/search.py),
+      # not just curl-shaped dev convenience -- dev stack needs it on, same
+      # as the Helm chart's default. Was previously only set in .env.example,
+      # which docker-compose.yml never actually read (dead value).
+      DEBUG_RAG_SEARCH_ENABLED: ${DEBUG_RAG_SEARCH_ENABLED:-true}
     volumes:
       - orchestration-mcp-cache:/srv/.cache/huggingface
     ports:
