@@ -33,6 +33,13 @@ dependencies = [
     # used by both ingestion-worker and orchestration-mcp -- same pin both
     # already carry in their own pyproject.toml.
     "httpx>=0.27",
+    # #444/#445: shared ASGI security-headers middleware
+    # (common/security_headers.py) -- the ASGIApp/Message/Receive/Scope/Send
+    # types it's built on, not a web framework dependency. Every service that
+    # imports this module already depends on starlette directly or
+    # transitively (FastAPI, or MCPServer's Starlette app), so this adds no
+    # new runtime footprint in practice.
+    "starlette>=0.36",
 ]
 
 [build-system]
