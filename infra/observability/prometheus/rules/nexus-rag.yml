@@ -68,12 +68,16 @@ groups:
       # NFR-4 (issue #430): scoped to the retrieval+rerank leg only --
       # nexus_rag_query_stage_seconds{stage="total"} is orchestration-mcp's
       # own span and stops before generation (Ollama/LiteLLM), which this
-      # repo does not instrument. Thresholds are ~4-10x the p95 observed on
-      # a fresh, CPU-only dev-stack run (250ms) against the seeded 7-doc
-      # corpus, 2026-08-07 -- headroom for a production-scale corpus on
-      # GPU, not a copy of the dev number. Full end-to-end (incl.
-      # generation) remains an open product decision, tracked separately
-      # (generation-latency instrumentation follow-up to #430).
+      # repo does not instrument. Thresholds are derived from
+      # scripts/benchmark_latency.py against a fresh, CPU-only dev-stack
+      # run (seeded 7-doc corpus, 2026-08-07): stage=total p95 est. 491ms
+      # at concurrency 1, 988ms at concurrency 4 (embed/rerank scale
+      # roughly linearly with concurrency on CPU, with no GPU batching --
+      # production should scale better under load). 1s/2.5s give ~2x
+      # headroom over the concurrency-1 baseline and a margin over
+      # concurrency-4, not a copy of the dev number. Full end-to-end
+      # (incl. generation) remains an open product decision, tracked
+      # separately as issue #573.
       - alert: NexusRagHighQueryLatency
         expr: |
           histogram_quantile(

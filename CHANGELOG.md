@@ -132,10 +132,12 @@ changed in the running system, with the issue/PR reference for the trail.
   alert on p95 >1s (warning) / >2.5s (critical) against
   `nexus_rag_query_stage_seconds{stage="total"}` (embed/retrieve/rerank —
   `orchestration-mcp`'s own span), replacing the previous provisional 5s
-  threshold. Thresholds are derived from a measured baseline (p95 ~250ms on
-  a fresh, CPU-only dev-stack run against the seeded 7-doc corpus,
-  2026-08-07), not an arbitrary number. Both `infra/observability` and
-  `helm/observability` rule copies updated in lockstep. The *full*
+  threshold. Thresholds are derived from `scripts/benchmark_latency.py`
+  (issue #514) against a fresh, CPU-only dev-stack run: stage `total` p95
+  est. 491ms at concurrency 1, 988ms at concurrency 4 against the seeded
+  7-doc corpus, 2026-08-07 — not an arbitrary number. Both
+  `infra/observability` and `helm/observability` rule copies updated in
+  lockstep. The *full*
   end-to-end budget (retrieval + rerank + generation) remains open —
   generation happens in Ollama/LiteLLM, outside this repo's instrumented
   span — and is tracked separately as issue #573.
