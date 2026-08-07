@@ -71,16 +71,38 @@ incident. Every break-glass use is recorded in the
 [waiver register](evidence/waiver-register.md) with `Gate: break-glass` — the
 same append-only record, same empty-register-is-evidence property as §3.3.
 
-**Evidence trail.** The bootstrap superuser's sessions are statement-logged at
-the database layer (`ALTER ROLE ... SET log_statement = 'all'`, applied by the
-`lock-down-db-grants` one-shot), so superuser activity lands in the Postgres
+**Evidence trail.** The bootstrap superuser's *statements* are logged at the
+database layer (`ALTER ROLE ... SET log_statement = 'all'`, applied by the
+`lock-down-db-grants` one-shot), and *connections* are logged server-wide
+(`log_connections=on` on the Postgres service). Both land in the Postgres
 server log — which lives in the container/platform logging plane, outside the
-DB the superuser controls. Honest limit: a superuser can `RESET` its own
-logging, so this is a **detective control against accidental or casual
-misuse, not a tamper-proof control against the credential holder** — that
-boundary is physical/personnel security and platform log shipping, which is
-exactly where the DoD control profile in `docs/governance.md` places it. The
-residual (R-8) remains open in the risk register until the deployment owner
+DB the superuser controls.
+
+The split is not stylistic. `log_connections`' GUC context is
+`superuser-backend`: on the pinned `postgres:16.14` image,
+`ALTER ROLE ... SET log_connections` raises *"parameter log_connections cannot
+be set after connection start"* rather than deferring to the next session, and
+because `apply-service-grants.sh` runs as a single transaction under
+`ON_ERROR_STOP=1` (#319) that error rolled the whole block back — taking
+`log_statement` with it and failing the one-shot every run. Connection logging
+is therefore server-wide, which also means it covers every connection rather
+than only the superuser's: more log volume, strictly more evidence.
+
+Two honest limits:
+
+- A superuser can `RESET` its own `log_statement`, and can restart the server
+  without `log_connections`. This is a **detective control against accidental
+  or casual misuse, not a tamper-proof control against the credential
+  holder** — that boundary is physical/personnel security and platform log
+  shipping, exactly where the DoD control profile in `docs/governance.md`
+  places it.
+- The server-wide setting is applied by the **dev Compose stack only**.
+  `helm/nexus-rag` treats Postgres as existing cluster infrastructure
+  (`externalPostgres`), so in a real deployment enabling connection logging is
+  the platform team's action, not something this chart can do. Recorded here so
+  the control is not assumed to travel with the chart.
+
+The residual (R-8) remains open in the risk register until the deployment owner
 either accepts it or layers platform-side controls.
 
 **Holder assignment: TBD (organizational).** *Who* holds these credentials is

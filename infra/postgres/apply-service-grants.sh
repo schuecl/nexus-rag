@@ -209,8 +209,21 @@ $PSQL -v api_role="$API_ROLE" -v worker_role="$WORKER_ROLE" \
 	-- container/platform logging plane, outside the DB it controls. Detective
 	-- only -- a superuser can RESET this -- see the platform-admin evidence
 	-- trail in docs/nist-ai-rmf/governance-policy.md 2.2 for the honest scope.
+	--
+	-- log_statement only. log_connections is NOT settable here: its GUC context
+	-- is superuser-backend, and on postgres:16.14 (the pinned image)
+	-- `ALTER ROLE ... SET log_connections` raises
+	--   ERROR: parameter "log_connections" cannot be set after connection start
+	-- rather than deferring to the next session. Because this whole file runs as
+	-- one transaction under ON_ERROR_STOP=1 (#319), that error rolled the block
+	-- back -- so log_statement never landed either, and lock-down-db-grants
+	-- exited non-zero on every run, which ingestion-api/ingestion-worker
+	-- depend on via service_completed_successfully. Connection logging is set
+	-- server-wide on the postgres service instead (docker-compose.yml's
+	-- `command:`); in a deployment where Postgres is external cluster
+	-- infrastructure (helm/nexus-rag treats it that way) it is the platform's
+	-- setting to make, not this script's.
 	ALTER ROLE "${POSTGRES_USER}" SET log_statement = 'all';
-	ALTER ROLE "${POSTGRES_USER}" SET log_connections = 'on';
 
 	COMMIT;
 	EOSQL

@@ -66,6 +66,18 @@ services:
     # to say :latest, main-latest, or a bare major version.
     security_opt: ["no-new-privileges:true"]
     image: postgres:16.14
+    # Issue #519 (GOVERN 2.3, risk R-8): connection logging for the superuser
+    # evidence trail. Set server-wide rather than per-role because
+    # log_connections' GUC context is superuser-backend -- `ALTER ROLE ... SET
+    # log_connections` errors with "cannot be set after connection start" on
+    # this image instead of deferring, which took the whole
+    # apply-service-grants.sh transaction down with it. Server-wide means every
+    # connection is logged, not only the superuser's; that is more log volume
+    # but strictly more evidence, and the per-role log_statement='all' still
+    # narrows statement logging to the bootstrap role. Where Postgres is
+    # external cluster infrastructure (helm/nexus-rag), this is the platform's
+    # setting to make.
+    command: ["postgres", "-c", "log_connections=on"]
     environment:
       # POSTGRES_USER/PASSWORD stays the bootstrap superuser -- NFR-3: never
       # used for day-to-day app or Keycloak traffic (see APP_DB_USER/
