@@ -631,10 +631,13 @@ In this system's own vocabulary rather than generic governance terms:
 | Data steward | Curator (`rag-curate:<org>`) | Approves, rejects, or corrects tags for their org, capped by own clearance (FR-14) |
 | Vocabulary admin | `rag-admin` | Manages the Classification/Releasability lists (C9). **No** data access |
 | Consumer | `rag-query` | Retrieval only, always through the FR-26 filter |
-| Platform admin | *(not an application role)* | Holds DB/object-store credentials. Ungoverned by the application — see above |
+| Platform admin | *(not an application role)* | Break-glass tier, defined in `docs/nist-ai-rmf/governance-policy.md` §2.2: bootstrap/root credential inventory, break-glass-only permitted actions with a register entry per use, and a database-layer statement-logging evidence trail for the Postgres superuser (detective only — see §2.2's honest limit) |
 
-That last row is the one a reviewer should ask about: it is the only role with
-access the application does not mediate, and it is currently undefined.
+That last row remains the one a reviewer should ask about: it is the only role
+with access the application does not mediate. It is now *defined on paper*
+(issue #519) — inventory, permitted actions, evidence trail — while the holder
+assignment stays a deployment-owner decision recorded with the accountable-owner
+appointment.
 
 ## Non-goals
 

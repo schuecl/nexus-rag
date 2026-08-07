@@ -203,6 +203,15 @@ $PSQL -v api_role="$API_ROLE" -v worker_role="$WORKER_ROLE" \
 
 	\i /grant-matrix.sql
 
+	-- Issue #519 (NIST GOVERN 2.3, risk R-8): the bootstrap superuser bypasses
+	-- every application control including audit append-only, so its sessions
+	-- are statement-logged at the database layer. The log lands in the
+	-- container/platform logging plane, outside the DB it controls. Detective
+	-- only -- a superuser can RESET this -- see the platform-admin evidence
+	-- trail in docs/nist-ai-rmf/governance-policy.md 2.2 for the honest scope.
+	ALTER ROLE "${POSTGRES_USER}" SET log_statement = 'all';
+	ALTER ROLE "${POSTGRES_USER}" SET log_connections = 'on';
+
 	COMMIT;
 	EOSQL
 

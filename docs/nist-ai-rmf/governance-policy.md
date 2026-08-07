@@ -16,16 +16,76 @@ is gated vs advisory; `docs/roles-and-permissions.md` for the authorization
 matrix. Where this policy and an engineering doc disagree, the engineering doc is
 the bug *or* this policy is — file an issue; do not fork the truth.
 
-## 2. Accountable ownership — TBD (organizational), issue #519
+## 2. Accountable ownership and the platform-admin tier (GOVERN 2.3/2.1/1.1 — issue #519)
 
-- Accountable AI owner: **unnamed**. Risk acceptance, gate waivers, and incident
-  escalation have no defined terminus today.
-- Platform-admin tier (holders of `POSTGRES_USER`, object-store root, Keycloak
-  admin, Qdrant keys): **undefined** — flagged in `docs/governance.md`'s roles
-  table as the only access the application does not mediate.
-- Until issue #519 closes, `REQUIREMENTS.md`'s document owner ("Corey / MPNexus
-  platform") is the de-facto escalation point; this sentence is a statement of
-  current fact, not a ratified assignment.
+### 2.1 Accountable AI owner — role defined; appointment pending
+
+The accountable AI owner is a **single named person** at whom the following
+terminate — there is no committee fan-out and no "the team":
+
+- risk acceptance against §3.1's declared tolerance, and additions to the
+  [risk register](risk-register.md)'s accepted rows;
+- gate waivers (§3.3) and their retroactive review;
+- incident escalation terminus and severity confirmation (§7);
+- ratification of every **TBD (organizational)** item in this doc set
+  (README open-decisions ledger).
+
+**Appointment record** — filled by the first management review (issue #542),
+never by a repository contributor on their own authority:
+
+```
+Accountable AI owner: ______________________ (name, role)
+Appointed:            ______________________ (date)
+Recorded by:          management review of ____________ (issue #542 minutes)
+```
+
+**Interim state (statement of fact, not a ratified assignment):** until the
+record above is filled, `REQUIREMENTS.md`'s document owner ("Corey / MPNexus
+platform") is the de-facto escalation point, and every §3.3 waiver issued in
+the interim is flagged for retroactive review at the first management review.
+
+### 2.2 Platform-admin tier — role defined
+
+The one tier the application cannot mediate: whoever holds a bootstrap or
+store-level credential operates outside every control this system enforces,
+including the append-only audit design. The role is therefore defined by
+**inventory, permitted actions, and evidence trail** rather than by
+application enforcement:
+
+**Credential inventory** (dev names; a deployment maps its equivalents):
+
+| Credential | Grants | Bypasses |
+|---|---|---|
+| `POSTGRES_USER` (bootstrap superuser) | Everything in Postgres, incl. reading and rewriting `audit_log` | NFR-2 append-only design, per-service grant matrix (#278) |
+| Object-store root (dev: the `OBJECT_STORE_PATH` volume; S3 root keys under Helm) | Original uploaded bytes, all documents | Write-only-from-app posture (NFR-12) |
+| `KEYCLOAK_ADMIN` | Mint/alter any identity, claim, or role | The entire claims-derivation chain (§6.1 of `REQUIREMENTS.md`) |
+| `QDRANT_API_KEY` (RW; RO key separate) / `MILVUS_TOKEN` | Chunk text + access-control payload for every classification | FR-26 filter, partition/collection separation |
+| `LITELLM_MASTER_KEY` | Generation-plane admin | Out-of-scope plane (C7), listed for completeness |
+
+**Permitted actions — break-glass only.** Bootstrap credentials exist for:
+initial provisioning and the compose/Helm one-shots; credential rotation per
+`docs/credential-rotation.md`; restoring from backup; and unblocking a failed
+migration. **Routine operation never requires them**, and using a store-level
+credential to read corpus content or the audit log is prohibited outside a §7
+incident. Every break-glass use is recorded in the
+[waiver register](evidence/waiver-register.md) with `Gate: break-glass` — the
+same append-only record, same empty-register-is-evidence property as §3.3.
+
+**Evidence trail.** The bootstrap superuser's sessions are statement-logged at
+the database layer (`ALTER ROLE ... SET log_statement = 'all'`, applied by the
+`lock-down-db-grants` one-shot), so superuser activity lands in the Postgres
+server log — which lives in the container/platform logging plane, outside the
+DB the superuser controls. Honest limit: a superuser can `RESET` its own
+logging, so this is a **detective control against accidental or casual
+misuse, not a tamper-proof control against the credential holder** — that
+boundary is physical/personnel security and platform log shipping, which is
+exactly where the DoD control profile in `docs/governance.md` places it. The
+residual (R-8) remains open in the risk register until the deployment owner
+either accepts it or layers platform-side controls.
+
+**Holder assignment: TBD (organizational).** *Who* holds these credentials is
+a deployment-owner decision recorded alongside the §2.1 appointment; the role
+definition above stands regardless of the eventual names.
 
 ## 3. Risk tolerance and release acceptance (GOVERN 1.3/1.4, MANAGE 1.1 — issue #521)
 
