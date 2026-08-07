@@ -1679,15 +1679,27 @@ the docs, not a silent "it works" — flag it if you find one.
   tests/test_integrity_sweep.py` covers the verified/mismatch/missing-original/
   race-with-a-purge/rolling-window cases with the DB session and object store faked, the same
   technique `test_reembed.py` uses. **Validated against a live environment** (2026-08-07): ran
-  `init_db()` and `run_sweep()` against a real `postgres:16.14` container (not the full
-  Compose profile — just Postgres plus a filesystem-backed object store, to exercise the
-  additive-column migration and the actual DB/object-store round trip without a 10GB model
-  pull) with one untouched approved document and one whose object-store bytes were swapped
-  post-upload: the untouched document came back in `verified` with `last_verified_at` stamped,
-  the tampered one came back in `mismatched` with `last_verified_at` still null and a
-  `document.integrity_check_failed` audit_log row landed for it (`digest_mismatch`, no digest
-  values in `detail`). The CronJob/chart wiring itself is `helm template`-rendered
-  (`helm lint helm/nexus-rag` passes) but not yet applied to a real cluster.
+  `docker compose up --build`, let `seed-sample-data` seed and curate the usual 7 sample
+  documents, then `docker compose run --rm ingestion-worker python -m app.integrity_sweep` —
+  all 7 (including the `pending_review`/`rejected`/`superseded` ones, confirming the sweep is
+  status-agnostic by design) came back `verified` with `last_verified_at` stamped in the real
+  `documents` table (confirming the additive-column migration applies against a running stack,
+  not just `init_db()` in isolation). Then manually overwrote one approved document's bytes in
+  the running `ingestion-worker` container's object-store mount to simulate store-side
+  tampering/bit rot and re-ran the sweep: 6 verified, 1 flagged, with a real
+  `document.integrity_check_failed` audit_log row (`digest_mismatch`, no digest values in
+  `detail`) and — the point of "never an automatic status change" — the document's `status`
+  stayed `approved` and its `last_verified_at` stayed at the prior clean run's timestamp rather
+  than advancing. Restored the exact original bytes (reconstructed from `scripts/
+  seed_sample_data.py`'s literal content, confirmed byte-for-byte against the stored
+  `content_sha256` before writing it back) and re-ran once more: all 7 verified again, stack
+  left healthy. Also brought up the `observability` profile's `pushgateway` service and re-ran
+  the sweep: the `PUT http://pushgateway:9091/metrics/job/nexus-rag-integrity-sweep` succeeded
+  (200), and all three metrics (`nexus_rag_integrity_check_failures_total`,
+  `..._documents_checked`, `..._last_run_timestamp_seconds`) read back correctly from
+  Pushgateway's own `/metrics` endpoint. The CronJob/chart wiring itself is
+  `helm template`-rendered (`helm lint helm/nexus-rag` passes) but not yet applied to a real
+  cluster.
 - **Missing `search_document:`/`search_query:` task prefixes on nomic-embed-text (issue
   #392)** — both embedding call sites (`ingestion-worker/app/embedding.py`'s `embed_texts`,
   `orchestration-mcp/app/rag_search.py`'s `_embed_query`) sent raw chunk/query text with no
