@@ -89,4 +89,15 @@ RUN groupadd --gid 10001 appuser \
 USER appuser
 
 EXPOSE 8001
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+# --forwarded-allow-ips: uvicorn's default proxy-header trust is scoped to
+# 127.0.0.1. Behind a reverse proxy running as a separate container/pod
+# (nginx included), the TCP connection arrives from that proxy's IP, not
+# loopback, so uvicorn ignores its X-Forwarded-Proto header and treats the
+# request as plain http even when the proxy terminated TLS. url_for() in
+# base.html then builds "http://" URLs for portal.css/portal.js, which the
+# browser blocks as mixed content on an https page (Chrome Network tab:
+# "blocked"). "*" trusts the header from any upstream -- safe here since
+# only the reverse proxy is expected to reach this container's port
+# directly.
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--forwarded-allow-ips=*"]
