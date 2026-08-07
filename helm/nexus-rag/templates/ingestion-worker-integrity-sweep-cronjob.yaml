@@ -1,0 +1,106 @@
+{{- if .Values.ingestionWorker.integritySweep.enabled }}
+# Issue #432 (NFR-18 follow-on): scheduled, event-independent re-verification
+# of object-store originals against their stored content_sha256 digest --
+# `docs/observability.md`'s Q-to-C-to-A CronJob is documented but
+# deliberately NOT shipped as a chart template, because that job can't run
+# unattended yet (hardcoded localhost endpoints, dev-only OIDC redirect URIs,
+# a password-grant login, no published image containing scripts/). None of
+# that applies here: this reuses the ingestionWorker image the chart already
+# publishes and ships (app/integrity_sweep.py, same `python -m
+# app.<module>` CLI shape as app/reembed.py), talks only to Postgres, the
+# object store, and the Pushgateway -- all already in-cluster resources this
+# service's own Deployment already authenticates to -- so there is nothing
+# here a chart template would misrepresent as working.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "nexus-rag.fullname" . }}-integrity-sweep
+  labels:
+    {{- include "nexus-rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-worker-integrity-sweep
+spec:
+  schedule: {{ .Values.ingestionWorker.integritySweep.schedule | quote }}
+  # A re-run is a fresh rolling-window batch, not a retry of the same one --
+  # same reasoning docs/observability.md gives for the Q-to-C-to-A CronJob's
+  # backoffLimit: 0. concurrencyPolicy: Forbid avoids two sweeps racing to
+  # stamp last_verified_at on the same rows if one run overruns its interval.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.ingestionWorker.integritySweep.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "nexus-rag.labels" . | nindent 12 }}
+            app.kubernetes.io/component: ingestion-worker-integrity-sweep
+        spec:
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: Never
+          securityContext:
+            {{- include "nexus-rag.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: integrity-sweep
+              image: {{ include "nexus-rag.image" (dict "global" .Values.global "image" .Values.ingestionWorker.image) }}
+              securityContext:
+                {{- include "nexus-rag.containerSecurityContext" . | nindent 16 }}
+              command: ["python3", "-m", "app.integrity_sweep"]
+              args:
+                - "--batch-size"
+                - {{ .Values.ingestionWorker.integritySweep.batchSize | quote }}
+                {{- if .Values.ingestionWorker.integritySweep.pushgatewayUrl }}
+                - "--pushgateway-url"
+                - {{ .Values.ingestionWorker.integritySweep.pushgatewayUrl | quote }}
+                {{- else }}
+                - "--no-push"
+                {{- end }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              env:
+                - name: LOG_LEVEL
+                  value: {{ .Values.observability.logLevel | quote }}
+                - name: LOG_FORMAT
+                  value: {{ .Values.observability.logFormat | quote }}
+                # NFR-3: the same least-privilege ingestion-worker role as the
+                # Deployment -- SELECT/UPDATE on documents, INSERT on
+                # audit_log, already exactly what this job needs (issue #432
+                # deliberately reuses it rather than provisioning a new role).
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.externalPostgres.existingSecret }}
+                      key: {{ .Values.externalPostgres.perServiceKeys.ingestionWorker | default .Values.externalPostgres.secretKey }}
+                - name: DB_POOL_RECYCLE_SECONDS
+                  value: {{ .Values.externalPostgres.poolRecycleSeconds | quote }}
+                # NFR-12: same object-store wiring as the Deployment -- this
+                # is the store the sweep re-hashes originals from.
+                - name: OBJECT_STORE_BACKEND
+                  value: "s3"
+                - name: OBJECT_STORE_S3_ENDPOINT
+                  value: {{ include "nexus-rag.objectStoreEndpoint" . | quote }}
+                - name: OBJECT_STORE_S3_BUCKET
+                  value: {{ ternary .Values.objectStore.seaweedfs.bucket .Values.objectStore.external.bucket .Values.objectStore.enabled | quote }}
+                - name: OBJECT_STORE_S3_REGION
+                  value: {{ ternary .Values.objectStore.seaweedfs.region .Values.objectStore.external.region .Values.objectStore.enabled | quote }}
+                - name: OBJECT_STORE_S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ ternary .Values.objectStore.seaweedfs.auth.existingSecret .Values.objectStore.external.existingSecret .Values.objectStore.enabled }}
+                      key: {{ ternary .Values.objectStore.seaweedfs.auth.accessKeySecretKey .Values.objectStore.external.accessKeySecretKey .Values.objectStore.enabled }}
+                - name: OBJECT_STORE_S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ ternary .Values.objectStore.seaweedfs.auth.existingSecret .Values.objectStore.external.existingSecret .Values.objectStore.enabled }}
+                      key: {{ ternary .Values.objectStore.seaweedfs.auth.secretKeySecretKey .Values.objectStore.external.secretKeySecretKey .Values.objectStore.enabled }}
+              resources:
+                {{- toYaml .Values.ingestionWorker.integritySweep.resources | nindent 16 }}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

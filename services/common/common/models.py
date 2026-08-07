@@ -142,6 +142,17 @@ class Document(SQLModel, table=True):
     # processing.py's re-hash-before-parse check.
     content_sha256: str | None = None
 
+    # Issue #432: last time app/integrity_sweep.py's periodic re-verification
+    # confirmed the object-store original's bytes still hash to
+    # content_sha256. Null for a row never yet swept (new upload, or a
+    # pre-#432 row) -- the sweep orders its rolling window oldest-checked
+    # (nulls) first, so every row eventually gets a first check. Left
+    # unchanged on a mismatch/missing-original finding (see
+    # integrity_sweep.py's module docstring) -- the point is a human sees the
+    # audit_log entry, not that this timestamp quietly advances past a known
+    # problem.
+    last_verified_at: datetime | None = None
+
     # Issue #138 (Phase 1): advisory, curator-facing marking-mismatch findings
     # computed by the ingestion worker (common/marking_detection.py) -- e.g.
     # "the document's own banner says SECRET but it was tagged CUI". Purely

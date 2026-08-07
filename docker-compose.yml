@@ -589,6 +589,12 @@ services:
       NATS_URL: nats://nats:4222
       NATS_USER: ingestion_worker
       NATS_PASSWORD: ${NATS_INGESTION_WORKER_PASSWORD:-dev-nats-worker-password}
+      # Issue #432: only read by `python -m app.integrity_sweep` (not the
+      # consume_forever() service this container normally runs) -- see
+      # docs/dev-setup.md for the `docker compose run --rm ingestion-worker
+      # python -m app.integrity_sweep` invocation, the same
+      # reuse-the-service-image pattern app/reembed.py already uses.
+      RAG_INTEGRITY_PUSHGATEWAY_URL: ${RAG_INTEGRITY_PUSHGATEWAY_URL:-http://pushgateway:9091}
     volumes:
       - ingestion-worker-cache:/srv/.cache/huggingface
       - object-store-data:/srv/object-store

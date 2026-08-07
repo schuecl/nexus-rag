@@ -17,6 +17,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- **Periodic re-verification of object-store originals against their stored
+  content digest** (#432, NFR-18 follow-on to #285), independent of any
+  upload/re-embed event: `app/integrity_sweep.py` (`python -m
+  app.integrity_sweep`) re-hashes a bounded rolling window of documents each
+  run, oldest-checked-first, and flags a digest mismatch or unreadable
+  original as a `document.integrity_check_failed` audit_log entry plus a
+  `nexus_rag_integrity_check_failures_total` Pushgateway metric — never an
+  automatic status change, since the cause (bit rot, backup-restore
+  corruption, or real tampering) needs curator/admin triage. Scheduled
+  nightly by default via a new chart CronJob
+  (`ingestionWorker.integritySweep`), and alerted on
+  (`NexusRagIntegrityCheckFailureDetected`/`...Stale`) the same way
+  reconnaissance-query detection already is.
+
 - The golden set gains two **adversarial phrasings** and its first
   **multi-document expectation**, completing issue #528's checklist. The
   adversarial cases apply maximum lexical pressure toward a document FR-26 must

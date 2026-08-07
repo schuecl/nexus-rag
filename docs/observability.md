@@ -371,9 +371,64 @@ run against a cluster — it is the shape the pieces imply, checked against the
 chart's actual Service name, port, and NetworkPolicy, not an executed
 configuration.
 
+### Periodic object-store integrity re-verification (#432)
+
+NFR-18 shipped event-triggered content-integrity verification (#285): every
+time a document's original is fetched for parsing or re-embedding,
+ingestion-worker re-hashes it against `documents.content_sha256` and refuses
+to proceed on a mismatch. That never runs for a document that's simply
+sitting approved in the object store, untouched, for months — the common
+case, not an edge case — so NFR-18's own text named a scheduled,
+event-independent sweep as a follow-on. `services/ingestion-worker/app/
+integrity_sweep.py` (`python -m app.integrity_sweep`) is that sweep: each run
+re-hashes a bounded rolling window of documents (`--batch-size`, default
+500), ordered oldest-`last_verified_at`-first so a corpus larger than one
+run's batch is covered incrementally across successive runs rather than
+paying a full-corpus re-hash's I/O cost every time.
+
+A mismatch or an unreadable original is deliberately **not** an automatic
+status change -- unlike the event-triggered check, there's no processing in
+flight to refuse, and the cause (bit rot, a backup-restore artifact, or real
+tampering) needs a human to triage. Each finding becomes a
+`document.integrity_check_failed` audit_log entry (`reason`:
+`digest_mismatch` or `original_unreadable`, no digest values in `detail` --
+same re-identification reasoning `common/purge.py` already applies to a
+purge tombstone) and is counted toward the `nexus_rag_integrity_check_
+failures_total` Pushgateway metric, alongside a `nexus_rag_integrity_check_
+last_run_timestamp_seconds` heartbeat -- same flagged-count/heartbeat shape
+as `detect_query_anomalies.py`'s pair above.
+
+Locally: `docker compose run --rm ingestion-worker python -m
+app.integrity_sweep` (reuses the ingestion-worker image/role, same pattern
+`app/reembed.py`'s CLI already uses -- no new DB grant needed, since
+`worker_role` already holds `SELECT, UPDATE` on `documents` and `INSERT` on
+`audit_log`). `RAG_INTEGRITY_PUSHGATEWAY_URL` (`docker-compose.yml`) points
+it at the `observability` profile's Pushgateway; pass `--no-push` (or leave
+that env var unset without the `observability` profile running) to skip
+publishing and just see the stdout report.
+
+#### Status: shipped, unlike the Q-to-C-to-A CronJob above
+
+`helm/nexus-rag/templates/ingestion-worker-integrity-sweep-cronjob.yaml`
+(`ingestionWorker.integritySweep.enabled`, default `true`, nightly by
+default) **is** an actual chart template, not a documented-but-declined
+pattern -- the blockers that keep the Q-to-C-to-A CronJob doc-only
+(hardcoded `localhost` endpoints, dev-only OIDC redirect URIs, a
+password-grant login, a manually-created LibreChat agent-id, no published
+image containing `scripts/`) don't apply here: the sweep reuses the
+`ingestion-worker` image the chart already publishes, authenticates with the
+same Postgres/object-store credentials that image's Deployment already
+holds, and needs no browser-facing OIDC round trip at all. `Values.
+ingestionWorker.integritySweep.pushgatewayUrl` is left empty by default
+(same "cluster-specific, don't guess" posture as
+`networkPolicy.ingressControllerSelectors`) -- the sweep still runs and
+still writes `audit_log` findings without it, just without the
+Prometheus-visible metrics, until an operator points it at their
+observability release's Pushgateway Service.
+
 ## Alerts
 
-12 rules in four groups, in `infra/observability/prometheus/rules/nexus-rag.yml`
+14 rules in four groups, in `infra/observability/prometheus/rules/nexus-rag.yml`
 (and the chart's vendored copy):
 
 - **availability** — `NexusRagServiceDown`, `NexusRagWorkerConsumerStopped`,
@@ -392,6 +447,10 @@ configuration.
   instead of, or alongside, that batch job, see
   [docs/siem-detection-runbook.md](siem-detection-runbook.md) (issue #436) --
   the same four signals expressed against the RFC 5424 audit export (#73).
+  `NexusRagIntegrityCheckFailureDetected`, `NexusRagIntegritySweepStale`
+  (issue #432: fed by `app/integrity_sweep.py` via Pushgateway, same
+  flagged-count/heartbeat shape -- see "Periodic object-store integrity
+  re-verification" above).
 
 Neither offline job depends on an operator remembering a cadence anymore
 (issue #527): the dev stack schedules both with

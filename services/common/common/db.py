@@ -125,6 +125,11 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         # reviewed_at. Nullable: pre-existing rows upgrade without a rewrite,
         # and purge.py treats null as "trust status_before_purge instead".
         "first_approved_at": "TIMESTAMP WITH TIME ZONE",
+        # #432: when app/integrity_sweep.py last re-verified this row's
+        # object-store original against content_sha256. Nullable: every
+        # pre-existing row upgrades as "never yet swept", which is exactly
+        # the state that puts it first in the sweep's rolling window.
+        "last_verified_at": "TIMESTAMP WITH TIME ZONE",
     },
     "portal_settings": {
         # #248: branding + login popup banner, all defaulted so an existing

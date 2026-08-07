@@ -136,3 +136,25 @@ groups:
         annotations:
           summary: "Tagging-advisory calibration has not run recently"
           description: "calibrate_tagging_advisory.py has not reported to Pushgateway in over eight days (the default assumes a weekly schedule; adjust this threshold if this deployment runs it less often). Fires only after at least one run has published -- a deployment that never schedules calibration sees no series and no alert (#527)."
+
+      # Issue #432 (NFR-18 follow-on): app/integrity_sweep.py's periodic
+      # re-verification of object-store originals against content_sha256 --
+      # same flagged-count/heartbeat pair as the two anomaly-detection rules
+      # above, fed by the same Pushgateway mechanism
+      # (helm/nexus-rag/templates/ingestion-worker-integrity-sweep-cronjob.yaml).
+      - alert: NexusRagIntegrityCheckFailureDetected
+        expr: max_over_time(nexus_rag_integrity_check_failures_total[26h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Object-store original failed periodic integrity re-verification"
+          description: "The most recent integrity sweep found at least one document whose object-store original no longer matches its stored content_sha256 digest, or could not be read at all -- see the document.integrity_check_failed audit_log entries for which document(s) and why (digest_mismatch vs. original_unreadable). This is the tamper-evidence link NFR-18 describes; treat as a security incident until a curator/admin triages it as bit rot or a backup-restore artifact."
+
+      - alert: NexusRagIntegritySweepStale
+        expr: time() - nexus_rag_integrity_check_last_run_timestamp_seconds > 172800
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Periodic object-store integrity sweep has not run recently"
+          description: "app/integrity_sweep.py has not reported to Pushgateway in over 48 hours (the chart's default CronJob schedule is nightly; adjust this threshold if this deployment runs it less often). A stopped sweep silently returns the corpus to event-triggered-only integrity verification (NFR-18's original, narrower guarantee), not just a missed run."

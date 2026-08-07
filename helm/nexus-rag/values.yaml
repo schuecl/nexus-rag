@@ -751,6 +751,39 @@ ingestionWorker:
       cpu: "2"
       memory: "2Gi"
 
+  # Issue #432 (NFR-18 follow-on): scheduled CronJob re-verifying object-store
+  # originals against their stored content_sha256 digest, independent of any
+  # upload/re-embed event -- see templates/ingestion-worker-integrity-sweep-
+  # cronjob.yaml's header comment for why this one (unlike the Q-to-C-to-A
+  # CronJob docs/observability.md documents but declines to ship) is shipped
+  # as an actual chart template.
+  integritySweep:
+    enabled: true
+    # Daily at 03:00 -- outside the ingestion-heavy part of a typical duty
+    # day, and frequent enough that a bit-rot/tamper finding surfaces within
+    # a day rather than sitting undetected for a full retention window.
+    schedule: "0 3 * * *"
+    # Rolling-window batch size per run (issue #432 suggested-direction item
+    # 3) -- bounds one run's re-hash I/O cost rather than sweeping the whole
+    # corpus every night. A corpus larger than this is covered incrementally
+    # across successive nightly runs, oldest-checked-first.
+    batchSize: 500
+    startingDeadlineSeconds: 3600
+    # Left empty rather than guessed, same posture as
+    # networkPolicy.ingressControllerSelectors below: the observability
+    # release's Pushgateway Service name/namespace is deployment-specific.
+    # Empty means the sweep still runs and still writes audit_log findings,
+    # just without the Prometheus-visible failure/heartbeat metrics -- see
+    # app/integrity_sweep.py's --no-push fail-open behavior.
+    pushgatewayUrl: ""
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
 # Issue #110: default-deny ingress for this chart's data-plane components.
 #
 # Why it matters here specifically: orchestration-mcp is the only place FR-26
