@@ -44,6 +44,57 @@ Two limits to know:
   for that history); CI proves the manifests are well-formed and internally
   consistent, not that a deployment converges.
 
+## Classification / releasability vocabulary (issue #564)
+
+The first time `ingestion-api` boots against an empty database it seeds the two
+admin-configurable lists (C9). Left unconfigured it seeds the **application's dev
+defaults** — `UNCLASSIFIED`/`CUI`/`SECRET` and
+`NONE`/`NOFORN`/`USA`/`NATO`/`FVEY`, the examples from REQUIREMENTS.md
+Section 6.3. That is a Compose convenience and almost certainly wrong for a real
+deployment.
+
+Declare the site's own vocabulary instead:
+
+```yaml
+ingestionApi:
+  vocabulary:
+    classificationLevels: ["UNCLASSIFIED:0", "CUI:1", "SECRET:2", "TOP_SECRET:3"]
+    releasabilityValues: ["NONE", "NOFORN", "USA", "NATO", "FVEY"]
+```
+
+**Every value must match a Keycloak client-role suffix in this environment** —
+`rag-clearance:<value>` and `rag-releasability:<value>`. That coupling is the
+reason this is worth configuring in reviewable config rather than clicking
+through the admin UI after the fact: a value present in the database but absent
+from Keycloak produces **silently empty retrieval results**, not an error, because
+the FR-26 filter simply matches nothing.
+
+Two details the format enforces rather than trusts:
+
+- `classificationLevels` entries are `VALUE:rank`. The rank orders the clearance
+  ceiling FR-26 evaluates, so it is explicit rather than positional — a reordered
+  list cannot silently change who can read what — and ranks must be unique, or
+  two levels compare equal and the ceiling stops being a total order.
+- `releasabilityValues` must start with `NONE`. That is the un-set state and has
+  to be the default-selected option on the upload form, or every new document
+  defaults to a coalition caveat nobody chose.
+
+A malformed value **fails ingestion-api's startup** rather than falling back to
+the dev defaults, because falling back is the failure mode this exists to
+prevent.
+
+For sites that provision both tables themselves (admin API or migration) and want
+no service writing vocabulary on boot:
+
+```yaml
+ingestionApi:
+  vocabulary:
+    seedOnEmpty: false
+```
+
+Seeding is empty-table-only either way, so it stays idempotent and never fights
+an admin's later edits.
+
 ## Prerequisites
 
 - A Kubernetes cluster with a default `StorageClass` (or set

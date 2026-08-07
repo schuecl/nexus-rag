@@ -162,6 +162,25 @@ spec:
             # this exposes it the same way maxUploadBytes is exposed above.
             - name: MAX_BATCH_FILES
               value: {{ .Values.ingestionApi.maxBatchFiles | quote }}
+            # Issue #564: the bootstrap classification/releasability vocabulary.
+            # Unset means the app's own dev defaults (REQUIREMENTS.md Section
+            # 6.3's examples), which is wrong for any site whose marking scheme
+            # differs -- and wrong silently, because a value absent from this
+            # environment's Keycloak rag-clearance:*/rag-releasability:* roles
+            # produces empty retrieval results rather than an error. These
+            # values MUST match those role suffixes exactly.
+            {{- with .Values.ingestionApi.vocabulary.classificationLevels }}
+            - name: CLASSIFICATION_LEVELS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.ingestionApi.vocabulary.releasabilityValues }}
+            - name: RELEASABILITY_VALUES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if not .Values.ingestionApi.vocabulary.seedOnEmpty }}
+            - name: SEED_DEFAULT_VOCAB
+              value: "false"
+            {{- end }}
             # Issue #279 (gap G3): see values.yaml's purgeTwoPersonRequired comment.
             - name: PURGE_TWO_PERSON_REQUIRED
               value: {{ .Values.ingestionApi.purgeTwoPersonRequired | quote }}

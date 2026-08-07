@@ -51,6 +51,26 @@ changed in the running system, with the issue/PR reference for the trail.
   applies to images. Rendering is not installing: nothing here applies manifests
   to a live cluster, so admission control, PVC provisioning, image pulls and
   readiness remain unexercised in CI, and the chart README says so.
+- The bootstrap classification/releasability vocabulary is now **deploy-time
+  configurable** (#564): `CLASSIFICATION_LEVELS` (`VALUE:rank` pairs) and
+  `RELEASABILITY_VALUES`, plumbed through the chart as
+  `ingestionApi.vocabulary.classificationLevels`/`.releasabilityValues`, with
+  `.seedOnEmpty: false` (`SEED_DEFAULT_VOCAB=false`) for sites that provision
+  both tables themselves. Unset keeps the application's dev defaults, so the
+  Compose stack is unchanged. Previously `_seed_defaults()` ran unconditionally
+  in the FastAPI lifespan, so every environment -- including a production Helm
+  install against a fresh external Postgres -- silently inherited
+  REQUIREMENTS.md Section 6.3's example vocabulary the first time
+  `ingestion-api` booted. A site whose marking scheme differs then tags and
+  filters uploads against values absent from its Keycloak
+  `rag-clearance:*`/`rag-releasability:*` roles, and that mismatch surfaces as
+  **empty retrieval results rather than an error**. A malformed override fails
+  startup rather than falling back to the defaults, because falling back is
+  exactly the failure being prevented; ranks must be unique (they order the
+  FR-26 clearance ceiling, so a duplicate makes it ambiguous) and
+  `RELEASABILITY_VALUES` must start with `NONE` (the un-set state has to be the
+  upload form's default option). Seeding stays empty-table-only, so C9's
+  runtime admin editing is untouched.
 
 ### Fixed
 

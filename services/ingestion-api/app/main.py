@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -33,6 +35,7 @@ from common.tracing import setup_tracing
 # purge, auth). Module level, before the app object exists, so startup logging
 # is already formatted and filtered.
 setup_logging("ingestion-api")
+logger = logging.getLogger("ingestion-api")
 enable_siem_export("ingestion-api")
 # #134: request spans (FastAPI auto-instrumentation, applied to the app after
 # it is created below) plus the manual ingest.submit span in routes/upload.py
@@ -55,16 +58,144 @@ DEFAULT_CLASSIFICATIONS = [
 DEFAULT_RELEASABILITY = [NO_RELEASABILITY_RESTRICTION, "NOFORN", "USA", "NATO", "FVEY"]
 
 
+class VocabularyConfigError(RuntimeError):
+    """A deploy-time vocabulary override that could not be parsed.
+
+    Raised at startup rather than warned about and skipped. Issue #564: the
+    failure this guards is a site whose real marking scheme differs booting into
+    the dev example vocabulary -- uploads then get tagged and filtered against
+    values that do not exist in that environment's Keycloak
+    ``rag-clearance:*``/``rag-releasability:*`` roles, and the mismatch surfaces
+    as silently empty retrieval results rather than an error. Falling back to
+    the dev defaults on a typo would reproduce exactly that, so a malformed
+    override has to stop the service instead.
+    """
+
+
+def _parse_classification_override(raw: str) -> list[tuple[str, int]]:
+    """``"UNCLASSIFIED:0,CUI:1,SECRET:2"`` -> ``[("UNCLASSIFIED", 0), ...]``.
+
+    Rank is explicit rather than positional: it is the ordering the clearance
+    ceiling is evaluated against (FR-26), so leaving it implicit in list order
+    would make a reordered env var silently change who can read what.
+    """
+    entries: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    ranks: set[int] = set()
+    for item in (part.strip() for part in raw.split(",")):
+        if not item:
+            continue
+        value, sep, rank_text = item.partition(":")
+        value = value.strip()
+        if not sep or not value:
+            raise VocabularyConfigError(
+                f"CLASSIFICATION_LEVELS entry {item!r} is not 'VALUE:rank' -- "
+                "e.g. CLASSIFICATION_LEVELS='UNCLASSIFIED:0,CUI:1,SECRET:2'"
+            )
+        try:
+            rank = int(rank_text.strip())
+        except ValueError as exc:
+            raise VocabularyConfigError(
+                f"CLASSIFICATION_LEVELS entry {item!r} has a non-integer rank"
+            ) from exc
+        if value in seen:
+            raise VocabularyConfigError(f"CLASSIFICATION_LEVELS lists {value!r} more than once")
+        # A duplicate rank makes the clearance ceiling ambiguous: two levels
+        # would compare equal, so "at or below my clearance" stops being a
+        # total order and which one a user can read depends on row order.
+        if rank in ranks:
+            raise VocabularyConfigError(
+                f"CLASSIFICATION_LEVELS reuses rank {rank} -- ranks order the "
+                "clearance ceiling (FR-26) and must be unique"
+            )
+        seen.add(value)
+        ranks.add(rank)
+        entries.append((value, rank))
+    if not entries:
+        raise VocabularyConfigError("CLASSIFICATION_LEVELS is set but empty")
+    return entries
+
+
+def _parse_releasability_override(raw: str) -> list[str]:
+    """``"NONE,NATO,FVEY"`` -> ``["NONE", "NATO", "FVEY"]``."""
+    values: list[str] = []
+    for value in (part.strip() for part in raw.split(",")):
+        if not value:
+            continue
+        if value in values:
+            raise VocabularyConfigError(f"RELEASABILITY_VALUES lists {value!r} more than once")
+        values.append(value)
+    if not values:
+        raise VocabularyConfigError("RELEASABILITY_VALUES is set but empty")
+    if values[0] != NO_RELEASABILITY_RESTRICTION:
+        # Same constraint the hardcoded default documents above: the un-set
+        # state has to be the first <option> on the upload form, or the form
+        # defaults every new document to a coalition caveat nobody chose.
+        raise VocabularyConfigError(
+            f"RELEASABILITY_VALUES must start with {NO_RELEASABILITY_RESTRICTION!r} "
+            "so the un-set state is the default-selected option on the upload form"
+        )
+    return values
+
+
+def _configured_vocabulary() -> tuple[list[tuple[str, int]], list[str]] | None:
+    """The deploy-time vocabulary, or None when startup must not seed at all.
+
+    Issue #564. Unset env vars keep the dev defaults, so the compose stack is
+    unchanged; SEED_DEFAULT_VOCAB=false turns seeding off entirely for sites
+    that provision the tables through the admin API or a migration and do not
+    want a service writing vocabulary on boot.
+    """
+    if os.environ.get("SEED_DEFAULT_VOCAB", "true").strip().lower() == "false":
+        return None
+    raw_levels = os.environ.get("CLASSIFICATION_LEVELS", "").strip()
+    raw_releasability = os.environ.get("RELEASABILITY_VALUES", "").strip()
+    classifications = (
+        _parse_classification_override(raw_levels) if raw_levels else DEFAULT_CLASSIFICATIONS
+    )
+    releasability = (
+        _parse_releasability_override(raw_releasability)
+        if raw_releasability
+        else DEFAULT_RELEASABILITY
+    )
+    return classifications, releasability
+
+
 def _seed_defaults() -> None:
-    """Dev convenience only: seed the admin-configurable lists (C9) with the
-    example values from REQUIREMENTS.md Section 6.3 if the tables are empty."""
+    """Seed the admin-configurable lists (C9) if the tables are empty.
+
+    Empty-table-only, so it stays idempotent and never fights an admin's later
+    edits through routes/admin.py. What changed in #564 is where the values come
+    from: CLASSIFICATION_LEVELS/RELEASABILITY_VALUES let a deployment declare
+    its own vocabulary in config that can be reviewed, instead of every
+    environment silently inheriting REQUIREMENTS.md Section 6.3's dev examples
+    the first time ingestion-api boots against a fresh database.
+    """
+    configured = _configured_vocabulary()
+    if configured is None:
+        logger.info(
+            "SEED_DEFAULT_VOCAB=false -- not seeding classification/releasability "
+            "vocabulary; provision it via the admin API before first upload"
+        )
+        return
+    classifications, releasability = configured
     with Session(get_engine()) as session:
         if not session.exec(select(ClassificationLevel)).first():
-            for value, rank in DEFAULT_CLASSIFICATIONS:
+            for value, rank in classifications:
                 session.add(ClassificationLevel(value=value, rank=rank))
+            logger.info(
+                "seeded %d classification level(s): %s",
+                len(classifications),
+                ", ".join(f"{v}:{r}" for v, r in classifications),
+            )
         if not session.exec(select(ReleasabilityValue)).first():
-            for value in DEFAULT_RELEASABILITY:
+            for value in releasability:
                 session.add(ReleasabilityValue(value=value))
+            logger.info(
+                "seeded %d releasability value(s): %s",
+                len(releasability),
+                ", ".join(releasability),
+            )
         session.commit()
 
 

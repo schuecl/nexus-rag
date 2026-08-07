@@ -574,6 +574,15 @@ h1 {
 }
 
 .form-section {
+  /* Issue #566: --stepper-x/-y mirror this padding and are declared HERE, in the
+     same rule, on purpose. They used to live on `.submission-card
+     .form-section` (specificity 0,2,0) while the 680px media query overrode
+     them on `.form-section` (0,1,0) -- so the override lost, the offsets stayed
+     at the desktop values while the padding shrank, and the rail rendered 14px
+     to the right of the badges on narrow viewports. Same selector = they cannot
+     diverge again. */
+  --stepper-x: 34px;
+  --stepper-y: 30px;
   padding: 30px 34px;
   border-bottom: 1px solid var(--line-strong);
 }
@@ -593,14 +602,14 @@ h1 {
 .section-heading {
   display: flex;
   align-items: flex-start;
-  gap: 13px;
+  gap: var(--badge-gap, 13px);
   margin-bottom: 22px;
 }
 
 .section-number {
   display: grid;
-  width: 31px;
-  height: 31px;
+  width: var(--badge-size, 31px);
+  height: var(--badge-size, 31px);
   flex: 0 0 auto;
   place-items: center;
   border-radius: 10px;
@@ -608,6 +617,66 @@ h1 {
   color: var(--primary-dark);
   font-size: 0.77rem;
   font-weight: 850;
+}
+
+/* Issue #566: vertical stepper connectors between the numbered section
+   markers, so the left rail reads as one continuous 1 -> 2 -> 3 -> 4
+   progression instead of four isolated circles.
+
+   Every offset is DERIVED from the badge's own geometry rather than
+   hardcoded. --badge-size and --badge-gap are the same custom properties
+   .section-number and .section-heading now consume, so the rail cannot drift
+   out of alignment when the badge is resized -- the previous version encoded
+   the same numbers a second time (left: padding + 14.5px, top: padding +
+   31px) and would have silently misaligned on any change to either.
+
+   The segments: a section preceded by another draws from its top edge down to
+   its badge; a section FOLLOWED by another draws from its badge down to its
+   bottom edge. Consecutive segments meet at the shared border, so the rail
+   spans badge-bottom to next-badge-top and never crosses a circle.
+
+   Both use relational selectors rather than :first-of-type/:last-of-type,
+   which describe position among <section> siblings rather than "has a step
+   next to it". Adding any other <section> inside the form would make
+   :not(:last-of-type) true for step 4 and draw a rail stub below the last
+   step; `:has(+ .form-section)` cannot. */
+.submission-card {
+  --badge-size: 31px;
+  --badge-gap: 13px;
+  --rail-width: 2px;
+}
+
+.submission-card .form-section {
+  position: relative;
+  z-index: 0;
+}
+
+/* Content aligns with the heading TEXT, clearing the badge column the rail
+   runs in -- badge width plus the heading's own flex gap, not a magic 44px. */
+.submission-card .form-section > :not(.section-heading) {
+  margin-left: calc(var(--badge-size) + var(--badge-gap));
+}
+
+.submission-card .form-section + .form-section::before,
+.submission-card .form-section:has(+ .form-section)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--stepper-x) + (var(--badge-size) - var(--rail-width)) / 2);
+  width: var(--rail-width);
+  background: var(--line-strong);
+  z-index: -1;
+}
+
+/* Top edge down to the badge's top edge. */
+.submission-card .form-section + .form-section::before {
+  top: 0;
+  height: var(--stepper-y);
+}
+
+/* Badge's bottom edge down to the section's bottom edge. */
+.submission-card .form-section:has(+ .form-section)::after {
+  top: calc(var(--stepper-y) + var(--badge-size));
+  bottom: 0;
 }
 
 .section-heading h2 {
@@ -1785,6 +1854,8 @@ code {
   }
 
   .form-section {
+    --stepper-x: 20px;
+    --stepper-y: 24px;
     padding: 24px 20px;
   }
 

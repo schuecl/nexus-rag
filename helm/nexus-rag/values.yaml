@@ -570,6 +570,33 @@ ingestionApi:
   # maxBatchFiles x maxUploadBytes; the ingress template computes that
   # product and injects it as the proxy-body-size annotation default.
   maxBatchFiles: 25
+
+  # Issue #564: the classification/releasability vocabulary seeded the first
+  # time ingestion-api boots against an empty database (C9 keeps both lists
+  # admin-editable at runtime afterwards; this is only the bootstrap).
+  #
+  # Leave both lists empty to inherit the application's dev defaults
+  # (UNCLASSIFIED/CUI/SECRET and NONE/NOFORN/USA/NATO/FVEY, REQUIREMENTS.md
+  # Section 6.3's examples). That is a deliberate convenience for the Compose
+  # stack and almost certainly WRONG for a real deployment: every value here
+  # must exist as a Keycloak client-role suffix (rag-clearance:<value>,
+  # rag-releasability:<value>) in this environment, because a value that does
+  # not produces silently empty retrieval results rather than an error.
+  #
+  # classificationLevels entries are "VALUE:rank"; rank orders the clearance
+  # ceiling FR-26 evaluates against, so it is explicit rather than positional
+  # and must be unique. releasabilityValues must start with NONE (the un-set
+  # state), or the upload form defaults every new document to a caveat nobody
+  # chose. A malformed value fails ingestion-api's startup rather than falling
+  # back to the dev defaults.
+  vocabulary:
+    # e.g. ["UNCLASSIFIED:0", "CUI:1", "SECRET:2", "TOP_SECRET:3"]
+    classificationLevels: []
+    # e.g. ["NONE", "NOFORN", "USA", "NATO", "FVEY"]
+    releasabilityValues: []
+    # Set false for sites that provision both tables themselves (admin API or
+    # migration) and want no service writing vocabulary on boot.
+    seedOnEmpty: true
   service:
     type: ClusterIP
     port: 8001
