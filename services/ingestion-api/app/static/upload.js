@@ -31,6 +31,8 @@
   const selectedFileTemplate = document.getElementById("selectedFileTemplate");
   const clearFilesButton = document.getElementById("clearFiles");
   const fileError = document.getElementById("fileError");
+  const releasabilityError = document.getElementById("releasabilityError");
+  const releasabilityChoices = document.getElementById("releasabilityChoices");
   const submitButton = document.getElementById("submitButton");
   const submitControls = Array.from(
     document.querySelectorAll(
@@ -74,6 +76,15 @@
   const setFileError = (message = "") => {
     fileError.textContent = message;
     dropZone.classList.toggle("invalid", Boolean(message));
+  };
+
+  // Issue #565: nothing is pre-checked any more, so "no releasability selected"
+  // is now a reachable state. A checkbox group cannot express "at least one"
+  // natively -- `required` on a checkbox constrains that one box -- so
+  // reportValidity() below will not catch it and this does.
+  const setReleasabilityError = (message = "") => {
+    releasabilityError.textContent = message;
+    releasabilityChoices.classList.toggle("invalid", Boolean(message));
   };
 
   const updateVersionAvailability = () => {
@@ -345,6 +356,7 @@
     form.reset();
     selectedFiles = [];
     setFileError();
+    setReleasabilityError();
     renderSelectedFiles();
     updateVersionAvailability();
     result.hidden = true;
@@ -371,6 +383,15 @@
     if (!form.reportValidity()) {
       return;
     }
+
+    if (!releaseInputs.some((input) => input.checked)) {
+      setReleasabilityError("Select at least one releasability marking.");
+      releasabilityChoices.scrollIntoView({ behavior: "smooth", block: "center" });
+      releaseInputs[0]?.focus();
+      updateReadiness();
+      return;
+    }
+    setReleasabilityError();
 
     const isBatch = selectedFiles.length > 1;
     const formData = new FormData();

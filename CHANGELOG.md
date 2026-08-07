@@ -111,6 +111,18 @@ changed in the running system, with the issue/PR reference for the trail.
   applies to the active nav item and the sidebar step lists, which shared the
   pairing. A new per-theme contrast gate keeps any future palette above the floor.
 
+- The upload form no longer pre-fills the two fields that decide who can retrieve
+  a document (#565). Classification now opens on a non-submittable
+  "Select a classification…" placeholder instead of auto-selecting the lowest
+  level, and no releasability marking arrives pre-ticked. **Operator impact:** the
+  path of least resistance used to submit "UNCLASSIFIED, releasable to everyone"
+  without a single click on either field; both are now a deliberate choice, and a
+  submission missing either is rejected before it leaves the browser. Tagging
+  *above* your clearance was already blocked server-side (FR-18) -- this closes
+  the opposite direction, under-tagging, which is the one that widens the
+  retrieval audience. Curator correction forms are unchanged: they still open on
+  the document's current tags, which is the point of them.
+
 ### Fixed
 
 - **NFR-13's Qdrant revert silently no-op'd on a real Postgres connection
