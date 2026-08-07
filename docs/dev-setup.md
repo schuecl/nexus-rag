@@ -101,7 +101,11 @@ pieces can use an NVIDIA GPU when one is present:
 - **reranker-service** bakes its torch wheel at build time from
   `TORCH_INDEX_URL` (`.env`). CPU by default; for GPU set it to the matching
   CUDA index (e.g. `https://download.pytorch.org/whl/cu124`) and uncomment the
-  service's `deploy.resources` GPU reservation in `docker-compose.yml`.
+  service's `deploy.resources` GPU reservation in `docker-compose.yml`. The
+  Dockerfile's multi-stage build (#553) copies the CUDA wheel's runtime
+  shared libraries into the shipped image the same way it copies everything
+  else in `site-packages`, but that path is implemented, not validated — no
+  GPU in the dev stack or CI to exercise it against a real CUDA build.
 - **Ollama** uses the GPU automatically once its GPU reservation is uncommented.
 
 Host prerequisites for the GPU path: an NVIDIA driver, the

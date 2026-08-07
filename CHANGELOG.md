@@ -75,6 +75,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- **Multi-stage Dockerfile build for `reranker-service`** (#553, split off
+  #511/#554 for its `TORCH_INDEX_URL` build-arg complexity): a `builder`
+  stage does the pip installs (including the CPU/CUDA torch wheel), the
+  runtime stage copies in only the resulting `site-packages` + app source —
+  same treatment #511/#554 already gave `ingestion-api`,
+  `ingestion-worker`, and `orchestration-mcp` — so pip/setuptools/wheel and
+  everything vendored inside them (e.g. `pip/_vendor/msgpack`) never land in
+  the shipped image at all. A CUDA torch wheel's runtime shared libraries
+  (bundled in the wheel itself or pulled in as separate `nvidia-*` pip
+  packages) live in `site-packages` too, so they carry over with the same
+  plain `COPY --from=builder`. Validated against the CPU default
+  (`docker compose up --build`, trivy rescan, `eval-retrieval` smoke test);
+  the CUDA path is implemented but unvalidated — no GPU in the dev stack or
+  CI — per this repo's honest-confidence-labeling convention.
+
 - `h2` bumped `4.4.0` → `4.4.1` (CVE-2026-71554, MEDIUM: duplicate `Host`
   header could facilitate request smuggling) across the four lockfiles that
   pin it (`services/common`, `services/ingestion-api`,
