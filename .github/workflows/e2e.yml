@@ -233,12 +233,15 @@ jobs:
   integration:
     # Issue #428: a containerized integration layer, scoped smaller than
     # golden-query above (which boots all four app services + LibreChat +
-    # Ollama). This needs only Postgres today -- tests/integration/'s only
-    # suite so far is the NFR-2 audit_log append-only check, which is a pure
-    # database-role/grant property. Qdrant/NATS/Keycloak get added to this
-    # job's setup once tests/integration grows coverage that actually
-    # exercises them (issue #439: NFR-11/NFR-13 live fault injection; #440:
-    # ingestion-api route tests and rag_search.py against real containers).
+    # Ollama). Started with only Postgres -- tests/integration/'s first
+    # suite was the NFR-2 audit_log append-only check, a pure database-
+    # role/grant property. Issue #439 (NFR-13 slice) added the second suite,
+    # which needs Qdrant too, already reachable on its base-compose host
+    # port (docker-compose.ci-integration.yml's overlay only needed to add
+    # one for Postgres, which has none of its own -- see that file's header
+    # comment). NATS/Keycloak still aren't started here: #439's NFR-11 half
+    # and #440 (ingestion-api route tests, rag_search.py against real
+    # containers) are the follow-ups that would need them.
     #
     # Same opt-in gating as golden-query/browser-verify above, for the same
     # reason: a full role/grant bootstrap plus an ingestion-api image build
@@ -268,10 +271,16 @@ jobs:
         # by this point, which is the only real ordering constraint).
         run: |
           set -e
-          docker compose up -d postgres
+          docker compose up -d postgres qdrant
           echo "::group::Waiting for Postgres healthcheck"
           timeout 120 bash -c '
             until [ "$(docker inspect --format "{{.State.Health.Status}}" nexus-rag-postgres-1 2>/dev/null)" = "healthy" ]; do
+              sleep 2
+            done'
+          echo "::endgroup::"
+          echo "::group::Waiting for Qdrant healthcheck"
+          timeout 120 bash -c '
+            until [ "$(docker inspect --format "{{.State.Health.Status}}" nexus-rag-qdrant-1 2>/dev/null)" = "healthy" ]; do
               sleep 2
             done'
           echo "::endgroup::"
@@ -287,8 +296,16 @@ jobs:
       - name: Install test toolchain
         run: |
           pip install -r requirements-test.txt
+          # Issue #439: test_nfr13_live_revert.py imports ingestion-api's own
+          # `app.routes.curate` directly (the same way that service's own
+          # tests do -- see tests/integration/conftest.py's sys.path insert),
+          # so this job now needs curate.py's own dependency chain too --
+          # loose version ranges, same convention as ci.yml's `service-tests`
+          # job's own ingestion-api install, not this service's hash-pinned
+          # requirements.txt (that's for the shipped image, not a CI test env).
           pip install "pydantic>=2.7" "PyJWT>=2.8" "cryptography>=42.0" \
-            "sqlmodel>=0.0.21" "psycopg[binary]>=3.1"
+            "sqlmodel>=0.0.21" "psycopg[binary]>=3.1" "qdrant-client>=1.10" \
+            "fastapi>=0.115" "httpx>=0.27"
       - name: pytest tests/integration
         env:
           POSTGRES_HOST: 127.0.0.1
@@ -296,7 +313,7 @@ jobs:
         run: pytest tests/integration -v
       - name: Dump compose logs on failure
         if: failure()
-        run: docker compose logs --no-color --tail=300 postgres
+        run: docker compose logs --no-color --tail=300 postgres qdrant
       - name: Tear down
         if: always()
         run: docker compose down -v

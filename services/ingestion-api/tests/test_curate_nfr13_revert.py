@@ -13,10 +13,11 @@ payload must be reverted to pending_review and the original exception must
 still propagate, including when the revert call itself also fails.
 
 Out of scope here (tracked separately, not re-litigated by this file): a true
-multi-container live-environment run (needs a fault-injection hook in
-production code or precise inter-container timing -- a bigger, separate
-change) and NFR-11 crash-redelivery, which issue #164 found has an unfixed
-correctness bug of its own upstream of any test.
+multi-container live-environment run. That gap is now closed by
+tests/integration/test_nfr13_live_revert.py (issue #439) -- against a real
+Postgres connection failure and a real Qdrant point, no fault-injection hook
+needed in production code after all (see that file's docstring). NFR-11
+crash-redelivery live coverage is issue #579 (#439 phase 2), still open.
 """
 
 from __future__ import annotations

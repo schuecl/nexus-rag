@@ -340,19 +340,21 @@ actually catch that class of regression: manually re-granting `SELECT` to
 `test_select_denied[ingestion-api]` red with "DID NOT RAISE"; revoking it
 again turns the suite back green.
 
-**What it doesn't cover yet, and why:** the job stands up Postgres only,
-not Qdrant/NATS/Keycloak, because nothing in `tests/integration/` today
-exercises them -- standing up unused containers "for completeness" would
-just be padding. Two follow-ups extend this:
+**What it covers now, and what's left:** the job originally stood up Postgres
+only -- Qdrant/NATS/Keycloak weren't started because nothing in
+`tests/integration/` exercised them yet. Issue #439 added Qdrant (already
+host-reachable on its base-compose port, no overlay needed -- see
+`docker-compose.ci-integration.yml`'s header comment) for its NFR-13 live
+revert-on-partial-failure test, resolved without any fault-injection seam in
+production code: `approve()`/`reject()`/`suspend()` already reach Postgres
+and Qdrant through plain call sites a test can point at live infrastructure
+directly. Two follow-ups remain:
 
-- **Issue #439** (NFR-11 crash-redelivery, NFR-13 live revert-on-partial-
-  failure): needs Qdrant + NATS, and a fault-injection seam that doesn't
-  exist yet. `docs/testing.md` and issue #77 previously noted this
-  deliberately wasn't added, to keep production code free of test-only
-  branches -- #439 tracks the design decision on how to add one (or avoid
-  needing one) before writing the tests.
+- **Issue #579** (NFR-11 crash-redelivery, #439 phase 2): needs NATS/
+  JetStream too, live. The same seam-free approach likely applies (see that
+  issue), but hasn't been built yet.
 - **Issue #440** (`ingestion-api` route-layer tests, `orchestration-mcp/app/
-  rag_search.py`): needs Qdrant + Keycloak, to replace the mocked
+  rag_search.py`): needs Qdrant (now up) + Keycloak, to replace the mocked
   equivalents currently standing in for a real vector store and real OIDC
   tokens in those two modules' "measured but not gated" coverage (see
   "Coverage policy" below).
@@ -856,17 +858,32 @@ baseline capture, not a regression fix.
 - Issue #428 added the containerized integration layer itself
   (`tests/integration/`, `e2e.yml`'s `integration` job) and closed its
   NFR-2 append-only-audit-enforcement slice with a live-Postgres regression
-  test — see "Containerized integration layer" above. Two slices remain,
-  now tracked as their own issues rather than folded into this one:
-  **NFR-11 crash-redelivery** and **NFR-13's live revert-on-partial-failure**
-  (issue #439) — NFR-13 already has a committed mock-based regression test
-  (`services/ingestion-api/tests/test_curate_nfr13_revert.py`, issue #77);
-  the remaining gap there is specifically a live run against a real
-  Postgres/Qdrant pair, which needs a fault-injection hook (deliberately not
-  added yet, to keep production code free of test-only branches) — and
+  test — see "Containerized integration layer" above. Issue #439 closed the
+  **NFR-13 live revert-on-partial-failure** slice
+  (`tests/integration/test_nfr13_live_revert.py`), against a real Postgres
+  connection failure (not a monkeypatched exception -- `session.connection().
+  invalidate()` before `commit()`, which is what an actual driver/network
+  failure looks like) and a real Qdrant point. No fault-injection hook was
+  needed in production code: `approve()`/`reject()`/`suspend()` already
+  reach both stores through plain call sites (`session: Session`, a
+  module-level `get_store()`) a test can point at live infrastructure
+  directly, the same way the existing mock test
+  (`services/ingestion-api/tests/test_curate_nfr13_revert.py`, issue #77)
+  already bypasses FastAPI's `Depends()` to call them. That live run caught
+  a real bug the mock couldn't: a genuine connection-level commit failure
+  expires every attribute on the in-memory `Document` (SQLAlchemy's normal
+  handling of a failed flush), so the revert branch's own `doc.id`/
+  `doc.classification` re-reads raised instead of returning a value,
+  silently skipping the Qdrant revert it was supposed to perform. Fixed by
+  capturing those values into locals before the commit that might fail,
+  in all three of `approve()`/`reject()`/`suspend()`.
+  **NFR-11 crash-redelivery** (the other #439 slice) remains open, tracked
+  separately as issue #579 — a larger change, since it needs a live
+  NATS/JetStream stream and an actual (or injected) mid-processing failure,
+  not just Postgres/Qdrant.
   **`ingestion-api` route tests / `rag_search.py`** against real containers
-  instead of mocks, with their coverage folded into `ci.yml`'s gate
-  (issue #440).
+  instead of mocks, with their coverage folded into `ci.yml`'s gate, is
+  issue #440.
 - The LibreChat OIDC browser E2E remains blocked on the Keycloak admin step
   noted in dev-setup.md.
 - Issue #230's hash-pinned lockfiles cover the four services' and scripts'

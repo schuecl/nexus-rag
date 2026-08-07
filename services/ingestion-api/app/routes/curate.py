@@ -699,8 +699,17 @@ def approve(
     # is what a revert below must target, since by the time a revert could run
     # the chunks already live here, not at original_classification.
     resulting_classification = doc.classification
+    # Issue #439: captured now, not re-read from `doc` inside the except
+    # block below -- a real connection-level commit failure (as opposed to
+    # e.g. a constraint violation) expires every attribute on `doc` as part
+    # of SQLAlchemy handling the failed flush, so `doc.id` raises the same
+    # PendingRollbackError the commit did instead of returning a value. That
+    # silently skipped the revert entirely (confirmed against a live
+    # Postgres connection drop; the mock test's monkeypatched session.commit
+    # never exercises real flush/expire behavior, so it couldn't catch this).
+    doc_id_str = str(doc.id)
     store = get_store()
-    store.update_document_payload(str(doc.id), original_classification, qdrant_fields)
+    store.update_document_payload(doc_id_str, original_classification, qdrant_fields)
 
     # NFR-13: Qdrant now already shows the new document as `approved`, but
     # nothing is durable yet -- Postgres (the system of record for the
@@ -722,7 +731,7 @@ def approve(
                 actor_sub=user.sub,
                 actor_username=user.preferred_username,
                 action="document.approve",
-                target_id=str(doc.id),
+                target_id=doc_id_str,
                 detail={
                     "corrections": corrections.model_dump() if corrections else None,
                     "tagging_advisory": _tagging_advisory_outcome(doc),
@@ -745,14 +754,14 @@ def approve(
     except Exception:
         try:
             store.update_document_payload(
-                str(doc.id), resulting_classification, {"status": "pending_review"}
+                doc_id_str, resulting_classification, {"status": "pending_review"}
             )
         except Exception:
             logger.exception(
                 "approval of document %s failed and the Qdrant status revert also "
                 "failed -- its chunks may still show status=approved despite Postgres "
                 "still saying pending_review; needs manual reconciliation",
-                doc.id,
+                doc_id_str,
             )
         raise
     session.refresh(doc)
@@ -777,8 +786,13 @@ def reject(
     doc.rejection_reason = body.reason
     doc.reviewed_by_sub = user.sub
     doc.reviewed_at = datetime.now(UTC)
+    # Issue #439: captured now, not re-read from `doc` inside the except
+    # block below -- see approve()'s identical comment for why a real
+    # connection-level commit failure makes that re-read unsafe.
+    doc_id_str = str(doc.id)
+    classification = doc.classification
     store = get_store()
-    store.update_document_payload(str(doc.id), doc.classification, {"status": doc.status})
+    store.update_document_payload(doc_id_str, classification, {"status": doc.status})
     # NFR-13: same reasoning as approve() above -- revert the Qdrant write if
     # the Postgres commit doesn't durably land, so the two stores don't end up
     # disagreeing about whether this document is still pending.
@@ -789,7 +803,7 @@ def reject(
                 actor_sub=user.sub,
                 actor_username=user.preferred_username,
                 action="document.reject",
-                target_id=str(doc.id),
+                target_id=doc_id_str,
                 detail={
                     "reason": body.reason,
                     "tagging_advisory": _tagging_advisory_outcome(doc),
@@ -809,15 +823,13 @@ def reject(
         session.commit()
     except Exception:
         try:
-            store.update_document_payload(
-                str(doc.id), doc.classification, {"status": "pending_review"}
-            )
+            store.update_document_payload(doc_id_str, classification, {"status": "pending_review"})
         except Exception:
             logger.exception(
                 "rejection of document %s failed and the Qdrant status revert also "
                 "failed -- its chunks may still show status=rejected despite Postgres "
                 "still saying pending_review; needs manual reconciliation",
-                doc.id,
+                doc_id_str,
             )
         raise
     session.refresh(doc)
@@ -876,8 +888,13 @@ def suspend(
     # edit_metadata's #268 demotion -- the document *was* retrievable until
     # this call, and that fact is what #286's chat-plane purge signal needs
     # to survive it.
+    # Issue #439: captured now, not re-read from `doc` inside the except
+    # block below -- see approve()'s identical comment for why a real
+    # connection-level commit failure makes that re-read unsafe.
+    doc_id_str = str(doc.id)
+    classification = doc.classification
     store = get_store()
-    store.update_document_payload(str(doc.id), doc.classification, {"status": doc.status})
+    store.update_document_payload(doc_id_str, classification, {"status": doc.status})
     # NFR-13: same reasoning as approve()/reject() above -- revert the Qdrant
     # write if the Postgres commit doesn't durably land, so the two stores
     # don't end up disagreeing about whether this document is still approved.
@@ -888,7 +905,7 @@ def suspend(
                 actor_sub=user.sub,
                 actor_username=user.preferred_username,
                 action="document.suspend",
-                target_id=str(doc.id),
+                target_id=doc_id_str,
                 detail={"reason": body.reason, "content_sha256": doc.content_sha256},
             )
         )
@@ -905,13 +922,13 @@ def suspend(
         session.commit()
     except Exception:
         try:
-            store.update_document_payload(str(doc.id), doc.classification, {"status": "approved"})
+            store.update_document_payload(doc_id_str, classification, {"status": "approved"})
         except Exception:
             logger.exception(
                 "suspension of document %s failed and the Qdrant status revert also "
                 "failed -- its chunks may still show status=pending_review despite "
                 "Postgres still saying approved; needs manual reconciliation",
-                doc.id,
+                doc_id_str,
             )
         raise
     session.refresh(doc)

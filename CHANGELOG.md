@@ -17,6 +17,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- **Live NFR-13 revert-on-partial-failure test** (#439, phase 1 of 2):
+  `tests/integration/test_nfr13_live_revert.py` exercises `approve()`/
+  `reject()`'s Qdrant-revert-on-Postgres-failure branch against a real
+  Postgres connection failure (`session.connection().invalidate()` before
+  `commit()`, not a monkeypatched exception) and a real Qdrant point --
+  closing the "true multi-container live-environment run" gap the existing
+  mock test (`services/ingestion-api/tests/test_curate_nfr13_revert.py`,
+  #77) always documented as out of scope. No fault-injection seam was added
+  to production code: `approve()`/`reject()`/`suspend()` already reach both
+  stores through plain call sites (an injected `Session`, a module-level
+  `get_store()`) a test can point at live infrastructure directly.
+  `e2e.yml`'s `integration` job now also brings up Qdrant (already
+  host-reachable, no compose overlay needed). NFR-11 crash-redelivery, the
+  other #439 slice, remains open as #579.
+
 - `security.yml`'s `helm` job now renders a **matrix of every value combination
   the chart documents** (`vectorBackend: milvus`, each `external` block, bundled
   object store, external reranker, `serviceMonitor`, `ingress`) and
@@ -36,6 +51,24 @@ changed in the running system, with the issue/PR reference for the trail.
   applies to images. Rendering is not installing: nothing here applies manifests
   to a live cluster, so admission control, PVC provisioning, image pulls and
   readiness remain unexercised in CI, and the chart README says so.
+
+### Fixed
+
+- **NFR-13's Qdrant revert silently no-op'd on a real Postgres connection
+  failure** (found by the new live test above, #439): `approve()`/
+  `reject()`/`suspend()`'s except-block revert re-read `doc.id`/
+  `doc.classification` from the ORM object after the failed commit --
+  fine against the mock test's monkeypatched `session.commit`, but a real
+  connection-level failure makes SQLAlchemy expire every attribute on
+  `doc` as part of handling the failed flush, so that re-read raised
+  instead of returning a value, and the revert (along with its own
+  `logger.exception` fallback) never ran. Its chunks stayed `approved`/
+  `rejected`/`pending_review` in Qdrant despite Postgres still recording
+  the prior state -- exactly the two-stores-disagree condition NFR-13
+  exists to prevent, on the specific failure mode (a dropped connection,
+  not a constraint violation) most likely in production. Fixed by
+  capturing the document id and classification into local variables
+  before the commit that might fail, in all three routes.
 
 ## [0.6.0] - 2026-08-07
 
