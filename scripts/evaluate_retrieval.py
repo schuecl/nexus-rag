@@ -346,7 +346,12 @@ _COMPARED_METRICS = ("mean_recall_at_k", "mean_precision_at_k")
 _ADVISORY_METRICS = ("mean_reciprocal_rank", "mean_ndcg_at_k")
 
 
-def compare_to_baseline(current: dict, baseline: dict, tolerance: float = 0.0) -> dict:
+def compare_to_baseline(
+    current: dict,
+    baseline: dict,
+    tolerance: float = 0.0,
+    allow_config_change: bool = False,
+) -> dict:
     """Diff `current`'s headline metrics against `baseline` (FR-30/FR-32).
 
     A metric regresses when it drops more than `tolerance` below the baseline.
@@ -394,6 +399,7 @@ def compare_to_baseline(current: dict, baseline: dict, tolerance: float = 0.0) -
         "tolerance": tolerance,
         "baseline_timestamp": baseline.get("timestamp"),
         "config_mismatch": bool(cur_fp and base_fp and cur_fp != base_fp),
+        "config_change_allowed": bool(allow_config_change),
         "metrics": metrics,
     }
 
@@ -450,6 +456,17 @@ def main() -> None:
         help="allowed drop in a mean metric before it counts as a regression (default 0.0)",
     )
     parser.add_argument(
+        "--allow-config-change",
+        action="store_true",
+        default=False,
+        help="permit a baseline comparison whose config fingerprint differs from this "
+        "run's (issue #525). Without it a mismatch fails closed: the deltas would "
+        "measure the config change as well as any quality change, so a regression "
+        "verdict against such a baseline is not attributable. The override is stamped "
+        "into the comparison as config_change_allowed so a report cannot look like a "
+        "same-config comparison after the fact.",
+    )
+    parser.add_argument(
         "--fail-on-regression",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -502,11 +519,18 @@ def main() -> None:
         baseline_path = latest_prior_report(args.history_dir, exclude=saved)
 
     regressed = False
+    config_blocked = False
     if baseline_path and baseline_path.exists():
         baseline = json.loads(baseline_path.read_text())
-        comparison = compare_to_baseline(report, baseline, args.regression_tolerance)
+        comparison = compare_to_baseline(
+            report,
+            baseline,
+            args.regression_tolerance,
+            allow_config_change=args.allow_config_change,
+        )
         print_comparison(comparison, baseline_path)
         regressed = comparison["regressed"]
+        config_blocked = comparison["config_mismatch"] and not args.allow_config_change
     elif args.baseline:
         print(
             f"\nBaseline {args.baseline} not found -- skipping regression check",
@@ -526,6 +550,21 @@ def main() -> None:
         print(
             "\nFAILED: forbidden (unapproved/rejected/superseded) content leaked into "
             "results -- this is a FR-26 regression, not just a quality miss",
+            file=sys.stderr,
+        )
+        failed = True
+    if config_blocked:
+        # Issue #525: fail closed rather than reporting an unattributable verdict.
+        # A cross-config diff is sometimes exactly what someone wants, which is why
+        # there is an override -- but it has to be asked for, because the alternative
+        # is a green run that silently compared two different systems, or a red one
+        # blamed on quality when a model changed underneath it.
+        print(
+            "\nFAILED: the baseline's config fingerprint differs from this run's, so "
+            "its deltas measure the configuration change as well as any quality change "
+            "(issue #525). Re-run with --allow-config-change to compare anyway (the "
+            "override is stamped into the report), or point --baseline at a report from "
+            "the same configuration.",
             file=sys.stderr,
         )
         failed = True

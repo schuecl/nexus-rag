@@ -42,6 +42,19 @@ changed in the running system, with the issue/PR reference for the trail.
   the first whose `expect` names two documents, so `recall_at_k`/`precision_at_k`
   stop being 0/1-valued and a partial regression (one of two expected documents
   dropping out) reads as 0.5 instead of hiding behind a still-passing 1.0.
+- A cross-configuration baseline comparison in the golden-query harness now
+  **fails closed** instead of merely being annotated (#525). #514 added the
+  config fingerprint (embedding/reranker model, rerank floor, content-type
+  boosts, chunking, golden-set hash, persona) and flagged a mismatch, but the
+  comparison still returned a verdict -- so a nightly could go red for a model
+  swap and read as a quality regression, or go green having compared two
+  different systems. `scripts/evaluate_retrieval.py` now exits non-zero on a
+  fingerprint mismatch with a message naming the cause, and
+  `--allow-config-change` permits the comparison anyway (a cross-config diff is
+  sometimes the actual question) while stamping `config_change_allowed: true`
+  into the comparison, so a report cannot later be mistaken for a same-config
+  one. A baseline predating fingerprints still compares as unknown-config --
+  warned about, not refused -- so trend history already on disk stays usable.
 
 - The golden-query harness (`scripts/evaluate_retrieval.py`) reports advisory
   rank-aware metrics — MRR, nDCG@K, precision@{1,3,5} — alongside the gated

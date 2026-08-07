@@ -466,8 +466,14 @@ run. Promotion to gating metrics is deliberate future work once enough
 persisted baselines exist to know their run-to-run noise. Every persisted
 report now also carries a **config fingerprint** (embedding/reranker model,
 rerank floor, content-type boosts, chunking parameters, golden-set hash,
-persona); a baseline comparison across differing fingerprints still runs but
-is loudly annotated, since its deltas measure the config change too.
+persona). A baseline comparison across differing fingerprints **fails closed**
+(issue #525): its deltas measure the configuration change as well as any quality
+change, so the verdict is not attributable to either. `--allow-config-change`
+permits it anyway — sometimes a cross-config diff is exactly the question — and
+stamps `config_change_allowed: true` into the comparison, so a report can never
+look like a same-config comparison after the fact. A baseline predating
+fingerprints compares as unknown-config: warned about, not refused, so existing
+trend history stays usable.
 
 The golden set itself covers more than clean admin-persona queries (issue
 514): typo and vague/multi-part phrasings (real operators don't type clean

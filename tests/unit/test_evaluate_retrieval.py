@@ -457,3 +457,53 @@ class TestGoldenFilesAreWellFormed:
         # constraint visible here rather than discovered at judge runtime.
         for case in self._load("golden_queries.json"):
             assert case.get("reference_answer", "").strip(), case["id"]
+
+
+class TestConfigFingerprintFailClosed:
+    """Issue #525: a cross-config baseline comparison must fail closed by default,
+    and the override has to be recorded rather than silently applied.
+
+    The distinction that matters: #514/#515 shipped the fingerprint and *annotated*
+    a mismatch while still returning a verdict. An annotated regression is still a
+    regression as far as CI's exit code is concerned, so the nightly could go red
+    for a model swap and read as a quality regression -- or go green comparing two
+    different systems. These tests pin the stricter behaviour.
+    """
+
+    def _report(self, fingerprint: str, recall: float = 1.0) -> dict:
+        return {
+            "mean_recall_at_k": recall,
+            "mean_precision_at_k": 1.0,
+            "fingerprint": fingerprint,
+            "timestamp": "2026-08-06T00:00:00Z",
+        }
+
+    def test_mismatch_is_flagged_and_override_not_recorded_by_default(self):
+        c = evaluate_retrieval.compare_to_baseline(self._report("aaa"), self._report("bbb"))
+        assert c["config_mismatch"] is True
+        assert c["config_change_allowed"] is False
+
+    def test_override_is_stamped_into_the_comparison(self):
+        c = evaluate_retrieval.compare_to_baseline(
+            self._report("aaa"), self._report("bbb"), allow_config_change=True
+        )
+        assert c["config_mismatch"] is True
+        assert c["config_change_allowed"] is True
+
+    def test_same_fingerprint_is_not_a_mismatch(self):
+        c = evaluate_retrieval.compare_to_baseline(self._report("aaa"), self._report("aaa"))
+        assert c["config_mismatch"] is False
+
+    def test_baseline_predating_fingerprints_is_unknown_not_mismatch(self):
+        """Graceful handling of existing history (#525 checklist item 3): a report
+        written before fingerprints existed must not be treated as a mismatch, or
+        wiring this in would invalidate every trend store already on disk."""
+        baseline = {"mean_recall_at_k": 1.0, "mean_precision_at_k": 1.0}
+        c = evaluate_retrieval.compare_to_baseline(self._report("aaa"), baseline)
+        assert c["config_mismatch"] is False
+
+    def test_mismatch_does_not_by_itself_set_regressed(self):
+        """The two verdicts stay independent: a config change is a reason to refuse
+        the comparison, not evidence that quality dropped."""
+        c = evaluate_retrieval.compare_to_baseline(self._report("aaa"), self._report("bbb"))
+        assert c["regressed"] is False
