@@ -75,6 +75,21 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Security
 
+- `h2` bumped `4.4.0` → `4.4.1` (CVE-2026-71554, MEDIUM: duplicate `Host`
+  header could facilitate request smuggling) across the four lockfiles that
+  pin it (`services/common`, `services/ingestion-api`,
+  `services/ingestion-worker`, `services/orchestration-mcp`;
+  `reranker-service` doesn't depend on it). Surfaced issue #555: the
+  `trivy-fs` CI gate (`security.yml`) was failing on this newly-disclosed
+  CVE despite its `severity: HIGH,CRITICAL` filter, because
+  `aquasecurity/trivy-action`'s entrypoint silently drops the `severity`
+  input (`TRIVY_SEVERITY`) whenever SARIF output is requested, unless a
+  second input, `limit-severities-for-sarif`, is also set — so the gate was
+  actually exit-coding on every severity in the repo's dependency tree, not
+  just HIGH/CRITICAL. Added `limit-severities-for-sarif: true` to the
+  `trivy-fs` step to close that gap; without it, any future LOW/MEDIUM
+  finding would have red the gate the same way.
+
 - `scripts/adversarial_injection_probe.py` gained two fixtures (issue #494) —
   `travel-reimbursement-policy.md` (delimiter forgery, #458) and
   `parking-permit-guide.md` (citation hijack, #457) — and live-validated both

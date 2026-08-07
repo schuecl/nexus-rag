@@ -123,10 +123,18 @@ jobs:
       # One scan, two outcomes: trivy writes the SARIF report first, then
       # applies exit-code, so a HIGH/CRITICAL both fails the gate here AND
       # leaves a report for the upload below (which runs on always()).
+      #
+      # limit-severities-for-sarif is required here (issue #555): the
+      # action's entrypoint unsets TRIVY_SEVERITY whenever format=sarif
+      # unless this is set, so `severity: HIGH,CRITICAL` below was silently
+      # ignored -- both the SARIF content AND the exit-code gate ran against
+      # every severity, meaning any newly-disclosed LOW/MEDIUM finding could
+      # red this gate.
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           format: sarif
           output: trivy-fs.sarif
