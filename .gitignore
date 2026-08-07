@@ -36,3 +36,9 @@ docker-compose.override.yml
 # FR-30 retrieval trend store: local runs of scripts/evaluate_retrieval.py
 # --history-dir land here (#429). CI keeps its own copy as a workflow artifact.
 .eval-history/
+
+# Issue #561: MkDocs build output (local `mkdocs build`/`serve` and the
+# GitLab Pages job's --site-dir). The site is always built from source,
+# never committed.
+site/
+public/

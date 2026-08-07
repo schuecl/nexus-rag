@@ -137,6 +137,22 @@ jobs:
           pytest tests -q
           ${{ matrix.cov && format('{0} --cov-branch --cov-fail-under=85 --cov-report=term-missing', matrix.cov) || '' }}
 
+  # Issue #561: the docs site renders the repo's markdown; `mkdocs build
+  # --strict` fails on any unresolved internal link, so a PR cannot land a
+  # doc link the site (GitLab Pages, .gitlab-ci.yml) would 404 on. Same
+  # hash-pinned toolchain as the Pages job -- the check and the deploy
+  # cannot drift.
+  docs-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: pip install --require-hashes -r docs/requirements.txt
+      - run: mkdocs build --strict
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -147,9 +163,9 @@ jobs:
           python-version: "3.11"
       - run: pip install ruff==0.16.0
       - name: ruff check
-        run: ruff check --output-format=github services scripts tests
+        run: ruff check --output-format=github services scripts tests mkdocs_hooks.py
       - name: ruff format --check
-        run: ruff format --check services scripts tests
+        run: ruff format --check services scripts tests mkdocs_hooks.py
 
   types:
     runs-on: ubuntu-latest

@@ -37,6 +37,11 @@ cd services/orchestration-mcp && pytest tests -q --cov=app.reranking
 # Lint and types (matching the CI versions)
 ruff check services scripts tests
 mypy services/common/common
+
+# Docs site (issue #561) -- fails the same way ci.yml's docs-build job does
+# on any unresolved internal link
+pip install --require-hashes -r docs/requirements.txt
+mkdocs build --strict
 ```
 
 For an end-to-end run against the real stack, see
@@ -50,7 +55,8 @@ These run automatically on every PR (see `.github/workflows/`, added in #67):
 - **`ci.yml`** — unit + BDD with an enforced ≥85% line+branch coverage floor
   (scoped per `docs/testing.md`), per-service test suites, `ruff`, `mypy` on
   `services/common` (report-only on the app services), the NFR-16 floating-tag
-  check, and a full `docker compose build`.
+  check, `docs-build` (`mkdocs build --strict` against the hash-pinned
+  `docs/requirements.txt`, issue #561), and a full `docker compose build`.
 - **`security.yml`** — `bandit`, `pip-audit` on the shipped dependency tree,
   `helm lint`/`template`, a Trivy filesystem scan (results uploaded to the
   Security tab), and a `gitleaks` secret scan.

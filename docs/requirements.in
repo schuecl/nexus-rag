@@ -1,0 +1,4 @@
+# Issue #561: docs-site toolchain. Compile with pip-compile --generate-hashes
+# (NFR-16). Generated under Python 3.12 (the workstation ceiling); CI's
+# docs-build job proves the hash set installs under the 3.13 runtime.
+mkdocs-material

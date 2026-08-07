@@ -30,7 +30,7 @@ jobs:
         # exactly right in a test and is all B101 would report. Now that
         # per-service tests live under services/*/tests (issue #113), not
         # excluding them buries real findings under ~170 B101 lines.
-        run: bandit -r services scripts --exclude '*/tests/*'
+        run: bandit -r services scripts mkdocs_hooks.py --exclude '*/tests/*'
 
   pip-audit:
     runs-on: ubuntu-latest

@@ -101,7 +101,11 @@ pieces can use an NVIDIA GPU when one is present:
 - **reranker-service** bakes its torch wheel at build time from
   `TORCH_INDEX_URL` (`.env`). CPU by default; for GPU set it to the matching
   CUDA index (e.g. `https://download.pytorch.org/whl/cu124`) and uncomment the
-  service's `deploy.resources` GPU reservation in `docker-compose.yml`.
+  service's `deploy.resources` GPU reservation in `docker-compose.yml`. The
+  Dockerfile's multi-stage build (#553) copies the CUDA wheel's runtime
+  shared libraries into the shipped image the same way it copies everything
+  else in `site-packages`, but that path is implemented, not validated — no
+  GPU in the dev stack or CI to exercise it against a real CUDA build.
 - **Ollama** uses the GPU automatically once its GPU reservation is uncommented.
 
 Host prerequisites for the GPU path: an NVIDIA driver, the
@@ -1143,8 +1147,16 @@ the docs, not a silent "it works" — flag it if you find one.
   actual collection lifecycle behavior and whether recall holds under the new IDF scope.
   `scripts/golden_queries.json` has not been re-baselined against it either; see
   `docs/testing.md`'s #229 section for what specifically remains. The Milvus backend
-  (#160) explicitly does not implement this split (`common/milvus_store.py`'s module
-  docstring) and keeps its pre-#229 single-collection behavior.
+  (#160) implements the same separation with one partition per classification level
+  (#546): partition-scoped queries/lifecycle, the same correction-move ordering and
+  retry fallbacks as the Qdrant path, and an automatic paged migration of pre-#546
+  rows out of `_default` on the next ingest -- unit-tested against a fake client
+  (`tests/unit/common/test_milvus_partitions.py`) and validated against a live
+  `VECTOR_BACKEND=milvus` compose stack: seeded corpus routed into per-level
+  partitions with `_default` empty, the full golden-query harness passing (recall
+  1.0, zero forbidden leaks, supersession and pending/rejected exclusion), and a
+  live CUI->SECRET correction move with a clean source, corrected target copy, and
+  idempotent retry.
 - **Async ingestion pipeline with real progress states (FR-8), on a durable queue
   (NFR-11)** — `POST /documents` (`ingestion-api`) validates the request synchronously
   (auth, mandatory tagging, FR-7 supersede-target checks), durably stores the original
@@ -1416,7 +1428,9 @@ the docs, not a silent "it works" — flag it if you find one.
   classification ceiling, releasability holdings, cross-org isolation,
   curation status flip, provenance stamp, and chunk deletion all pass; not
   yet exercised by the golden-query e2e (the comparison harness run is the
-  follow-up the issue defines). For local inspection (issue #163), Qdrant
+  follow-up the issue defines). Per-classification partition scoping (#546)
+  landed after that run and was validated live separately -- see the #229 bullet
+  above for what was exercised. For local inspection (issue #163), Qdrant
   keeps its bundled dashboard while the Milvus profile adds the compatible
   Apache-2.0 Attu v2.4.12 UI; neither UI is exposed beyond host loopback.
 - **Distributed tracing across the queue and the retrieval fan-out

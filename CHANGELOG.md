@@ -15,6 +15,8 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-07
+
 ### Added
 
 - **Periodic re-verification of object-store originals against their stored
@@ -73,7 +75,39 @@ changed in the running system, with the issue/PR reference for the trail.
   marked `TBD (organizational)` pending owner decisions tracked in issues
   #519–#524.
 
+- **Scheduled runs for the offline audit-reporting jobs** (#527), closing the
+  gap where `detect_query_anomalies.py` and `calibrate_tagging_advisory.py`
+  were "run on demand or on a schedule" with nothing in the repo actually
+  scheduling either. The dev stack gains a `scheduling` compose profile
+  (hourly detection, weekly calibration, interval-overridable); the Helm
+  chart gains default-off CronJobs backed by a `scripts` image now built,
+  published, and SBOM'd per release in lockstep with the four service images
+  (the version-consistency check grows from 11 to 12 lockstep fields).
+  Calibration also gains a content-free Pushgateway exposition and a
+  `NexusRagTaggingCalibrationStale` alert mirroring the anomaly detector's
+  existing heartbeat pattern.
+
+- A Grafana panel graphing `nexus_rag_below_relevance_floor_total` — raw
+  drop rate plus drops-per-query — in the retrieval dashboard's reranker
+  section (#438), giving the `RERANK_SCORE_FLOOR` calibration a candidate-
+  level visibility signal after a reranker model change.
+
 ### Security
+
+- **Multi-stage Dockerfile build for `reranker-service`** (#553, split off
+  #511/#554 for its `TORCH_INDEX_URL` build-arg complexity): a `builder`
+  stage does the pip installs (including the CPU/CUDA torch wheel), the
+  runtime stage copies in only the resulting `site-packages` + app source —
+  same treatment #511/#554 already gave `ingestion-api`,
+  `ingestion-worker`, and `orchestration-mcp` — so pip/setuptools/wheel and
+  everything vendored inside them (e.g. `pip/_vendor/msgpack`) never land in
+  the shipped image at all. A CUDA torch wheel's runtime shared libraries
+  (bundled in the wheel itself or pulled in as separate `nvidia-*` pip
+  packages) live in `site-packages` too, so they carry over with the same
+  plain `COPY --from=builder`. Validated against the CPU default
+  (`docker compose up --build`, trivy rescan, `eval-retrieval` smoke test);
+  the CUDA path is implemented but unvalidated — no GPU in the dev stack or
+  CI — per this repo's honest-confidence-labeling convention.
 
 - `h2` bumped `4.4.0` → `4.4.1` (CVE-2026-71554, MEDIUM: duplicate `Host`
   header could facilitate request smuggling) across the four lockfiles that

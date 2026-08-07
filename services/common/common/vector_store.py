@@ -34,9 +34,9 @@ classifications resolves to, fusing the per-collection results by rank with
 IDF is relative to a smaller, classification-skewed corpus. `ensure_ready`,
 `update_document_payload`, and `delete_document_chunks` take a `classification`
 argument for the same reason: it selects which collection the operation
-applies to. MilvusStore does not implement the split (see its module
-docstring) -- it accepts the same parameter and ignores it, an explicit,
-recorded "not yet" rather than a silent gap.
+applies to. MilvusStore implements the same separation with one partition per
+classification inside its single collection (issue #546) -- the argument
+selects the partition there, including the correction-move semantics.
 """
 
 from __future__ import annotations
@@ -85,8 +85,8 @@ class VectorStore(Protocol):
     def ensure_ready(self, dense_size: int, classification: str) -> None:
         """Create the collection/schema for `classification` if it doesn't
         exist (idempotent). Issue #229: one collection per classification
-        level for QdrantStore; MilvusStore ignores the argument (see its
-        module docstring)."""
+        level for QdrantStore; one partition per level for MilvusStore
+        (issue #546, see its module docstring)."""
 
     def stored_embedding_model(self) -> str | None:
         """#122 provenance: the embedding model stamped on stored chunks, or

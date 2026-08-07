@@ -1,0 +1,47 @@
+# Issue #561: publish the MkDocs site to GitHub Pages -- OPT-IN, off by
+# default. The primary deploy target is GitLab Pages (.gitlab-ci.yml, the
+# GitLab mirror); this workflow exists so the GitHub repo can serve the same
+# site without any mirror, the day the owner wants it. Enabling is two
+# switches, no code change:
+#   1. Settings -> Pages -> Source: "GitHub Actions"
+#   2. Settings -> Secrets and variables -> Actions -> Variables:
+#        DOCS_PAGES_ENABLED = true
+# Until both are set, the job skips (the `if:` below) rather than failing --
+# a merged-but-unenabled state stays green. Same hash-pinned toolchain and
+# --strict link gate as ci.yml's docs-build check and the GitLab pages job,
+# so all three builds are byte-equivalent.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: vars.DOCS_PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: pip install --require-hashes -r docs/requirements.txt
+      - run: mkdocs build --strict
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

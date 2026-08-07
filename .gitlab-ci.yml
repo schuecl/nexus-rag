@@ -1,0 +1,21 @@
+# Issue #561: GitLab Pages deployment for the MkDocs documentation site.
+# This file exists for the GitLab mirror of the GitHub repository -- GitHub
+# Actions ignores it; GitLab CI runs only this. The same pinned toolchain
+# (docs/requirements.txt, NFR-16 hash-pinned) that ci.yml's docs-build check
+# verifies on every PR builds the published site here, so the two can't
+# drift. --strict makes any unresolved internal link a failed deploy rather
+# than a silently broken page.
+#
+# python:3.13-slim matches the service Dockerfiles' base (#455 bump) and the
+# repo's pinning convention (version tag, no floating :latest -- NFR-16 as
+# enforced by scripts/check_pinned_images.py); bump alongside them.
+pages:
+  image: python:3.13-slim
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - pip install --no-cache-dir --require-hashes -r docs/requirements.txt
+    - mkdocs build --strict --site-dir public
+  artifacts:
+    paths:
+      - public

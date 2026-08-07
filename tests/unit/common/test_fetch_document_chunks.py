@@ -99,12 +99,18 @@ class TestQdrantStoreAdapterDelegates:
 
 
 class FakeMilvusClient:
+    # #546: the store is partition-aware; the fake reports every partition as
+    # existing and records the scoping so the test below can assert it.
     def __init__(self, rows):
         self._rows = rows
         self.query_calls = []
 
-    def query(self, *, collection_name, filter, output_fields, limit):
-        self.query_calls.append((collection_name, filter, output_fields, limit))
+    def has_partition(self, collection_name, partition_name):
+        del collection_name, partition_name
+        return True
+
+    def query(self, *, collection_name, filter, output_fields, limit, partition_names=None):
+        self.query_calls.append((collection_name, filter, output_fields, limit, partition_names))
         return self._rows
 
 
@@ -118,12 +124,12 @@ class TestMilvusStoreFetchDocumentChunks:
         )
         monkeypatch.setattr(milvus_store, "_client", lambda: client)
 
-        # classification is unused for Milvus (#229 not implemented there) --
-        # passing an arbitrary value must not affect the query.
+        # #546: classification selects the partition the lookup is scoped to.
         chunks = milvus_store.MilvusStore().fetch_document_chunks("doc-1", "CUI")
 
         assert [c["chunk_index"] for c in chunks] == [1, 3]
         assert client.query_calls[0][0] == milvus_store.MILVUS_COLLECTION
+        assert client.query_calls[0][4] == ["cls_cui"]
 
     def test_no_rows_returns_empty_list(self, monkeypatch):
         monkeypatch.setattr(milvus_store, "_client", lambda: FakeMilvusClient(rows=[]))

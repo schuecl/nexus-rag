@@ -1,0 +1,135 @@
+# Documentation site (issue #561). Renders the repo's canonical markdown in
+# place -- no doc content is duplicated or moved. mkdocs_hooks.py injects the
+# root-level docs (ARCHITECTURE.md, REQUIREMENTS.md, ...) into their stub
+# pages at build time and rewrites the link classes that would otherwise
+# break under docs_dir=docs (see the hook's docstring). Build with:
+#   pip install --require-hashes -r docs/requirements.txt
+#   mkdocs build --strict
+# --strict is the link gate: any unresolved internal link fails the build.
+site_name: Nexus RAG
+site_description: >-
+  Air-gapped RAG pipeline for MPNexus: classification-aware ingestion,
+  curation, and claims-filtered retrieval.
+# Placeholder until the GitLab mirror exists (issue #561) -- one-line change
+# when the namespace is known. GitLab Pages serves from the mirror's `pages`
+# job in .gitlab-ci.yml; use_directory_urls keeps every internal link
+# relative, so the site works under any prefix (and file://, for the
+# air-gap bundle follow-up).
+site_url: https://allamiro.gitlab.io/nexus-rag/
+repo_url: https://github.com/schuecl/nexus-rag
+repo_name: schuecl/nexus-rag
+# The repo markdown is the source of truth; an edit pencil pointing at
+# generated stub pages would invite edits in the wrong place.
+edit_uri: ""
+
+docs_dir: docs
+
+hooks:
+  - mkdocs_hooks.py
+
+theme:
+  name: material
+  icon:
+    logo: material/database-search
+  # `font: false` stops Material from injecting a Google Fonts <link> --
+  # without it every page load reaches out to fonts.googleapis.com, which
+  # contradicts the "fully offline" claim (mermaid vendored, no CDN) and
+  # would silently degrade in the air-gapped bundle this is meant to ride
+  # in eventually. Falls back to the system font stack.
+  font: false
+  # `slate` is Material's dark scheme; docs/assets/dracula.css overrides its
+  # CSS variables with the Dracula palette (draculatheme.com/contribute) --
+  # this keeps every Material component styled without maintaining a theme.
+  palette:
+    scheme: slate
+    primary: deep purple
+    accent: pink
+  features:
+    - navigation.tabs
+    - navigation.footer
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+extra_css:
+  - assets/dracula.css
+
+# Vendored, not CDN (issue #561: the built site must work fully offline for
+# the air-gap release-bundle follow-up). mermaid@11.4.1 dist/mermaid.min.js
+# from jsdelivr, pinned by version in the path it was fetched from (NFR-16
+# spirit; the file is committed, so the pin is the bytes themselves).
+extra_javascript:
+  - assets/js/mermaid.min.js
+  - assets/js/mermaid-init.js
+  - assets/js/lightbox.js
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+nav:
+  - "🚀 Get Started":
+      - Home: index.md
+      - Quickstart: guides/quickstart.md
+      - Quickstart on Kubernetes: guides/quickstart-helm.md
+      - Understanding the architecture: guides/understanding-the-architecture.md
+      - Connect the chat plane: guides/connect-chat.md
+  - "🚢 Production Deployment":
+      - Docker Compose: guides/deploy-compose.md
+      - Helm / Kubernetes: guides/deploy-helm.md
+      - Air-gapped: guides/deploy-airgapped.md
+      - Identity & OIDC: guides/identity-oidc.md
+  - "🛠️ How-to Guides":
+      - Configuration by use case: guides/configuration.md
+      - Troubleshooting: guides/troubleshooting.md
+      - Evaluation & performance: evaluation-results.md
+  - "🛡️ Security & Compliance":
+      - Security policy: security.md
+      - NIST AI RMF:
+          - Overview: nist-ai-rmf/README.md
+          - RMF mapping: nist-ai-rmf/rmf-mapping.md
+          - Governance policy: nist-ai-rmf/governance-policy.md
+          - Impact assessment: nist-ai-rmf/impact-assessment.md
+          - Risk register: nist-ai-rmf/risk-register.md
+          - AI system inventory: nist-ai-rmf/ai-system-inventory.md
+          - Evidence index: nist-ai-rmf/evidence/evidence-index.md
+          - Waiver register: nist-ai-rmf/evidence/waiver-register.md
+  - "📖 Reference":
+      - Engineering docs (verbatim):
+          - Architecture: architecture-overview.md
+          - Architecture diagrams: architecture/diagrams.md
+          - Requirements: requirements.md
+          - Data governance: governance.md
+          - Privacy threat model: threat-model.md
+          - Roles and permissions: roles-and-permissions.md
+          - Dev environment setup: dev-setup.md
+          - Querying the corpus: querying-the-corpus.md
+          - Testing & CI quality gates: testing.md
+          - Observability: observability.md
+          - Releasing: releasing.md
+          - Credential rotation: credential-rotation.md
+          - Chat-plane purge runbook: chat-plane-purge.md
+          - SIEM detection runbook: siem-detection-runbook.md
+      - Changelog: changelog.md
+      - Contributing: contributing.md

@@ -510,7 +510,7 @@ rerankerService:
     # is backed by a real image: release.yml publishes it on every vX.Y.Z
     # tag, and the release PR bumps this together with appVersion --
     # scripts/check_version_consistency.py fails CI if they disagree.
-    tag: "0.5.0"
+    tag: "0.6.0"
   # Also the model name sent to an external endpoint in "cohere" mode's
   # request body (vLLM/Cohere-style rerank requires it); unused in "tei"
   # mode, which doesn't take a model field.
@@ -561,7 +561,7 @@ ingestionApi:
     repository: ingestion-api
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.5.0"
+    tag: "0.6.0"
   replicas: 2
   # FR-9/NFR-7: upload size guard in bytes.
   maxUploadBytes: 52428800
@@ -652,7 +652,7 @@ orchestrationMcp:
     repository: orchestration-mcp
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.5.0"
+    tag: "0.6.0"
   replicas: 2
   service:
     type: ClusterIP
@@ -711,7 +711,7 @@ ingestionWorker:
     repository: ingestion-worker
     # NFR-16: see rerankerService.image.tag's comment -- published by
     # release.yml, kept in lockstep by check_version_consistency.py (#295).
-    tag: "0.5.0"
+    tag: "0.6.0"
   replicas: 2
   # FR-4: chunking target size (words) and overlap ratio -- Section 2's
   # starting point.
@@ -857,7 +857,7 @@ networkPolicy:
 auditReporting:
   image:
     repository: scripts
-    tag: "0.5.0"
+    tag: "0.6.0"
   # Pre-created Secret (same existingSecret pattern as externalPostgres) whose
   # key below holds the audit-reporting role's DSN
   # (postgresql://nexus_rag_audit_reporting:...@<host>:5432/nexus_rag),

@@ -132,21 +132,28 @@ class TestQdrantStoreAdapterDelegates:
 
 
 class FakeMilvusClient:
+    # #546: the store is partition-aware now; these tests only assert the
+    # replace/sweep behavior, so the fake accepts (and ignores) the partition
+    # arguments and reports every partition as existing.
     def __init__(self, rows):
         self._rows = rows
         self.upsert_calls: list = []
         self.delete_calls: list = []
 
-    def upsert(self, *, collection_name, data):
-        del collection_name
+    def has_partition(self, collection_name, partition_name):
+        del collection_name, partition_name
+        return True
+
+    def upsert(self, *, collection_name, data, partition_name=None):
+        del collection_name, partition_name
         self.upsert_calls.append(data)
 
-    def query(self, *, collection_name, filter, output_fields, limit):
-        del collection_name, filter, output_fields, limit
+    def query(self, *, collection_name, filter, output_fields, limit, partition_names=None):
+        del collection_name, filter, output_fields, limit, partition_names
         return self._rows
 
-    def delete(self, *, collection_name, filter):
-        del collection_name
+    def delete(self, *, collection_name, filter, partition_name=None):
+        del collection_name, partition_name
         self.delete_calls.append(filter)
 
 

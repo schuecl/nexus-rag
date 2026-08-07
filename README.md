@@ -145,6 +145,9 @@ nexus-rag/
 
 ## Documentation
 
+All of the below is also published as a searchable MkDocs site — build it locally with
+`pip install --require-hashes -r docs/requirements.txt && mkdocs serve` (issue #561).
+
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — scope, functional/non-functional requirements, open questions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — component diagram, data model, per-flow sequences
 - **[docs/architecture/diagrams.md](docs/architecture/diagrams.md)** — Mermaid diagrams of the full system: every application, both data pipelines, the tagging model, lifecycle, and Helm topology (#129)

@@ -1,0 +1,133 @@
+/* Issue #561: Dracula palette (draculatheme.com/contribute) laid over
+ * mkdocs-material's `slate` scheme. Overriding slate's CSS variables keeps
+ * every Material component (search, admonitions, tabs, cards, code copy)
+ * styled without maintaining a theme fork.
+ *
+ * Palette: background #282a36 · current-line #44475a · foreground #f8f8f2
+ * comment #6272a4 · cyan #8be9fd · green #50fa7b · orange #ffb86c
+ * pink #ff79c6 · purple #bd93f9 · red #ff5555 · yellow #f1fa8c */
+
+[data-md-color-scheme="slate"] {
+  /* surfaces & text */
+  --md-default-bg-color: #282a36;
+  --md-default-fg-color: #f8f8f2;
+  --md-default-fg-color--light: #d8d8d2;
+  --md-default-fg-color--lighter: #6272a4;
+  --md-default-fg-color--lightest: #44475a;
+  --md-typeset-color: #f8f8f2;
+
+  /* links & accents */
+  --md-typeset-a-color: #8be9fd;
+  --md-accent-fg-color: #ff79c6;
+  --md-primary-fg-color: #bd93f9;
+  --md-primary-fg-color--light: #d6bcfa;
+  --md-primary-fg-color--dark: #191a21;
+
+  /* code */
+  --md-code-bg-color: #343746;
+  --md-code-fg-color: #f8f8f2;
+  --md-code-hl-color: #44475a;
+  --md-code-hl-keyword-color: #ff79c6;
+  --md-code-hl-string-color: #f1fa8c;
+  --md-code-hl-number-color: #bd93f9;
+  --md-code-hl-function-color: #50fa7b;
+  --md-code-hl-name-color: #f8f8f2;
+  --md-code-hl-constant-color: #ffb86c;
+  --md-code-hl-comment-color: #6272a4;
+  --md-code-hl-operator-color: #ff79c6;
+  --md-code-hl-punctuation-color: #f8f8f2;
+  --md-code-hl-special-color: #ff5555;
+  --md-code-hl-variable-color: #f8f8f2;
+  --md-code-hl-generic-color: #ffb86c;
+
+  /* admonitions / misc */
+  --md-admonition-fg-color: #f8f8f2;
+  --md-admonition-bg-color: #343746;
+  --md-warning-fg-color: #282a36;
+  --md-warning-bg-color: #f1fa8c;
+  --md-footer-bg-color: #191a21;
+  --md-footer-bg-color--dark: #191a21;
+  --md-footer-fg-color: #f8f8f2;
+  --md-footer-fg-color--light: #6272a4;
+  --md-shadow-z1: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.2);
+  --md-shadow-z2: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.35);
+  --md-shadow-z3: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.5);
+}
+
+/* Header and nav-tab bar in Dracula's darker shade so the purple primary is
+ * an accent, not a wall (matches the reference screenshots' dark chrome). */
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: #191a21;
+  color: #f8f8f2;
+}
+
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: #343746;
+}
+[data-md-color-scheme="slate"] .md-search__form:hover {
+  background-color: #44475a;
+}
+
+/* Landing grid cards (docs/index.md) */
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li,
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > :is(p, div) {
+  border-color: #44475a;
+}
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li:hover {
+  border-color: #bd93f9;
+  box-shadow: 0 0 0.4rem rgba(189, 147, 249, 0.35);
+}
+
+/* ASCII diagrams (evaluation-results page) stay readable at small sizes */
+.md-typeset pre > code {
+  font-size: 0.68rem;
+}
+
+/* Click-to-enlarge lightbox (assets/js/lightbox.js) */
+.nx-zoomable {
+  cursor: zoom-in;
+}
+.nx-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 21, 28, 0.94);
+  cursor: zoom-out;
+  padding: 2vh 2vw;
+}
+.nx-lightbox img {
+  max-width: 96vw;
+  max-height: 94vh;
+  width: auto;
+  height: auto;
+  box-shadow: 0 0 2rem rgba(0, 0, 0, 0.8);
+  border-radius: 0.2rem;
+}
+.nx-lightbox svg {
+  background: #282a36;
+  border-radius: 0.2rem;
+  box-shadow: 0 0 2rem rgba(0, 0, 0, 0.8);
+}
+
+/* Fullscreen state for mermaid diagrams (lightbox.js toggles .nx-open) */
+div.mermaid.nx-open {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 21, 28, 0.96);
+  cursor: zoom-out;
+  padding: 2vh 2vw;
+}
+div.mermaid.nx-open svg {
+  width: 96vw !important;
+  height: 92vh !important;
+  max-width: none !important;
+}

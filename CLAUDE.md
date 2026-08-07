@@ -98,13 +98,20 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest tests/integration -v
 
 ### Lint / types / security
 ```bash
-ruff check services scripts tests       # lint gate (line-length 100)
-ruff format --check services scripts tests  # format gate (issue #80)
+ruff check services scripts tests mkdocs_hooks.py       # lint gate (line-length 100)
+ruff format --check services scripts tests mkdocs_hooks.py  # format gate (issue #80)
 mypy services/common/common             # type gate -- enforced across services/common and
                                          # all four app services (see ci.yml's `types` job)
 python scripts/check_pinned_images.py   # NFR-16: no floating/`:latest` image or model tags
-bandit -r services scripts --exclude '*/tests/*'
+bandit -r services scripts mkdocs_hooks.py --exclude '*/tests/*'
 helm lint helm/nexus-rag
+```
+
+### Docs site (issue #561)
+```bash
+pip install --require-hashes -r docs/requirements.txt
+mkdocs build --strict   # same check as ci.yml's docs-build job and the GitLab Pages job
+mkdocs serve            # live preview at http://127.0.0.1:8000
 ```
 
 ### Run the dev stack
