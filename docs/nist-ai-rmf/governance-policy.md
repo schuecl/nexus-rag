@@ -131,7 +131,7 @@ must not) rather than statistical:
 | Retrieval-quality regression | **Bounded**: within `--regression-tolerance` of the carried baseline; a drop beyond it blocks | `evaluate_retrieval.py` fail-closed defaults; nightly trend store (#493); cross-config comparisons refuse by default (issue #525) |
 | Judged answer-quality metrics | **Advisory**: comparative only, same judge/prompt/golden-set; never a release blocker | `relative_only_same_judge_and_prompt` stamped in every report |
 | Hallucination / ungrounded answer surface | **Bounded by design**: the system returns evidence with citations, not answers (§4); abstention noise is measured (`mean_abstention_noise`) and tracked toward zero via relevance-floor calibration | Golden abstention cases; §4 prohibited-use rules for consumers |
-| Availability/latency | Undefined until the NFR-4 budget is ratified from the benchmark measurements (issue #430) | Provisional 5s p95 alert; `benchmark_latency.py` artifacts are the evidence base |
+| Availability/latency | Retrieval+rerank: **declared**, p95 1s warning / 2.5s critical, derived from measured dev-stack benchmarks (issue #430). Full end-to-end incl. generation: still undefined — issue #573 | `NexusRagHighQueryLatency`/`NexusRagHighQueryLatencyCritical`; `benchmark_latency.py` artifacts are the evidence base |
 
 ### 3.2 Release-acceptance criteria (MANAGE 1.1)
 

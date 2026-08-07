@@ -624,12 +624,17 @@ continuous CPU profiles once `PYROSCOPE_SERVER_ADDRESS` is set (#349),
 correlated to Tempo traces via the shared `service.name`/`service_name`
 convention.
 
-Still open: NFR-4's end-to-end latency budget remains an open question in
-REQUIREMENTS.md, so the retrieval alert rule's 5 s p95 threshold is a provisional
-stand-in rather than an agreed target — the instrumentation to answer it with data
-now exists, the number to compare against does not. Continuous profiling (#349)
-sharpens "which stage" beyond what per-stage span durations already show, but
-is not needed to answer NFR-4 itself.
+Resolved for retrieval+rerank (issue #430): `NexusRagHighQueryLatency`/
+`NexusRagHighQueryLatencyCritical` now alert on p95 >1s/>2.5s against
+`nexus_rag_query_stage_seconds{stage="total"}` (embed/retrieve/rerank —
+orchestration-mcp's own span), derived from a measured dev-stack baseline
+rather than a guess. Still open: the *full end-to-end* budget in NFR-4
+(retrieval + rerank + generation) remains an open question in
+REQUIREMENTS.md — generation happens in Ollama/LiteLLM, outside this
+span, and needs both new instrumentation and a product decision on
+tolerable answer wait time (tracked as issue #573). Continuous
+profiling (#349) sharpens "which stage" beyond what per-stage span
+durations already show, but doesn't help answer that remaining gap.
 
 See `docs/dev-setup.md`'s "What's stubbed vs working" for the current, authoritative list
 (kept there rather than duplicated here, since it changes as work lands). §4.1's NATS-based

@@ -65,6 +65,15 @@ groups:
 
   - name: nexus-rag-retrieval
     rules:
+      # NFR-4 (issue #430): scoped to the retrieval+rerank leg only --
+      # nexus_rag_query_stage_seconds{stage="total"} is orchestration-mcp's
+      # own span and stops before generation (Ollama/LiteLLM), which this
+      # repo does not instrument. Thresholds are ~4-10x the p95 observed on
+      # a fresh, CPU-only dev-stack run (250ms) against the seeded 7-doc
+      # corpus, 2026-08-07 -- headroom for a production-scale corpus on
+      # GPU, not a copy of the dev number. Full end-to-end (incl.
+      # generation) remains an open product decision, tracked separately
+      # (generation-latency instrumentation follow-up to #430).
       - alert: NexusRagHighQueryLatency
         expr: |
           histogram_quantile(
@@ -72,13 +81,28 @@ groups:
             sum by (le) (
               rate(nexus_rag_query_stage_seconds_bucket{stage="total"}[10m])
             )
-          ) > 5
+          ) > 1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "RAG query p95 latency is above five seconds"
-          description: "The retrieval and reranking path has exceeded the provisional operational threshold."
+          summary: "RAG retrieval+rerank p95 latency is above one second"
+          description: "The rag_search retrieval-and-reranking path (embed/retrieve/rerank; excludes generation) has exceeded its warning threshold."
+
+      - alert: NexusRagHighQueryLatencyCritical
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(nexus_rag_query_stage_seconds_bucket{stage="total"}[10m])
+            )
+          ) > 2.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RAG retrieval+rerank p95 latency is above 2.5 seconds"
+          description: "The rag_search retrieval-and-reranking path (embed/retrieve/rerank; excludes generation) has exceeded its critical threshold."
 
       - alert: NexusRagRerankerFallbackHigh
         expr: |

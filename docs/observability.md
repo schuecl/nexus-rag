@@ -436,8 +436,8 @@ observability release's Pushgateway Service.
 - **ingestion** — `NexusRagQueuePublishFailure`,
   `NexusRagUnpublishedDocumentStale`, `NexusRagWorkerTransientFailures`,
   `NexusRagWorkerDeliveryExhausted`
-- **retrieval** — `NexusRagHighQueryLatency`, `NexusRagRerankerFallbackHigh`,
-  `NexusRagQueryDeniedSpike`
+- **retrieval** — `NexusRagHighQueryLatency`, `NexusRagHighQueryLatencyCritical`,
+  `NexusRagRerankerFallbackHigh`, `NexusRagQueryDeniedSpike`
 - **security** — `NexusRagQueryAnomalyDetected`,
   `NexusRagQueryAnomalyDetectionStale`, `NexusRagTaggingCalibrationStale`
   (issues #426/#527: fed by `scripts/detect_query_anomalies.py` and
@@ -463,9 +463,13 @@ staleness alerts assume those default cadences; both fire only after a first
 run has published -- a deployment that never enables the jobs sees no series
 and no alert, which is why they stay opt-in rather than silently required.
 
-`NexusRagHighQueryLatency`'s 5 s p95 threshold is a **provisional** number:
-NFR-4's latency budget is still an open question in REQUIREMENTS.md, so this is
-a stand-in, not an agreed target.
+`NexusRagHighQueryLatency`/`NexusRagHighQueryLatencyCritical` alert on p95
+>1s / >2.5s against the retrieval+rerank leg only (`stage="total"` =
+embed/retrieve/rerank, orchestration-mcp's own span) — an agreed target
+(issue #430), derived from a measured dev-stack baseline rather than a
+guess. NFR-4's *full end-to-end* budget (including generation, which
+happens in Ollama/LiteLLM outside this span) is still an open question in
+REQUIREMENTS.md, tracked as issue #573.
 
 The default Alertmanager receiver is a no-op (`local-ui`) in both Compose and the
 chart. Alerts are visible in Alertmanager and Grafana and page nobody. Replace it

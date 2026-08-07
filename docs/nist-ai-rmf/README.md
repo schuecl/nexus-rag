@@ -67,7 +67,7 @@ date) is what closes it.
 | 3 | Retention periods; audit expiry yes/no; filename minimization | [governance-policy.md](governance-policy.md) §8 | Issue #520 |
 | 4 | Incident response: receiver, response ladder, taxonomy ratification | [governance-policy.md](governance-policy.md) §7 | Issue #522 |
 | 5 | Identity-governance mapping; classified-gate owners | [rmf-mapping.md](rmf-mapping.md) GOVERN 1.1 | Issue #523 |
-| 6 | NFR-4 latency budget | [rmf-mapping.md](rmf-mapping.md) MAP 1.6 | Issue #430 |
+| 6 | NFR-4 full end-to-end latency budget (generation leg) | [rmf-mapping.md](rmf-mapping.md) MAP 1.6 | Issue #573 (retrieval+rerank half resolved, #430) |
 | 7 | Golden-query gate: formal acceptance or required-via-path-filter | [risk-register.md](risk-register.md) R-6 | Issue #529 |
 | 8 | qwen2.5 dev/judge defaults vs constraint C2: record exception or swap | [ai-system-inventory.md](ai-system-inventory.md) A1 | — |
 | 9 | Milvus maintainer-of-record vs C2 before production use of that backend | [ai-system-inventory.md](ai-system-inventory.md) A3 | — |
