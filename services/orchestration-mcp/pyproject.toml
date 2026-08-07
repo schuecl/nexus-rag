@@ -1,6 +1,6 @@
 [project]
 name = "orchestration-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "Claims-filtered retrieval MCP server exposed to LibreChat (FR-24..FR-29)"
 requires-python = ">=3.11"
 dependencies = [

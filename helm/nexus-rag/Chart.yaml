@@ -9,5 +9,5 @@ description: >-
   (generation), and Postgres are assumed to already exist in the cluster and
   are integrated via configuration, not deployed by this chart.
 type: application
-version: 0.5.0
-appVersion: "0.5.0"
+version: 0.6.0
+appVersion: "0.6.0"
