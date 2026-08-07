@@ -947,6 +947,88 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 78,
+      "type": "timeseries",
+      "title": "Relevance-floor candidate drops (#394)",
+      "description": "Candidates dropped because their (boosted) cross-encoder score fell below RERANK_SCORE_FLOOR. The per-query series is the tuning signal after a reranker model change (raw logit scales differ per model, per the #415 caveat in .env.example/values.yaml): a jump means the floor is now cutting into normal traffic; sustained zero with a floor set means it does nothing. Queries emptied entirely by the floor surface separately as outcome=\"empty\" in the throughput panel.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(nexus_rag_below_relevance_floor_total[5m]))",
+          "legendFormat": "candidates dropped / s",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(nexus_rag_below_relevance_floor_total[30m])) / clamp_min(sum(rate(nexus_rag_queries_total[30m])), 0.0001)",
+          "legendFormat": "dropped per query (30m)",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "pointSize": 8,
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ],
   "refresh": "30s",

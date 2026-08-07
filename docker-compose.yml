@@ -1497,6 +1497,36 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Issue #514 item 4 / NFR-4: per-stage latency benchmark. Same image, same
+  # eval profile, run on demand after the stack is seeded:
+  #   docker compose --profile eval run --rm benchmark-latency
+  # End-to-end timings are measured client-side; per-stage figures come from
+  # the operator-side /metrics histograms, never from response bodies (#127).
+  benchmark-latency:
+    profiles: ["eval"]
+    security_opt: ["no-new-privileges:true"]
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["python3", "benchmark_latency.py"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      ORCHESTRATION_MCP_URL: http://orchestration-mcp:8002
+      RAG_APP_KEYCLOAK_CLIENT_SECRET: ${RAG_APP_KEYCLOAK_CLIENT_SECRET:-dev-rag-app-secret}
+      # Same fingerprint mirrors as eval-retrieval above, so latency and
+      # quality reports identify the same configuration.
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      CONTENT_TYPE_BOOSTS: ${CONTENT_TYPE_BOOSTS:-}
+      RERANK_SCORE_FLOOR: ${RERANK_SCORE_FLOOR:-}
+      CHUNK_TARGET_WORDS: ${CHUNK_TARGET_WORDS:-512}
+      CHUNK_OVERLAP_RATIO: ${CHUNK_OVERLAP_RATIO:-0.15}
+    depends_on:
+      orchestration-mcp:
+        condition: service_healthy
+      seed-sample-data:
+        condition: service_completed_successfully
+    restart: "no"
+
   # Issue #309 (Phase 4 of #138): not started by a plain `docker compose up`
   # either -- run on demand or on a schedule with `docker compose --profile
   # calibration run --rm calibrate-tagging-advisory`, per FR-32's

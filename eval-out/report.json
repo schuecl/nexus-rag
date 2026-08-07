@@ -1,0 +1,397 @@
+{
+  "timestamp": "2026-08-06T10:29:13.915732+00:00",
+  "persona": "dave-admin",
+  "config": {
+    "EMBEDDING_MODEL": null,
+    "RERANKER_MODEL": null,
+    "RERANK_SCORE_FLOOR": null,
+    "CONTENT_TYPE_BOOSTS": null,
+    "CHUNK_TARGET_WORDS": null,
+    "CHUNK_OVERLAP_RATIO": null,
+    "golden_set_sha256": "aa0b98556b7615cc239fd901885a478e7a609e0240966362b61903a97f8e9f15",
+    "persona": "dave-admin"
+  },
+  "fingerprint": "be0c106a29f0 (CI run 31093066661)",
+  "mean_recall_at_k": 1.0,
+  "mean_precision_at_k": 0.31666666666666665,
+  "mean_reciprocal_rank": 1.0,
+  "mean_ndcg_at_k": 1.0,
+  "mean_abstention_noise": 3.6,
+  "total_forbidden_leaks": 0,
+  "queries": [
+    {
+      "query": "how often should passwords be rotated",
+      "persona": "dave-admin",
+      "returned": [
+        "password-policy.md",
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "password-policy.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": null
+    },
+    {
+      "query": "cafeteria closed for renovations",
+      "persona": "dave-admin",
+      "returned": [
+        "public-notice.md",
+        "network-access-sop-v2.md",
+        "incident-response-plan.md",
+        "password-policy.md"
+      ],
+      "expect": [
+        "public-notice.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": null
+    },
+    {
+      "query": "VPN access hardware token requirements",
+      "persona": "dave-admin",
+      "returned": [
+        "network-access-sop-v2.md",
+        "incident-response-plan.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "network-access-sop-v2.md"
+      ],
+      "forbid": [
+        "network-access-sop-v1.md"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "v1 was superseded by v2 (FR-7) -- only the current version should ever be found"
+    },
+    {
+      "query": "network intrusion notification procedure",
+      "persona": "dave-admin",
+      "returned": [
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "incident-response-plan.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": null
+    },
+    {
+      "query": "how frequently do login credentials need changing",
+      "persona": "dave-admin",
+      "returned": [
+        "password-policy.md",
+        "incident-response-plan.md"
+      ],
+      "expect": [
+        "password-policy.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.5,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#397: paraphrase query sharing no content word with any corpus document, so the BM25 leg scores nothing and the dense leg alone must rank the target into the top 2 -- this is the headroom that detects a dense-leg regression"
+    },
+    {
+      "query": "who should be alerted when a cyberattack is discovered and how quickly",
+      "persona": "dave-admin",
+      "returned": [
+        "incident-response-plan.md",
+        "password-policy.md"
+      ],
+      "expect": [
+        "incident-response-plan.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.5,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#397: paraphrase query with no content-word overlap (alerted/cyberattack/discovered vs notified/intrusion/detection) -- dense leg must carry it"
+    },
+    {
+      "query": "TDY travel reimbursement procedures",
+      "persona": "dave-admin",
+      "returned": [
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [],
+      "forbid": [
+        "draft-travel-policy.md"
+      ],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": null,
+      "ndcg_at_k": null,
+      "precision_at": {},
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "pending_review and never approved -- must not be retrievable (FR-11/FR-26) regardless of clearance"
+    },
+    {
+      "query": "deprecated VPN client setup guide",
+      "persona": "dave-admin",
+      "returned": [
+        "network-access-sop-v2.md",
+        "incident-response-plan.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [],
+      "forbid": [
+        "outdated-vpn-guide.md"
+      ],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": null,
+      "ndcg_at_k": null,
+      "precision_at": {},
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "rejected -- must not be retrievable (FR-11/FR-26) regardless of clearance"
+    },
+    {
+      "query": "how offen shoud a pasword be roated",
+      "persona": "dave-admin",
+      "returned": [
+        "password-policy.md",
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "password-policy.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: real operators typo -- BM25 scores little for misspelled terms, so the dense leg must carry this. Saturates in the 7-doc dev corpus at top_k=5; its recall signal grows with corpus size, its rank metrics matter now"
+    },
+    {
+      "query": "what do I need to do first if I think my workstation got compromised and who do I tell about it",
+      "persona": "dave-admin",
+      "returned": [
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "incident-response-plan.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.25,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: vague, multi-part, conversational phrasing with almost no content-word overlap -- how real users actually ask"
+    },
+    {
+      "query": "chocolate cake recipe and baking temperature",
+      "persona": "dave-admin",
+      "returned": [
+        "incident-response-plan.md",
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [],
+      "forbid": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": null,
+      "ndcg_at_k": null,
+      "precision_at": {},
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: nothing relevant exists in the corpus at all (unlike the forbid abstentions, where an unapproved near-match exists) -- measures abstention noise: what the pipeline returns when it should return nothing"
+    },
+    {
+      "query": "how often should passwords be rotated",
+      "persona": "bob-query",
+      "returned": [
+        "password-policy.md",
+        "network-access-sop-v2.md",
+        "public-notice.md"
+      ],
+      "expect": [
+        "password-policy.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.3333333333333333,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: same query as password-rotation but as the plain rag-query persona (SECRET, FVEY+NATO, USAREUR-AF) -- retrieval quality and the FR-26 leak check must hold under a non-admin claims set, not just dave-admin's"
+    },
+    {
+      "query": "cafeteria closed for renovations",
+      "persona": "bob-query",
+      "returned": [
+        "public-notice.md",
+        "network-access-sop-v2.md",
+        "password-policy.md"
+      ],
+      "expect": [
+        "public-notice.md"
+      ],
+      "forbid": [],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.3333333333333333,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "ndcg_at_k": 1.0,
+      "precision_at": {
+        "1": 1.0,
+        "3": 0.3333333333333333,
+        "5": 0.2
+      },
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: NO_RELEASABILITY_RESTRICTION + ALL_AUTHENTICATED document must be visible to every query-capable persona"
+    },
+    {
+      "query": "network intrusion notification procedure",
+      "persona": "bob-query",
+      "returned": [
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [],
+      "forbid": [
+        "incident-response-plan.md"
+      ],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": null,
+      "ndcg_at_k": null,
+      "precision_at": {},
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: incident-response-plan.md is access_scope Signal-Corps; bob-query holds the SECRET clearance and NATO+FVEY releasability it needs but is only in USAREUR-AF, so the access-scope leg of the claims filter is the one excluding it. Its appearance here surfaces as content_overlap (informational, #226 filename caveat); the hard FR-26 status check still runs on whatever does come back"
+    },
+    {
+      "query": "network intrusion notification procedure",
+      "persona": "carol-curator",
+      "returned": [
+        "network-access-sop-v2.md",
+        "password-policy.md",
+        "public-notice.md"
+      ],
+      "expect": [],
+      "forbid": [
+        "incident-response-plan.md"
+      ],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": null,
+      "ndcg_at_k": null,
+      "precision_at": {},
+      "unapproved_leaks": [],
+      "content_overlap": [],
+      "note": "#514: carol-curator has the identical clearance/releasability/groups as bob-query -- same expected exclusion, exercising the filter under a curator-role claims set"
+    }
+  ],
+  "source": "replayed from CI run 31093066661 artifact retrieval-eval-report"
+}

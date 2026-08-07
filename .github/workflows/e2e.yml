@@ -192,6 +192,24 @@ jobs:
           name: retrieval-eval-report
           path: retrieval-eval.txt
           if-no-files-found: ignore
+      # Issue #514 item 4 / NFR-4: per-stage latency benchmark against the
+      # same booted, seeded stack the golden-query run just used -- the stack
+      # boot dominates job wall-clock, so the marginal cost is the requests
+      # themselves. Advisory: `|| true` because a runner's absolute latency is
+      # shared-vCPU noise -- the artifact's value is the stage split and the
+      # trend, not a pass/fail line (docs/testing.md).
+      - name: Run the latency benchmark (advisory)
+        run: |
+          set -o pipefail
+          docker compose --profile eval run --rm benchmark-latency \
+            | tee latency-benchmark.txt || true
+      - name: Upload latency benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: latency-benchmark-report
+          path: latency-benchmark.txt
+          if-no-files-found: ignore
       # Republish the store even when the evaluation failed: a run that regressed
       # still produced a report, and dropping it would mean the next nightly
       # compares against the last *green* run instead of the most recent one,

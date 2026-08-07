@@ -57,6 +57,14 @@ changed in the running system, with the issue/PR reference for the trail.
   personas (merged in via `--persona-set`) so recall and the FR-26 leak check
   run under bob-query/carol-curator claims sets, where the access-scope filter
   leg is the only thing excluding the Signal-Corps-scoped SECRET document.
+- `scripts/benchmark_latency.py` + a `benchmark-latency` compose service
+  (eval profile) measure NFR-4 retrieval latency (#514): exact client-side
+  end-to-end p50/p95 at configurable concurrency, per-stage
+  (embed/retrieve/rerank) estimates from the operator-side Prometheus
+  histograms — response bodies still carry no timings (the issue-127 side
+  channel) — plus a self-check flagging arithmetically impossible percentile
+  estimates (#536). Runs advisory in the e2e golden-query job, uploading a
+  `latency-benchmark-report` artifact.
 
 - `docs/nist-ai-rmf/` — a NIST AI RMF 1.0 compliance documentation set (governance
   policy, risk register, impact assessment, system/vendor inventory, RMF outcome

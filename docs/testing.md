@@ -560,6 +560,23 @@ handling to keep it out: `_COMPARED_METRICS` in `scripts/evaluate_retrieval.py`
 is `("mean_recall_at_k", "mean_precision_at_k")` only. The metric #386 flagged as
 weak lives in the separate Q→C→A evaluator, not this harness.
 
+**Latency benchmark (issue 514 item 4, NFR-4).** `scripts/benchmark_latency.py`
+drives the golden queries at one or more concurrency levels (default 1 and 4)
+and reports p50/p95/mean latency: end-to-end measured client-side (exact
+percentiles over individual requests), per stage (embed / retrieve / rerank)
+from before/after snapshots of the `nexus_rag_query_stage_seconds` Prometheus
+histogram on `/metrics`. Stage percentiles are bucket-interpolated estimates
+(marked `*_est`); stage means are exact. Per-stage timings deliberately never
+appear in response bodies (the issue-127 timing side channel), so the operator
+metrics surface is the source — this benchmark adds no new exposure. It runs
+in the e2e golden-query job as an **advisory** step (`|| true`) with the output
+uploaded as the `latency-benchmark-report` artifact: a shared CI runner's
+absolute numbers are noise, so the artifact's value is the stage split and the
+trend. The NFR-4 budget proposal itself needs one run of this script on
+representative hardware (`docker compose --profile eval run --rm
+benchmark-latency`), which is exactly what it exists to make a one-command
+exercise.
+
 **Re-evaluation triggers (FR-32).** Re-run the harness, and refresh the
 baseline, on any of:
 
