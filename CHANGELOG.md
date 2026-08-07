@@ -523,6 +523,33 @@ changed in the running system, with the issue/PR reference for the trail.
   this chart flips silently on upgrade. See `docs/testing.md`'s
   "RERANK_SCORE_FLOOR calibration" section for the full methodology.
 
+### Security
+
+- `ingestion-api`, `ingestion-worker`, and `orchestration-mcp` Dockerfiles
+  are now multi-stage builds (#511, structural follow-up to #491's interim
+  fix): a `builder` stage does the pip installs (needs pip/setuptools/wheel
+  present, and self-uninstalls them from its own site-packages before the
+  copy below); the runtime stage only `COPY --from=builder`s the resulting
+  site-packages plus app source, and separately uninstalls whatever
+  pip/setuptools/wheel `python:3.13-slim` itself ships baked in, before
+  that copy lands. Net effect: pip/setuptools/wheel (and everything
+  vendored inside them, e.g. `pip/_vendor/msgpack`) never sit in the
+  shipped image at all, rather than being installed then uninstalled every
+  build — there's no longer an app-facing pip/setuptools/wheel upgrade
+  cycle in the runtime stage to keep re-triggering this class of finding
+  as pip's vendored tree changes release over release. Each of the 3
+  images also shrinks by ~20-25MB. `reranker-service` is deliberately not
+  included — split off to #553, since its `TORCH_INDEX_URL` CPU/CUDA
+  build-arg selection needs the runtime stage to carry whatever CUDA
+  libraries a CUDA torch wheel needs, which the other 3 images don't have
+  to deal with. Verified live: before/after trivy rescans of all 3
+  rebuilt images (zero pip/setuptools/wheel/msgpack findings, both before
+  and after — #491 already closed those; multi-stage just removes the
+  mechanism that could resurface them), plus a full `docker compose up`
+  + `--profile eval run eval-retrieval` smoke test (all 3 rebuilt services
+  healthy, golden-query recall/precision 1.0, zero forbidden-document
+  leaks).
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed
