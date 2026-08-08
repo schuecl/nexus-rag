@@ -185,6 +185,50 @@ def rank_metrics(returned: list[str], expect: list[str], top_k: int) -> dict:
     return {"reciprocal_rank": reciprocal_rank, "ndcg_at_k": ndcg, "precision_at": precision_at}
 
 
+# How deep to look when resolving a forbidden document's id (below). Wider than a
+# case's own top_k because resolution only has to *find* the document, not rank
+# it: the broad persona may legitimately rank it below the case's cutoff.
+RESOLUTION_TOP_K = 10
+
+
+def resolve_forbidden_ids(
+    token_for: Callable[[str], str],
+    broad_persona: str,
+    query: str,
+    forbid: list[str],
+    top_k: int,
+) -> dict[str, set[str]]:
+    """Map each forbidden filename to the document id(s) behind it, as seen by
+    the broadest persona.
+
+    Why this exists: filename matching cannot gate anything. Issue #226 records
+    the reason -- two documents can share a filename at different
+    classifications, so a forbidden *name* among approved results is not proof
+    the forbidden *document* leaked, which is why `content_overlap` has always
+    been informational. That left the access-scope leg of FR-26 observed but
+    never enforced: a regression letting bob-query retrieve the Signal-Corps
+    document would have been reported as informational overlap and the job would
+    still have passed.
+
+    Resolving through the same `/debug/rag_search` path as the broad persona
+    needs no extra service, no new credential, and no corpus change -- and it
+    makes the check self-validating: the forbidden document has to be retrievable
+    by *someone* for the case to mean anything. When it is not (an unapproved
+    document, which the status filter hides from everyone), resolution simply
+    fails and the case falls back to the status check that already gates it.
+    """
+    resolved: dict[str, set[str]] = {}
+    wanted = set(forbid)
+    if not wanted:
+        return resolved
+    for result in run_query(token_for(broad_persona), query, max(top_k, RESOLUTION_TOP_K)):
+        name = result["filename"]
+        document_id = result.get("document_id")
+        if name in wanted and document_id:
+            resolved.setdefault(name, set()).add(document_id)
+    return resolved
+
+
 def evaluate(golden_set: list[dict], token_for: Callable[[str], str], persona: str) -> dict:
     """Score every golden case; `persona` is the default identity, and a case
     may override it with its own ``persona`` field (issue #514's coverage
@@ -214,6 +258,20 @@ def evaluate(golden_set: list[dict], token_for: Callable[[str], str], persona: s
         # appearing among approved, unrelated results is not a leak.
         overlap = [f for f in forbid if f in returned]
 
+        # Issue #528: the same overlap, attributed by document id instead of by
+        # filename, which turns it from an observation into a gate. Only attempted
+        # when the case runs as someone other than the broad persona -- that is
+        # the access-scope situation ("this identity must not see what the broad
+        # one can"). Same-persona cases are forbidding an unapproved document,
+        # which the status check above already gates unambiguously.
+        scope_leaks: list[dict] = []
+        unresolved_forbids: list[str] = list(forbid) if forbid else []
+        if forbid and case_persona != persona:
+            resolved = resolve_forbidden_ids(token_for, persona, case["query"], forbid, top_k)
+            forbidden_ids = {doc_id for ids in resolved.values() for doc_id in ids}
+            scope_leaks = [r for r in results if r.get("document_id") in forbidden_ids]
+            unresolved_forbids = [f for f in forbid if f not in resolved]
+
         per_query.append(
             {
                 "query": case["query"],
@@ -227,6 +285,8 @@ def evaluate(golden_set: list[dict], token_for: Callable[[str], str], persona: s
                 **rank_metrics(returned, expect, top_k),
                 "unapproved_leaks": unapproved,
                 "content_overlap": overlap,
+                "scope_leaks": scope_leaks,
+                "unresolved_forbids": unresolved_forbids,
                 "note": case.get("note"),
             }
         )
@@ -236,6 +296,7 @@ def evaluate(golden_set: list[dict], token_for: Callable[[str], str], persona: s
     rrs = [q["reciprocal_rank"] for q in per_query if q["reciprocal_rank"] is not None]
     ndcgs = [q["ndcg_at_k"] for q in per_query if q["ndcg_at_k"] is not None]
     total_leaks = sum(len(q["unapproved_leaks"]) for q in per_query)
+    total_scope_leaks = sum(len(q["scope_leaks"]) for q in per_query)
     # Issue #514: what comes back when nothing should? Mean returned-count
     # over the abstention queries (empty `expect`). Advisory and *not* in the
     # baseline comparison: lower is better, which inverts the drop-means-
@@ -254,6 +315,7 @@ def evaluate(golden_set: list[dict], token_for: Callable[[str], str], persona: s
             (sum(abstention_counts) / len(abstention_counts)) if abstention_counts else None
         ),
         "total_forbidden_leaks": total_leaks,
+        "total_scope_leaks": total_scope_leaks,
         "queries": per_query,
     }
 
@@ -267,6 +329,20 @@ def print_report(report: dict) -> None:
     print(f"  abstention noise: {report['mean_abstention_noise']}")
     print(f"  config:           {report['fingerprint'][:12]}")
     print(f"  forbidden leaks:  {report['total_forbidden_leaks']}")
+    print(f"  scope leaks:      {report['total_scope_leaks']}  (#528: id-attributed, gated)")
+    unresolved = sorted(
+        {
+            f
+            for q in report["per_query"]
+            for f in q.get("unresolved_forbids", [])
+            if q.get("persona")
+        }
+    )
+    if unresolved:
+        # Not a failure: an unapproved document is invisible to every persona, so
+        # resolution failing is the normal case for a status-forbid. Printed so a
+        # reader can tell "gated by id" from "left to the status check".
+        print(f"  forbids not id-attributable (status-gated only): {', '.join(unresolved)}")
     for q in report["queries"]:
         status = "OK"
         if q["expect"] and not any(f in q["returned"] for f in q["expect"]):
@@ -428,6 +504,49 @@ def print_comparison(comparison: dict, baseline_path: Path) -> None:
         )
 
 
+def gate_failures(report: dict, *, fail_on_miss: bool = True) -> list[str]:
+    """Reasons this report should fail the build, worst first, or [] to pass.
+
+    Extracted from main() (#528) because the exit decision was the one part of
+    this harness nothing tested: the leak *detection* had unit tests, while the
+    line that turns a detected leak into a non-zero exit had none. Deleting that
+    line left every test passing, which is exactly the hole a security gate
+    cannot afford -- the whole point of the job is the exit code.
+
+    Baseline-regression and config-fingerprint failures stay in main(): they
+    depend on CLI arguments and a second report, not on this one.
+    """
+    reasons: list[str] = []
+
+    if report.get("total_scope_leaks", 0) > 0:
+        offenders = [
+            f"{q['persona']}: "
+            f"{sorted({r['filename'] for r in q['scope_leaks']})} for {q['query']!r}"
+            for q in report["per_query"]
+            if q["scope_leaks"]
+        ]
+        reasons.append(
+            "a document this persona must not be able to retrieve came back, "
+            "attributed by document id (#528) -- the access-scope leg of the FR-26 "
+            "filter regressed:\n  " + "\n  ".join(offenders)
+        )
+
+    if report.get("total_forbidden_leaks", 0) > 0:
+        reasons.append(
+            "forbidden (unapproved/rejected/superseded) content leaked into results "
+            "-- this is a FR-26 regression, not just a quality miss"
+        )
+
+    misses = recall_misses(report)
+    if misses and fail_on_miss:
+        reasons.append(
+            f"{len(misses)} golden quer{'y' if len(misses) == 1 else 'ies'} missed "
+            f"expected documents (recall@K < 1.0): {misses}"
+        )
+
+    return reasons
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden-set", type=Path, default=DEFAULT_GOLDEN_SET)
@@ -538,20 +657,8 @@ def main() -> None:
         )
 
     failed = False
-    misses = recall_misses(report)
-    if misses and args.fail_on_miss:
-        print(
-            f"\nFAILED: {len(misses)} golden quer{'y' if len(misses) == 1 else 'ies'} "
-            f"missed expected documents (recall@K < 1.0): {misses}",
-            file=sys.stderr,
-        )
-        failed = True
-    if report["total_forbidden_leaks"] > 0:
-        print(
-            "\nFAILED: forbidden (unapproved/rejected/superseded) content leaked into "
-            "results -- this is a FR-26 regression, not just a quality miss",
-            file=sys.stderr,
-        )
+    for reason in gate_failures(report, fail_on_miss=args.fail_on_miss):
+        print(f"\nFAILED: {reason}", file=sys.stderr)
         failed = True
     if config_blocked:
         # Issue #525: fail closed rather than reporting an unattributable verdict.

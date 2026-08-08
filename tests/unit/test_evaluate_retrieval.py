@@ -6,6 +6,7 @@ cover the pure history/baseline logic that decides pass vs. regression."""
 from __future__ import annotations
 
 import json
+import pathlib
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -147,6 +148,211 @@ class TestLeakDetectionIsIdentityNotFilename:
 
         assert report["total_forbidden_leaks"] == 1
         assert report["queries"][0]["unapproved_leaks"] == returned
+
+
+class TestScopeLeaksAreGatedNotJustObserved:
+    """Issue #528: the access-scope leg of FR-26 was observed but never enforced.
+
+    `content_overlap` is filename-matched and therefore informational (#226: two
+    documents can share a filename), so a regression letting bob-query retrieve
+    the Signal-Corps document surfaced as an informational note while the job
+    passed. These tests pin the id-attributed check that turns it into a gate,
+    and -- just as important -- pin that it does not fire on the cases #226 says
+    it must not.
+    """
+
+    @staticmethod
+    def _scoping_case() -> dict:
+        return {
+            "query": "network intrusion notification procedure",
+            "persona": "bob-query",
+            "expect": [],
+            "forbid": ["incident-response-plan.md"],
+            "top_k": 5,
+        }
+
+    def test_a_scope_leak_is_a_hard_failure(self, monkeypatch):
+        """The persona gets back the very document the broad persona resolves."""
+
+        def fake_run_query(token, query, top_k):
+            # Both the persona's query and the resolution query return the same
+            # document id -- i.e. bob saw what only carol/dave should see.
+            return [_result("incident-response-plan.md", status="approved", document_id="ir-1")]
+
+        monkeypatch.setattr(evaluate_retrieval, "run_query", fake_run_query)
+        report = evaluate([self._scoping_case()], token_for=lambda p: "t", persona="dave-admin")
+
+        assert report["total_scope_leaks"] == 1
+        assert report["queries"][0]["scope_leaks"][0]["document_id"] == "ir-1"
+        # The status check cannot see this: the leaked document is approved.
+        assert report["total_forbidden_leaks"] == 0
+
+    def test_correct_scoping_is_not_a_leak(self, monkeypatch):
+        """The persona gets nothing; the broad persona resolves the id."""
+
+        def fake_run_query(token, query, top_k):
+            if top_k >= evaluate_retrieval.RESOLUTION_TOP_K:  # the resolution query
+                return [_result("incident-response-plan.md", status="approved", document_id="ir-1")]
+            return [_result("public-notice.md", status="approved", document_id="pn-1")]
+
+        monkeypatch.setattr(evaluate_retrieval, "run_query", fake_run_query)
+        report = evaluate([self._scoping_case()], token_for=lambda p: "t", persona="dave-admin")
+
+        assert report["total_scope_leaks"] == 0
+        assert report["queries"][0]["unresolved_forbids"] == []
+
+    def test_a_shared_filename_is_not_a_leak(self, monkeypatch):
+        """#226's case, which is the whole reason filename matching cannot gate.
+
+        The persona receives a *different* document that happens to share the
+        forbidden filename. Filename matching calls that a hit; id attribution
+        does not, and must not.
+        """
+
+        def fake_run_query(token, query, top_k):
+            if top_k >= evaluate_retrieval.RESOLUTION_TOP_K:
+                return [
+                    _result(
+                        "incident-response-plan.md", status="approved", document_id="secret-copy"
+                    )
+                ]
+            return [
+                _result(
+                    "incident-response-plan.md", status="approved", document_id="unclassified-copy"
+                )
+            ]
+
+        monkeypatch.setattr(evaluate_retrieval, "run_query", fake_run_query)
+        report = evaluate([self._scoping_case()], token_for=lambda p: "t", persona="dave-admin")
+
+        assert report["total_scope_leaks"] == 0
+        # Still surfaced for a human, exactly as before.
+        assert report["queries"][0]["content_overlap"] == ["incident-response-plan.md"]
+
+    def test_an_unresolvable_forbid_is_recorded_not_failed(self, monkeypatch):
+        """An unapproved document is invisible to every persona, so the broad
+        persona cannot resolve its id. That is the normal case for a status
+        forbid, already gated by the status check -- it must not fail here, but
+        it must be visible so a reader can tell the two mechanisms apart.
+        """
+
+        def fake_run_query(token, query, top_k):
+            return [_result("public-notice.md", status="approved", document_id="pn-1")]
+
+        monkeypatch.setattr(evaluate_retrieval, "run_query", fake_run_query)
+        report = evaluate([self._scoping_case()], token_for=lambda p: "t", persona="dave-admin")
+
+        assert report["total_scope_leaks"] == 0
+        assert report["queries"][0]["unresolved_forbids"] == ["incident-response-plan.md"]
+
+    def test_same_persona_cases_do_not_run_a_resolution_query(self, monkeypatch):
+        """Resolution costs a query per case, so it only runs where it can mean
+        something: a case with no persona override forbids an unapproved
+        document, which the status check gates unambiguously."""
+        calls = []
+
+        def fake_run_query(token, query, top_k):
+            calls.append(top_k)
+            return [_result("outdated-vpn-guide.md", status="approved", document_id="v1")]
+
+        monkeypatch.setattr(evaluate_retrieval, "run_query", fake_run_query)
+        golden_set = [
+            {"query": "vpn setup", "expect": [], "forbid": ["outdated-vpn-guide.md"], "top_k": 5}
+        ]
+        evaluate(golden_set, token_for=lambda p: "t", persona="dave-admin")
+
+        assert calls == [5], "a resolution query ran for a same-persona case"
+
+
+class TestTheGateItself:
+    """The exit decision, which had no test at all before #528.
+
+    Leak *detection* was covered; the line turning a detected leak into a
+    non-zero exit was not. Deleting that line left the whole suite green -- and
+    for a security gate the exit code *is* the product, so this is the assertion
+    that matters most.
+    """
+
+    @staticmethod
+    def _report(**overrides) -> dict:
+        report = {
+            "total_scope_leaks": 0,
+            "total_forbidden_leaks": 0,
+            "queries": [],
+            "per_query": [],
+        }
+        report.update(overrides)
+        return report
+
+    def test_a_clean_report_passes(self):
+        assert evaluate_retrieval.gate_failures(self._report()) == []
+
+    def test_a_scope_leak_fails_the_gate(self):
+        report = self._report(
+            total_scope_leaks=1,
+            per_query=[
+                {
+                    "persona": "bob-query",
+                    "query": "network intrusion notification procedure",
+                    "scope_leaks": [{"filename": "incident-response-plan.md"}],
+                }
+            ],
+        )
+        reasons = evaluate_retrieval.gate_failures(report)
+        assert len(reasons) == 1
+        assert "access-scope" in reasons[0]
+        assert "bob-query" in reasons[0], "the reason must name the persona that saw it"
+        assert "incident-response-plan.md" in reasons[0]
+
+    def test_a_status_leak_fails_the_gate(self):
+        reasons = evaluate_retrieval.gate_failures(self._report(total_forbidden_leaks=1))
+        assert len(reasons) == 1 and "forbidden" in reasons[0]
+
+    def test_a_recall_miss_fails_the_gate_when_enabled(self):
+        report = self._report(queries=[{"query": "q", "recall_at_k": 0.0}])
+        assert evaluate_retrieval.gate_failures(report, fail_on_miss=True)
+        assert evaluate_retrieval.gate_failures(report, fail_on_miss=False) == []
+
+    def test_a_scope_leak_fails_even_when_recall_checking_is_off(self):
+        """--fail-on-miss is a quality knob; FR-26 is not negotiable by flag."""
+        report = self._report(
+            total_scope_leaks=1,
+            per_query=[
+                {"persona": "bob-query", "query": "q", "scope_leaks": [{"filename": "x.md"}]}
+            ],
+        )
+        assert evaluate_retrieval.gate_failures(report, fail_on_miss=False)
+
+    def test_every_reason_is_reported_not_just_the_first(self):
+        """A run with several problems should say so once, not make someone
+        re-run to discover the next one."""
+        report = self._report(
+            total_scope_leaks=1,
+            total_forbidden_leaks=1,
+            per_query=[
+                {"persona": "bob-query", "query": "q", "scope_leaks": [{"filename": "x.md"}]}
+            ],
+            queries=[{"query": "q", "recall_at_k": 0.5}],
+        )
+        assert len(evaluate_retrieval.gate_failures(report)) == 3
+
+
+def test_main_actually_consults_the_gate_and_exits_nonzero() -> None:
+    """Pins the wiring, not the logic.
+
+    `gate_failures` is unit-tested above, but the line in `main()` that consults
+    it is what makes CI red -- and removing that line left every other test in
+    this file passing. Driving `main()` properly needs argparse, Keycloak and a
+    live orchestration service, so this asserts on the source instead: crude, but
+    it fails loudly if the call or the non-zero exit is ever dropped. Same
+    technique, and same reasoning, as services/ingestion-api's
+    test_csp_templates.py.
+    """
+    source = (
+        pathlib.Path(evaluate_retrieval.__file__).read_text(encoding="utf-8").split("def main(")[1]
+    )
+    assert "gate_failures(report" in source, "main() no longer consults the gate"
+    assert "sys.exit(1)" in source, "main() no longer exits non-zero on failure"
 
 
 class TestRecallMisses:

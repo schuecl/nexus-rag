@@ -3,7 +3,9 @@
     "id": "password-rotation-bob",
     "persona": "bob-query",
     "query": "how often should passwords be rotated",
-    "expect": ["password-policy.md"],
+    "expect": [
+      "password-policy.md"
+    ],
     "top_k": 5,
     "note": "#514: same query as password-rotation but as the plain rag-query persona (SECRET, FVEY+NATO, USAREUR-AF) -- retrieval quality and the FR-26 leak check must hold under a non-admin claims set, not just dave-admin's"
   },
@@ -11,7 +13,9 @@
     "id": "cafeteria-renovation-bob",
     "persona": "bob-query",
     "query": "cafeteria closed for renovations",
-    "expect": ["public-notice.md"],
+    "expect": [
+      "public-notice.md"
+    ],
     "top_k": 5,
     "note": "#514: NO_RELEASABILITY_RESTRICTION + ALL_AUTHENTICATED document must be visible to every query-capable persona"
   },
@@ -20,17 +24,21 @@
     "persona": "bob-query",
     "query": "network intrusion notification procedure",
     "expect": [],
-    "forbid": ["incident-response-plan.md"],
+    "forbid": [
+      "incident-response-plan.md"
+    ],
     "top_k": 5,
-    "note": "#514: incident-response-plan.md is access_scope Signal-Corps; bob-query holds the SECRET clearance and NATO+FVEY releasability it needs but is only in USAREUR-AF, so the access-scope leg of the claims filter is the one excluding it. Its appearance here surfaces as content_overlap (informational, #226 filename caveat); the hard FR-26 status check still runs on whatever does come back"
+    "note": "#514/#528: incident-response-plan.md is access_scope Signal-Corps; bob-query holds the SECRET clearance and NATO+FVEY releasability it needs but is only in USAREUR-AF, so the access-scope leg of the claims filter is the one excluding it. dave-admin IS in Signal-Corps, so the harness resolves the document's id through its own retrieval as that persona and then fails the run if that id comes back here (#528) -- previously this surfaced only as filename-matched content_overlap, informational under the #226 caveat, so an access-scope regression could not fail the build."
   },
   {
     "id": "incident-scope-included-carol",
     "persona": "carol-curator",
     "query": "network intrusion notification procedure",
     "expect": [],
-    "forbid": ["incident-response-plan.md"],
+    "forbid": [
+      "incident-response-plan.md"
+    ],
     "top_k": 5,
-    "note": "#514: carol-curator has the identical clearance/releasability/groups as bob-query -- same expected exclusion, exercising the filter under a curator-role claims set"
+    "note": "#514/#528: carol-curator has the identical clearance/releasability/groups as bob-query -- same expected exclusion, exercising the filter under a curator-role claims set rather than a plain query one. Gated by document id since #528, same as the bob case."
   }
 ]
