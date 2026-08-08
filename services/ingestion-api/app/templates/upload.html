@@ -101,6 +101,15 @@
           </label>
           <div class="select-shell">
             <select id="classification" name="classification" required>
+              {# Issue #565: a non-submittable placeholder has to be first and
+                 selected, or the browser auto-selects the first real option --
+                 the lowest classification -- and an untouched form silently
+                 submits it. Under-tagging widens who can retrieve the content,
+                 so the default must be "no choice made", not the safest-looking
+                 value. `disabled` keeps it out of the list once a real choice is
+                 made; `required` on the select is what makes the empty value
+                 fail reportValidity() in the submit handler. #}
+              <option value="" disabled selected>Select a classification…</option>
               {% for value, rank in classifications %}
               <option value="{{ value }}">{{ value }}</option>
               {% endfor %}
@@ -113,17 +122,20 @@
           <legend>Releasability <span class="required">*</span></legend>
           <div class="choice-grid" id="releasabilityChoices">
             {% for value in releasability %}
+            {# Issue #565: nothing is pre-checked. This used to render the
+               no-restriction value checked, so the zero-click path submitted the
+               most permissive releasability. The "at least one" rule is
+               unchanged -- it just has to be satisfied deliberately. A checkbox
+               group cannot express that natively (`required` on a checkbox means
+               "this box"), so the submit handler enforces it and writes into
+               #releasabilityError below. #}
             <label class="choice">
-              <input
-                type="checkbox"
-                name="releasability"
-                value="{{ value }}"
-                {% if value == no_releasability_restriction %}checked{% endif %}
-              />
+              <input type="checkbox" name="releasability" value="{{ value }}" />
               <span>{{ value }}</span>
             </label>
             {% endfor %}
           </div>
+          <p class="field-error" id="releasabilityError" role="alert"></p>
           <p class="field-help">
             Select more than one when needed, e.g. NATO + FVEY.
             {{ no_releasability_restriction }} cannot be combined with another marking.

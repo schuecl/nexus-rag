@@ -1059,6 +1059,15 @@ code {
   background: var(--surface-muted);
 }
 
+/* Issue #565: with nothing pre-checked, "no releasability selected" is a state a
+   user can submit from, and its "at least one" rule is enforced in JS because a
+   checkbox group cannot express it natively. The browser therefore draws no
+   invalid affordance for it, so the group gets one of its own -- matching
+   .drop-zone.invalid, the other JS-validated control on this form. */
+.choice-grid.invalid .choice span {
+  border-color: var(--danger);
+}
+
 .choice input:focus-visible + span {
   outline: 3px solid var(--ring);
   outline-offset: 2px;
