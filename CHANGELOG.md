@@ -17,6 +17,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- **Uploads are now bounded per identity** (#424, closing NFR-17's last residual):
+  two admin-configurable caps under **Admin > Upload quota** -- how many documents
+  one identity may have awaiting processing or review, and how many bytes it may
+  submit in any rolling 24 hours. **Operator impact:** a refused upload returns 429
+  with a message saying which cap was hit and how capacity frees again, and writes a
+  `document.submit.quota_denied` audit entry; nothing durable is stored for it. A
+  batch submission counts every file, not one request. Defaults are 200 in-flight
+  documents and 20 GiB/24h -- generous enough not to affect normal use, and non-zero
+  on purpose so upgrading gains the bound rather than leaving the gap open until
+  somebody configures it; set either to 0 for unlimited. This is admission control,
+  not rate limiting: #209's decision to leave request-rate limiting at the ingress
+  is unchanged, because a rate limit cannot stop a patient submitter of individually
+  compliant files.
+
 - **Dracula is available as a sixth portal theme** (#576), selectable from
   `/admin` alongside the default (midnight), Phosphor, Slate, Amber and Daylight.
   The palette is transcribed into the portal's own design tokens rather than

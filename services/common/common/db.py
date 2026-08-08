@@ -109,6 +109,12 @@ def get_engine():
 # columns only -- anything more needs the real tool.
 _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "documents": {
+        # #424: byte size of the stored original, for the per-identity storage
+        # quota. BIGINT rather than INTEGER: 50MB per file times a generous
+        # rolling allowance still fits in 32 bits, but the column also has to
+        # survive a deployment raising MAX_UPLOAD_BYTES, and widening a column
+        # later is a table rewrite this mechanism deliberately avoids.
+        "content_bytes": "BIGINT",
         # Issue #138: advisory marking-mismatch findings (common/models.py).
         "tagging_advisory": "JSON",
         # #164: durable Postgres -> JetStream hand-off and duplicate-safe
@@ -132,6 +138,9 @@ _ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "last_verified_at": "TIMESTAMP WITH TIME ZONE",
     },
     "portal_settings": {
+        # #424: per-identity upload quota caps (NFR-17 residual).
+        "upload_quota_max_inflight": "INTEGER",
+        "upload_quota_max_bytes_24h": "BIGINT",
         # #248: branding + login popup banner, all defaulted so an existing
         # single-row deployment upgrades without a rewrite.
         "app_name": "VARCHAR DEFAULT ''",

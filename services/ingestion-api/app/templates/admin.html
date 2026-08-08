@@ -137,6 +137,41 @@
   <div class="msg" id="themeResult" hidden></div>
 </form>
 
+<form class="admin-card" id="uploadQuotaForm" autocomplete="off">
+  <h2>Upload quota</h2>
+  <p class="lede">
+    Per-identity admission control (NFR-17, issue #424). Request-rate limiting
+    lives at the ingress by design, and it cannot bound a patient submitter: one
+    compliant file every few seconds stays under any rate limit while still
+    filling storage and the review queue. These two caps bound different things,
+    so neither replaces the other.
+  </p>
+
+  <label for="quotaInflight">Documents awaiting processing or review, per identity</label>
+  <input type="number" id="quotaInflight" name="max_inflight" min="0" step="1" />
+  <p class="hint">
+    Counts <code>queued</code>, <code>processing</code>, <code>embedded</code> and
+    <code>pending_review</code>. Curating or rejecting a document frees capacity
+    again, so this throttles a bulk uploader rather than locking them out.
+    <strong>0 disables this cap.</strong>
+  </p>
+
+  <label for="quotaBytes">Submitted in any rolling 24 hours, per identity (GiB)</label>
+  <input type="number" id="quotaBytes" name="max_bytes_24h_gib" min="0" step="0.5" />
+  <p class="hint">
+    Counts every document the identity submitted in the window whatever its
+    status, because curation does not free storage -- the original is kept
+    (NFR-12) and purging it is a separate deliberate act. <strong>0 disables this
+    cap.</strong>
+  </p>
+
+  <div class="admin-actions">
+    <button type="submit" class="btn-primary">Save quota</button>
+  </div>
+
+  <div class="msg" id="uploadQuotaResult" hidden></div>
+</form>
+
 <form class="admin-card" id="brandingForm" autocomplete="off">
   <h2>Branding</h2>
   <p class="lede">
@@ -320,6 +355,31 @@
     brandingResult.className = 'msg ' + (res.ok ? 'ok' : 'err');
     brandingResult.textContent = res.ok
       ? 'Branding saved. Reload to see it applied.'
+      : body.detail || `Failed: HTTP ${res.status}`;
+  });
+
+
+  // ---- upload quota (issue #424) --------------------------------------
+  const uploadQuotaForm = document.getElementById('uploadQuotaForm');
+  const quotaInflightEl = document.getElementById('quotaInflight');
+  const quotaBytesEl = document.getElementById('quotaBytes');
+  const uploadQuotaResult = document.getElementById('uploadQuotaResult');
+
+  uploadQuotaForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const res = await fetch('/admin/upload-quota', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        max_inflight: Number(quotaInflightEl.value || 0),
+        max_bytes_24h_gib: Number(quotaBytesEl.value || 0),
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    uploadQuotaResult.hidden = false;
+    uploadQuotaResult.className = 'msg ' + (res.ok ? 'ok' : 'err');
+    uploadQuotaResult.textContent = res.ok
+      ? 'Upload quota saved. Applies to the next submission.'
       : body.detail || `Failed: HTTP ${res.status}`;
   });
 
