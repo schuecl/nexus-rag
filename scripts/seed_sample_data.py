@@ -26,6 +26,7 @@ existing v1.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -40,13 +41,71 @@ READY_TIMEOUT_SECONDS = 120
 PROCESSING_TIMEOUT_SECONDS = 60
 
 
+def _claims_of(token: str) -> dict:
+    """The access token's payload, without verifying it.
+
+    Signature verification is the API's job and needs the JWKS; this only has to
+    read what the issuer put in, to decide whether the realm is ready.
+    """
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
 def wait_until_ready() -> None:
+    """Wait for the services *and* for Keycloak to actually issue usable claims.
+
+    The OIDC discovery document is served as soon as the realm exists, which is
+    earlier than the point at which a minted token carries the client-role and
+    group claims this script depends on. Waiting only for discovery produced a
+    real, reproducible failure: the seeder minted dave-admin's token during that
+    window, got one with no `groups`, and the Signal-Corps document's approval
+    came back
+
+        403 cannot approve or reject a document outside your access scope
+
+    which then failed the whole one-shot (and left that document `pending_review`,
+    so the seeded corpus was silently incomplete). Retrying the approve would hide
+    the cause; the readiness definition was what was wrong.
+
+    So readiness now means "a token for the identity with the narrowest
+    requirements actually carries what it needs": dave-admin, whose Signal-Corps
+    approval is the step that failed. A realm that is genuinely misconfigured
+    still fails, but with a message naming the missing claims instead of a 403
+    from three steps later.
+    """
     wait_until_up(
         [
             f"{INGESTION_API_URL}/health",
             f"{KEYCLOAK_URL}/realms/{REALM}/.well-known/openid-configuration",
         ],
         timeout_seconds=READY_TIMEOUT_SECONDS,
+    )
+
+    deadline = time.time() + READY_TIMEOUT_SECONDS
+    missing = "not attempted"
+    while time.time() < deadline:
+        try:
+            claims = _claims_of(get_token("dave-admin"))
+        except Exception as exc:  # token endpoint up but realm still settling
+            missing = f"token request failed: {exc}"
+            time.sleep(2)
+            continue
+        gaps = []
+        if "Signal-Corps" not in (claims.get("groups") or []):
+            gaps.append("groups[Signal-Corps]")
+        if not [r for r in (claims.get("rag_roles") or []) if r.startswith("rag-curate:")]:
+            gaps.append("rag_roles[rag-curate:*]")
+        if not claims.get("org"):
+            gaps.append("org")
+        if not gaps:
+            return
+        missing = ", ".join(gaps)
+        time.sleep(2)
+    raise RuntimeError(
+        f"Keycloak served tokens for {READY_TIMEOUT_SECONDS}s without the claims the "
+        f"seeder needs (missing: {missing}). The realm import may be incomplete -- "
+        f"check the keycloak container's log for realm-import errors."
     )
 
 
