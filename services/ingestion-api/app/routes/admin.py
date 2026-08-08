@@ -259,6 +259,67 @@ def set_theme(
 
 
 # --------------------------------------------------------------------------
+# Issue #424: per-identity upload quota (NFR-17 residual).
+# --------------------------------------------------------------------------
+
+
+class UploadQuotaIn(BaseModel):
+    """Both caps, in the units an admin thinks in.
+
+    Bytes are entered as GiB because the stored column is bytes and nobody sets
+    a storage policy in bytes; the conversion lives here so the enforcement path
+    never has to care.
+    """
+
+    max_inflight: int
+    max_bytes_24h_gib: float
+
+
+@router.post("/upload-quota")
+def set_upload_quota(
+    body: UploadQuotaIn,
+    user: UserClaims = Depends(require_admin),
+    session: Session = Depends(get_session),
+    _csrf: None = Depends(verify_csrf),
+) -> PortalSettings:
+    """Issue #424: the per-identity upload caps.
+
+    0 means unlimited for either cap -- an explicit choice for a deployment that
+    bounds this at the platform layer instead, and deliberately not the default
+    (see app/quota.py: a null column resolves to the module default, so upgrading
+    into this release gains the bound rather than keeping the gap).
+
+    Negative values are rejected rather than clamped: a negative cap is a typo,
+    and silently reading it as 0 would turn a fat-fingered "-1" into "unlimited",
+    which is the opposite of what the person meant.
+    """
+    if body.max_inflight < 0 or body.max_bytes_24h_gib < 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "quota values cannot be negative; use 0 for unlimited",
+        )
+    max_bytes = int(body.max_bytes_24h_gib * 1024 * 1024 * 1024)
+    settings = _load_banner(session)
+    settings.upload_quota_max_inflight = body.max_inflight
+    settings.upload_quota_max_bytes_24h = max_bytes
+    settings.updated_by = user.preferred_username
+    settings.updated_at = datetime.now(UTC)
+    session.add(settings)
+    session.add(
+        AuditLogEntry(
+            actor_sub=user.sub,
+            actor_username=user.preferred_username,
+            action="admin.upload_quota_set",
+            target_id="portal_settings",
+            detail={"max_inflight": body.max_inflight, "max_bytes_24h": max_bytes},
+        )
+    )
+    session.commit()
+    session.refresh(settings)
+    return settings
+
+
+# --------------------------------------------------------------------------
 # Issue #248: branding (application name + logo) and the login landing
 # page's (#246) mandatory-acceptance warning popup.
 # --------------------------------------------------------------------------

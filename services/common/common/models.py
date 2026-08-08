@@ -87,6 +87,22 @@ class PortalSettings(SQLModel, table=True):
     # the DEFAULT_LOGIN_BUTTON_TEXT constant in app/main.py.
     login_button_text: str = Field(default="")
 
+    # Issue #424 (NFR-17 residual): per-identity upload admission control. Two
+    # caps because they bound different resources and neither implies the other
+    # -- a count cap alone leaves storage unbounded, and a byte cap alone lets
+    # someone flood the curator queue with tiny files.
+    #
+    # Admin-configurable rather than hardcoded for the same reason the
+    # classification/releasability vocabularies are: a bulk-ingest deployment and
+    # an occasional-submitter one want different numbers. 0 means unlimited, for
+    # a deployment that enforces this at the platform layer instead.
+    #
+    # Nullable so existing rows upgrade without a rewrite; app/quota.py resolves
+    # null to the module's default rather than to "unlimited", so an upgraded
+    # deployment gains the bound instead of silently keeping the gap.
+    upload_quota_max_inflight: int | None = None
+    upload_quota_max_bytes_24h: int | None = None
+
     # Issue #248: mandatory-acceptance warning banner shown as a popup on the
     # login landing page (distinct from the CAPCO classification banner
     # above). Mirrors text/active's "no admin has set a marking" reasoning --
@@ -141,6 +157,14 @@ class Document(SQLModel, table=True):
     # parses, and the Qdrant chunk payloads derived from them -- see
     # processing.py's re-hash-before-parse check.
     content_sha256: str | None = None
+    # Issue #424: size of the stored original, in bytes. Feeds the per-identity
+    # rolling storage quota -- without it the only way to total what one
+    # uploader has consumed is to stat every object in the store, which the
+    # upload path cannot afford to do per request. Nullable because rows that
+    # predate the column upgrade without a rewrite; the quota treats null as 0
+    # (uncounted) rather than guessing, which is the direction that under-counts
+    # historical usage rather than locking a user out over data it cannot see.
+    content_bytes: int | None = None
 
     # Issue #432: last time app/integrity_sweep.py's periodic re-verification
     # confirmed the object-store original's bytes still hash to

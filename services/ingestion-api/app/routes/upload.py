@@ -35,6 +35,7 @@ from app.deps import (
     require_purge,
     verify_csrf,
 )
+from app.quota import enforce_upload_quota
 from app.recovery import mark_published
 from common.claims import UserClaims
 from common.db import get_session
@@ -209,6 +210,14 @@ async def _ingest_one_file(
     except UnsupportedUpload as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
 
+    # Issue #424 (NFR-17 residual): per-identity admission control, checked here
+    # -- after the size is known, before anything durable is written. Placed in
+    # this shared helper rather than in the two route handlers so a batch counts
+    # every file against the quota instead of counting as one request; #209 put
+    # request-rate limiting at the ingress on purpose, and it cannot bound a
+    # patient submitter of individually-compliant files.
+    enforce_upload_quota(session, user, len(contents), filename=file.filename or "unnamed")
+
     doc = Document(
         filename=file.filename or "unnamed",
         uploader_sub=user.sub,
@@ -224,6 +233,7 @@ async def _ingest_one_file(
         status="queued",
         supersedes_document_id=superseded_doc.id if superseded_doc else None,
         content_sha256=content_sha256,
+        content_bytes=len(contents),
     )
     # NFR-12: durably store the original before returning 202 -- doc.id is
     # already populated (Document.id's default_factory runs at construction,
