@@ -17,6 +17,20 @@ changed in the running system, with the issue/PR reference for the trail.
 
 ### Added
 
+- **The NIST AI RMF internal audit is now a repeatable procedure rather than a
+  sentence** (#542): `scripts/audit_rmf_mapping.py` re-assesses
+  `docs/nist-ai-rmf/rmf-mapping.md` against a given commit -- checking that every
+  cited evidence file still exists, that statuses stay inside the documented
+  vocabulary, and (from a cached export, no network) whether referenced issues have
+  since closed -- then diffs against the last accepted snapshot and writes the
+  Markdown report an auditor signs. It deliberately does not judge whether a status
+  is *correct*; the generated report carries an explicit judgement section and is
+  not a completed audit until that and the signatures are filled in. Governance
+  policy §9 now records the method and the evidence layout, with the cadence and
+  the auditor's identity left as the organizational decisions they are.
+  **No management review or internal audit has been conducted** -- that gap is
+  unchanged and cannot be closed by tooling.
+
 - **Dracula is available as a sixth portal theme** (#576), selectable from
   `/admin` alongside the default (midnight), Phosphor, Slate, Amber and Daylight.
   The palette is transcribed into the portal's own design tokens rather than

@@ -73,7 +73,7 @@ date) is what closes it.
 | 9 | Milvus maintainer-of-record vs C2 before production use of that backend | [ai-system-inventory.md](ai-system-inventory.md) A3 | — |
 | 10 | Corpus licensing field: accept scoping decision or add to metadata schema | [ai-system-inventory.md](ai-system-inventory.md) §6 | — |
 | 11 | Impact-assessment ratification questions Q1–Q5 (consequential use, accreditation level, coalition users, PII posture, corpus scale) | [impact-assessment.md](impact-assessment.md) §7 | — |
-| 12 | Management-review cadence + first review | [governance-policy.md](governance-policy.md) §9 | Issue #542 |
+| 12 | Management-review cadence + first review (method, evidence layout and minutes template now in place — [§9.1](governance-policy.md)/[snapshots](evidence/snapshots/); the remaining decisions are the cadence, the audit performer, and holding the first review) | [governance-policy.md](governance-policy.md) §9.2–9.3 | Issue #542 |
 | 13 | Curator risk-awareness training ownership | [governance-policy.md](governance-policy.md) §10 | No issue yet |
 
 ## Audit evidence package — where each item lives
@@ -92,5 +92,5 @@ date) is what closes it.
 | Human-oversight and acceptable-use procedures | [`docs/roles-and-permissions.md`](../roles-and-permissions.md) (oversight); [governance-policy.md](governance-policy.md) §5–6 (policy) | Oversight validated live; acceptable-use draft |
 | Vendor and model-provider assessments | [ai-system-inventory.md](ai-system-inventory.md) §4 | Draft |
 | Monitoring, incident and change-management records | [`docs/observability.md`](../observability.md), [`docs/siem-detection-runbook.md`](../siem-detection-runbook.md), [`docs/releasing.md`](../releasing.md), [`docs/credential-rotation.md`](../credential-rotation.md), GitHub Releases (SBOMs, digests, changelog) | Implemented; incident ownership pending (issue #522) |
-| Internal audit and management-review evidence | [governance-policy.md](governance-policy.md) §9 defines the process | Gap — no review conducted yet; tracked in issue #542 |
+| Internal audit and management-review evidence | [governance-policy.md](governance-policy.md) §9 (method §9.1 recorded, cadence §9.2 and performer §9.3 TBD); mechanism `scripts/audit_rmf_mapping.py`; layout, baseline and minutes template in [evidence/snapshots/](evidence/snapshots/) | Gap — mechanism in place, **no review conducted yet**; tracked in issue #542 |
 | Corrective-action register | [risk-register.md](risk-register.md) §3 | Draft |

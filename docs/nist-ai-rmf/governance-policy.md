@@ -267,16 +267,102 @@ the retention ratification (issue #520) — until then the implemented subset
 (purge, session reaping) is the only destruction that happens, and that fact is
 itself the recorded policy.
 
-## 9. Internal audit and management review — TBD (organizational)
+## 9. Internal audit and management review (GOVERN 1.5 — issue #542)
 
-Proposed (tracked in issue #542):
+Partly recorded. §9.1 and §9.4 are settled and describe mechanisms that exist;
+§9.2 and §9.3 remain **TBD (organizational)** because they need a decider, not a
+document. This split is deliberate: the previous version of this section was
+entirely a proposal, which meant nothing here could be relied on.
 
-- **Management review**: quarterly; inputs are this policy's TBD ledger, the
-  [risk register](risk-register.md), the evidence index, and the trend stores;
-  minutes archived under `evidence/snapshots/<date>/management-review.md`.
-- **Internal audit**: annually; method = re-run the assessment behind
-  [rmf-mapping.md](rmf-mapping.md) against current `main` and diff the statuses.
-- The first conducted review converts this section from proposal to record.
+### 9.1 Internal-audit method — recorded
+
+The method is `scripts/audit_rmf_mapping.py`, run against the commit being
+audited. It replaces the earlier prose instruction ("re-run the assessment and
+diff the statuses"), which described work no two people would perform the same
+way and which left no artifact.
+
+What it checks mechanically:
+
+- **Every file cited in [rmf-mapping.md](rmf-mapping.md) still exists.** A row
+  citing evidence that has since been renamed or deleted is a dead pointer, and
+  this is the failure mode least likely to be noticed between audits.
+- **Every status uses the documented vocabulary**, so a row cannot quietly
+  acquire a status word outside the convention the mapping's own header defines.
+- **Referenced issue states**, when a cached export is supplied. A gap "tracked
+  in #526" reads differently once #526 is closed — either the gap closed and the
+  row is stale, or the issue closed without the gap closing.
+- **The diff against the previous snapshot**: rows added or removed, statuses
+  changed (improvements and regressions distinguished), references newly broken.
+
+What it deliberately does **not** do: judge whether a status is *correct*. That
+requires reading the system and is the auditor's work; the generated report
+carries an explicit section for it and is not a completed audit until that section
+and the signatures are filled in. An audit that appeared complete because a script
+exited zero would be worse than no audit.
+
+Two properties matter for §9.3's independence question: the script needs **no
+network** (NFR-1 forbids depending on one, and an artifact that varies with
+GitHub's availability is not evidence) and **no authorship of the documents** —
+one command, from a clean checkout.
+
+```
+python scripts/audit_rmf_mapping.py \
+    --baseline docs/nist-ai-rmf/evidence/snapshots/baseline.json \
+    --report   docs/nist-ai-rmf/evidence/snapshots/<date>/internal-audit.md
+```
+
+### 9.2 Cadence — TBD (organizational)
+
+Proposed: **management review quarterly, internal audit annually**. A cadence
+that is honored beats an ambitious one that is skipped, so amend this downward
+rather than inherit it by default.
+
+```
+Management-review cadence: ______________________ (e.g. quarterly / semi-annual)
+Internal-audit cadence:    ______________________ (e.g. annual)
+Ratified by:               ______________________ (name, role)
+Ratified on:               ______________________ (date)
+```
+
+Until that record is filled, no cadence is in force. This section is a proposal,
+not a schedule, and the evidence index reports it as a gap.
+
+### 9.3 Who performs the internal audit — TBD (organizational, MEASURE 1.3)
+
+MEASURE 1.3 asks for assessment by parties independent of the developer. This
+repository has a single maintainer, so independence is a matter of degree and the
+choice has to be recorded rather than assumed:
+
+| Performer | Independent of | Not independent of |
+|---|---|---|
+| Accountable AI owner | the code | the decisions being audited (they made them) |
+| Platform-team member who is not the author | code and decisions | the organization and its incentives |
+| External assessor | all of the above | — (but needs the corpus context, and air-gap access) |
+
+§9.1's method is what makes any of these viable: none of them require having
+written the documents.
+
+```
+Internal audit performed by: ______________________ (name, role)
+Independence basis:          ______________________ (which column above, and why)
+Ratified by:                 ______________________ (name, role, date)
+```
+
+### 9.4 Where the evidence lives — recorded
+
+`evidence/snapshots/<YYYY-MM-DD>/`, one directory per cycle:
+
+- `management-review.md` — attendees, decisions taken against the
+  [open-decisions ledger](README.md) row numbers, deferrals with dates. A
+  template is in that directory.
+- `internal-audit.md` — §9.1's generated report plus the auditor's judgement and
+  signatures.
+- `baseline.json` at the directory root is the machine-readable snapshot the next
+  audit diffs against.
+
+The archived file is the evidence. A review that happened without minutes landing
+here is, for audit purposes, a review that did not happen — which is why §9.2's
+first row cannot be back-filled later.
 
 ## 10. Training and awareness — TBD (organizational)
 

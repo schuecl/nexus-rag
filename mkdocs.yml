@@ -115,6 +115,8 @@ nav:
           - AI system inventory: nist-ai-rmf/ai-system-inventory.md
           - Evidence index: nist-ai-rmf/evidence/evidence-index.md
           - Waiver register: nist-ai-rmf/evidence/waiver-register.md
+          - Evidence snapshots: nist-ai-rmf/evidence/snapshots/README.md
+          - Management-review template: nist-ai-rmf/evidence/snapshots/management-review-template.md
   - "📖 Reference":
       - Engineering docs (verbatim):
           - Architecture: architecture-overview.md

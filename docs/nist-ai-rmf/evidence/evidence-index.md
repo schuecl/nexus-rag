@@ -37,14 +37,20 @@ metadata is what makes a file evidence rather than an artifact.
 | `anomaly-detection/` | `scripts/detect_query_anomalies.py` | Recon-detection run evidence |
 | `mutation/` | mutmut tally + `check_mutation_score.py` output | Kill-rate evidence at rest |
 | `ci-status.md` | manual capture | Required-checks list + green run links at snapshot time |
-| `management-review.md` | management review (governance-policy §9) | Minutes; first review pending |
+| `management-review.md` | management review (governance-policy §9) | Minutes; **first review pending**. Template and directory layout now exist ([snapshots/](snapshots/)) |
+| `internal-audit.md` | `scripts/audit_rmf_mapping.py --report`, completed by hand | Mechanical findings + diff since the last accepted `baseline.json`, then the auditor's judgement and signatures; **first audit pending** |
 | `incidents/` | incident records per governance-policy §7's taxonomy | **Zero incidents recorded to date** — an empty directory in a snapshot is itself the record |
 
 ## Known evidence gaps (honest list)
 
 - No snapshot has been captured yet (issue #532).
 - No internal audit or management review has been conducted (governance-policy
-  §9; tracked in issue #542).
+  §9; tracked in issue #542). The mechanism now exists -- audit method
+  (`scripts/audit_rmf_mapping.py`), evidence layout, `baseline.json`, and a
+  minutes template -- so what is missing is a review being *held*: a cadence
+  ratified by a named decider, and the first set of signed minutes. Neither can
+  be produced retroactively, which is why this remains a gap rather than a draft
+  like the other thirteen items.
 - The SIEM detection sketches have never been executed against a production SIEM
   (`docs/siem-detection-runbook.md` is documentation-only; issue #522).
 - `helm/observability` and the ServiceMonitor path have never run on a real

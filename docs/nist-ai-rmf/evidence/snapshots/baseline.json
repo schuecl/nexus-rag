@@ -1,0 +1,710 @@
+{
+ "audited": {
+  "commit": "e65d5b49f8c13cf21690ec24adfbbe476703c744",
+  "committed": "2026-08-08"
+ },
+ "rows": [
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "523"
+   ],
+   "outcome": "1.1 Legal/regulatory requirements understood and documented",
+   "references": {
+    "REQUIREMENTS.md": "REQUIREMENTS.md",
+    "docs/governance.md": "docs/governance.md"
+   },
+   "status": "Implemented; execution TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.2 Trustworthy-AI characteristics in policy",
+   "references": {},
+   "status": "Draft",
+   "status_rank": 2,
+   "weakest_status": "Draft"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "521"
+   ],
+   "outcome": "1.3 Risk tolerance defined; activities calibrated to it",
+   "references": {},
+   "status": "Implemented (ratification pending owner, issue #519)",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.4 Risk processes transparent and documented",
+   "references": {
+    "docs/governance.md": "docs/governance.md",
+    "docs/testing.md": "docs/testing.md"
+   },
+   "status": "Validated live (convention actively maintained)",
+   "status_rank": 6,
+   "weakest_status": "Validated live"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "522",
+    "526",
+    "527",
+    "542"
+   ],
+   "outcome": "1.5 Monitoring & periodic review planned",
+   "references": {
+    "docs/observability.md": "docs/observability.md",
+    "scripts/audit_rmf_mapping.py": "scripts/audit_rmf_mapping.py"
+   },
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.6 AI system inventory",
+   "references": {
+    "check_pinned_models.py": "scripts/check_pinned_models.py",
+    "scripts/check_pinned_images.py": "scripts/check_pinned_images.py"
+   },
+   "status": "Draft",
+   "status_rank": 2,
+   "weakest_status": "Draft"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "520"
+   ],
+   "outcome": "1.7 Safe decommissioning",
+   "references": {},
+   "status": "Implemented; ratification TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "519"
+   ],
+   "outcome": "2.1\u20132.3 Roles, responsibilities, executive accountability",
+   "references": {
+    "docs/governance.md": "docs/governance.md",
+    "docs/roles-and-permissions.md": "docs/roles-and-permissions.md"
+   },
+   "status": "Implemented (role definitions); appointment TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "3.1 Workforce diversity/capacity",
+   "references": {},
+   "status": "TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [
+    "478"
+   ],
+   "outcome": "3.2 Human oversight roles",
+   "references": {},
+   "status": "Partial (labels per mechanism)",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "4.1\u20134.3 Safety-first culture, risk communication",
+   "references": {
+    "SECURITY.md": "SECURITY.md",
+    "docs/testing.md": "docs/testing.md"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "5.1\u20135.2 External feedback mechanisms",
+   "references": {},
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "GOVERN",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "6.1\u20136.2 Third-party risk policies",
+   "references": {
+    "REQUIREMENTS.md": "REQUIREMENTS.md"
+   },
+   "status": "Validated live (mechanisms); assessments draft",
+   "status_rank": 2,
+   "weakest_status": "Draft"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.1\u20131.2 Context, purposes, assumptions established",
+   "references": {
+    "ARCHITECTURE.md": "ARCHITECTURE.md",
+    "REQUIREMENTS.md": "REQUIREMENTS.md"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.3\u20131.4 Organizational goals, business value",
+   "references": {
+    "REQUIREMENTS.md": "REQUIREMENTS.md"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [
+    "521"
+   ],
+   "outcome": "1.5 Organizational risk tolerance mapped",
+   "references": {},
+   "status": "Implemented (ratification pending owner, issue #519)",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [
+    "430",
+    "573"
+   ],
+   "outcome": "1.6 System requirements incl. performance targets",
+   "references": {},
+   "status": "Implemented; NFR-4 partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "2.1\u20132.3 Tasks, methods, data flows documented",
+   "references": {
+    "ARCHITECTURE.md": "ARCHITECTURE.md"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "3.1\u20133.5 Benefits, costs, misuse, oversight capacity",
+   "references": {
+    "docs/threat-model.md": "docs/threat-model.md"
+   },
+   "status": "Partial; assessment Draft \u2014 ratification TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "4.1\u20134.2 Third-party risks mapped",
+   "references": {
+    "REQUIREMENTS.md": "REQUIREMENTS.md"
+   },
+   "status": "Implemented; one open rationale",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MAP",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "5.1\u20135.2 Impacts to individuals/society characterized",
+   "references": {
+    "docs/governance.md": "docs/governance.md",
+    "docs/threat-model.md": "docs/threat-model.md"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "1.1\u20131.2 Metrics selected, suitability assessed",
+   "references": {
+    "scripts/evaluate_rag_quality.py": "scripts/evaluate_rag_quality.py",
+    "scripts/evaluate_retrieval.py": "scripts/evaluate_retrieval.py"
+   },
+   "status": "Validated live",
+   "status_rank": 6,
+   "weakest_status": "Validated live"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "542"
+   ],
+   "outcome": "1.3 Assessment by independent parties",
+   "references": {
+    "scripts/audit_rmf_mapping.py": "scripts/audit_rmf_mapping.py"
+   },
+   "status": "Gap (performer TBD (organizational); method recorded)",
+   "status_rank": 0,
+   "weakest_status": "Gap"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "528"
+   ],
+   "outcome": "2.1 Test sets representative",
+   "references": {},
+   "status": "Gap (known, tracked)",
+   "status_rank": 0,
+   "weakest_status": "Gap"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "2.2 Human-subject evaluations",
+   "references": {},
+   "status": "N/A (documented)",
+   "status_rank": 7,
+   "weakest_status": "N/A"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "526",
+    "527"
+   ],
+   "outcome": "2.3 TEVV for the system as deployed",
+   "references": {
+    "docs/testing.md": "docs/testing.md"
+   },
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "526",
+    "527"
+   ],
+   "outcome": "2.4 Deployed-system performance measured",
+   "references": {},
+   "status": "Gap",
+   "status_rank": 0,
+   "weakest_status": "Gap"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "528"
+   ],
+   "outcome": "2.5 Evaluations representative of deployment conditions",
+   "references": {
+    "scripts/verify_corpus_access.py": "scripts/verify_corpus_access.py"
+   },
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "430"
+   ],
+   "outcome": "2.6 Performance vs defined targets",
+   "references": {},
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "97",
+    "427",
+    "457",
+    "458",
+    "488",
+    "494",
+    "532"
+   ],
+   "outcome": "2.7 Security & resilience (red-team)",
+   "references": {
+    "REQUIREMENTS.md": "REQUIREMENTS.md"
+   },
+   "status": "Partial \u2014 validation debt recorded",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "2.8 Transparency/accountability measured",
+   "references": {},
+   "status": "Validated live (append-only); Partial (trace coverage)",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "125",
+    "127"
+   ],
+   "outcome": "2.9\u20132.11 Model explanation, privacy, fairness probing",
+   "references": {},
+   "status": "Privacy validated live; fairness scoped out (documented)",
+   "status_rank": 6,
+   "weakest_status": "Validated live"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "2.12 Environmental impact",
+   "references": {},
+   "status": "Scoped out (documented)",
+   "status_rank": 7,
+   "weakest_status": "Scoped out"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "386",
+    "525"
+   ],
+   "outcome": "2.13 Measurement effectiveness evaluated",
+   "references": {},
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [
+    "429",
+    "527"
+   ],
+   "outcome": "3.1\u20133.3 Risk tracking over time",
+   "references": {},
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MEASURE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "4.1\u20134.3 Measurement feedback loops",
+   "references": {
+    "scripts/calibrate_tagging_advisory.py": "scripts/calibrate_tagging_advisory.py"
+   },
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "521"
+   ],
+   "outcome": "1.1 Deployment decision vs documented criteria",
+   "references": {},
+   "status": "TBD (organizational)",
+   "status_rank": 1,
+   "weakest_status": "TBD"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "286"
+   ],
+   "outcome": "1.2\u20131.4 Risk treatment prioritized, documented",
+   "references": {},
+   "status": "Draft (register); decisions implemented",
+   "status_rank": 2,
+   "weakest_status": "Draft"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "2.1 Resources allocated to mapped risks",
+   "references": {
+    "claims.py": "services/common/common/claims.py",
+    "metadata.py": "services/common/common/metadata.py",
+    "qdrant_filters.py": "services/common/common/qdrant_filters.py",
+    "versioning.py": "services/common/common/versioning.py"
+   },
+   "status": "Validated live",
+   "status_rank": 6,
+   "weakest_status": "Validated live"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "525"
+   ],
+   "outcome": "2.2\u20132.3 Value sustained through change",
+   "references": {},
+   "status": "Validated live / one gap",
+   "status_rank": 0,
+   "weakest_status": "Gap"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "478"
+   ],
+   "outcome": "2.4 Mechanisms to supersede/disengage",
+   "references": {},
+   "status": "Validated live (supersession/purge); Implemented (rollback)",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "3.1\u20133.2 Third-party risks managed",
+   "references": {},
+   "status": "Implemented",
+   "status_rank": 4,
+   "weakest_status": "Implemented"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "522",
+    "526",
+    "527"
+   ],
+   "outcome": "4.1 Post-deployment monitoring",
+   "references": {},
+   "status": "Gap (substrate exists)",
+   "status_rank": 0,
+   "weakest_status": "Gap"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [],
+   "outcome": "4.2 Measurable improvement activities",
+   "references": {},
+   "status": "Validated live (process)",
+   "status_rank": 6,
+   "weakest_status": "Validated live"
+  },
+  {
+   "ambiguous_references": {},
+   "broken_references": [],
+   "closed_issues": [],
+   "function": "MANAGE",
+   "in_vocabulary": true,
+   "issues": [
+    "522"
+   ],
+   "outcome": "4.3 Incident response",
+   "references": {},
+   "status": "Partial",
+   "status_rank": 3,
+   "weakest_status": "Partial"
+  }
+ ]
+}
