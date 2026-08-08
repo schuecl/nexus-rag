@@ -92,6 +92,19 @@ changed in the running system, with the issue/PR reference for the trail.
   keeping the accent colour that is the point of them. **Operator-visible:** those
   labels read slightly brighter; nothing moves or changes shape.
 
+- **The golden-query gate now fails on an access-scope leak, not just a status
+  leak** (#528). The persona coverage cases from #514 already ran in the gate --
+  bob-query and carol-curator querying for a Signal-Corps-scoped SECRET document
+  they must not receive -- but a hit was matched by *filename*, which #226 records
+  as unreliable (two documents can share a name), so it was reported as
+  informational and the job still passed. A regression in the access-scope leg of
+  the FR-26 filter therefore could not fail the build. The harness now resolves the
+  forbidden document's id through its own retrieval path as the broad persona
+  (dave-admin, who is in Signal-Corps) and fails the run if that exact id comes
+  back to a persona that must not see it. Where resolution is impossible -- an
+  unapproved document is invisible to everyone -- the report says so and the
+  existing status check still gates it.
+
 - **Field borders, card edges and the upload page's stepper rail are more visible
   in every theme** (#578). They measured 1.61:1 (Daylight) to 2.40:1 against the
   surface behind them -- below the 3:1 WCAG 2.1 minimum for the visual boundary of
